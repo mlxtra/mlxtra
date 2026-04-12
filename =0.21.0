@@ -1,0 +1,9 @@
+Collecting mlx
+  Using cached mlx-0.31.1-cp313-cp313-macosx_26_0_arm64.whl.metadata (5.9 kB)
+Collecting mlx-metal==0.31.1 (from mlx)
+  Using cached mlx_metal-0.31.1-py3-none-macosx_26_0_arm64.whl.metadata (5.1 kB)
+Using cached mlx-0.31.1-cp313-cp313-macosx_26_0_arm64.whl (574 kB)
+Using cached mlx_metal-0.31.1-py3-none-macosx_26_0_arm64.whl (49.3 MB)
+Installing collected packages: mlx-metal, mlx
+
+Successfully installed mlx-0.31.1 mlx-metal-0.31.1

@@ -1,0 +1,28 @@
+{
+  "runtimeVersion": "0.1.0",
+  "compatibilityApi": 1,
+  "platform": "macos",
+  "arch": "arm64",
+  "channel": "stable",
+  "pythonVersion": "3.12.8",
+  "pythonPath": "venv/bin/python3",
+  "executables": {
+    "python": "venv/bin/python3",
+    "pip": "venv/bin/pip"
+  },
+  "packages": [
+    "mlx>=0.21.0",
+    "mlx-vlm>=0.4.0",
+    "mflux>=0.17.5",
+    "transformers>=4.40.0",
+    "huggingface-hub>=0.20.0",
+    "pillow>=10.0.0",
+    "numpy>=1.24.0"
+  ],
+  "supportedModels": [
+    "mlx-community/Qwen3.5-9B-MLX-4bit",
+    "google/gemma-4-4b-it",
+    "mlx-community/Qwen3.5-2B-MLX-4bit",
+    "black-forest-labs/FLUX.2-klein-4B"
+  ]
+}
