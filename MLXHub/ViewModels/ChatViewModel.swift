@@ -28,6 +28,11 @@ class ChatViewModel: ObservableObject {
     private var generationTask: Task<Void, Never>?
     private let imageGenerationModelId = "black-forest-labs/FLUX.2-klein-4B"
     private let imageGenerationModelName = "FLUX.2-klein-4B"
+    private let speechGenerationModelId = "kugelaudio/kugelaudio-0-open"
+    private let speechGenerationModelName = "KugelAudio 0 Open"
+    private let musicGenerationModelId = "ACE-Step/acestep-v15-turbo-continuous"
+    private let musicGenerationModelName = "ACE-Step 1.5 Turbo"
+    private let maxAutoToolDepth = 4
 
     // MARK: - Computed Properties
     var hasSelectedImages: Bool {
@@ -52,6 +57,22 @@ class ChatViewModel: ObservableObject {
         return baseURL
             .appendingPathComponent("MLXHub", isDirectory: true)
             .appendingPathComponent("GeneratedImages", isDirectory: true)
+    }
+
+    private var generatedSpeechDirectory: URL {
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return baseURL
+            .appendingPathComponent("MLXHub", isDirectory: true)
+            .appendingPathComponent("GeneratedSpeech", isDirectory: true)
+    }
+
+    private var generatedMusicDirectory: URL {
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return baseURL
+            .appendingPathComponent("MLXHub", isDirectory: true)
+            .appendingPathComponent("GeneratedMusic", isDirectory: true)
     }
 
     // MARK: - Initialization
@@ -116,6 +137,32 @@ class ChatViewModel: ObservableObject {
     func selectChat(_ chat: Chat) {
         selectedChatId = chat.id
         chatStore.saveSelectedChatId(selectedChatId)
+    }
+
+    func deleteChat(_ chat: Chat) {
+        if selectedChatId == chat.id {
+            cancelGeneration()
+        }
+
+        chats.removeAll { $0.id == chat.id }
+        chatStore.deleteAttachments(for: chat.id)
+
+        if selectedChatId == chat.id {
+            selectedChatId = recentChats.first?.id
+        }
+
+        if chats.isEmpty {
+            let newChat = Chat(
+                title: "New chat",
+                messages: [],
+                timestamp: Date(),
+                icon: "message"
+            )
+            chats = [newChat]
+            selectedChatId = newChat.id
+        }
+
+        persistConversationHistory()
     }
 
     func sendMessage() {
@@ -190,9 +237,123 @@ class ChatViewModel: ObservableObject {
     }
 
     // MARK: - Private Methods
-    private func generateResponse(for prompt: String, images: [URL]) async {
+    private var webSearchTool: [String: Any] {
+        [
+            "type": "function",
+            "function": [
+                "name": "web_search",
+                "description": "Search the web for current information, news, facts, or any topic that requires up-to-date data.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "The search query"]
+                    ],
+                    "required": ["query"]
+                ]
+            ]
+        ]
+    }
+
+    private var imageGenerationTool: [String: Any] {
+        [
+            "type": "function",
+            "function": [
+                "name": "generate_image",
+                "description": "Generate or edit an image when the user explicitly asks for a new visual, image, illustration, photo, mockup, sprite, texture, or image edit. Do not use this tool for describing or analyzing attached images.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "prompt": [
+                            "type": "string",
+                            "description": "A detailed image generation or image editing prompt."
+                        ]
+                    ],
+                    "required": ["prompt"]
+                ]
+            ]
+        ]
+    }
+
+    private var speechGenerationTool: [String: Any] {
+        [
+            "type": "function",
+            "function": [
+                "name": "create_speech",
+                "description": "Create spoken audio from text when the user asks for text-to-speech, narration, voiceover, or speech audio.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "text": [
+                            "type": "string",
+                            "description": "The exact text to turn into spoken audio."
+                        ]
+                    ],
+                    "required": ["text"]
+                ]
+            ]
+        ]
+    }
+
+    private var musicGenerationTool: [String: Any] {
+        [
+            "type": "function",
+            "function": [
+                "name": "generate_music",
+                "description": "Create a song, instrumental track, beat, loop, background music, or music sample from a text prompt.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "caption": [
+                            "type": "string",
+                            "description": "A concise music prompt describing genre, mood, instruments, tempo, vocals, and use case."
+                        ],
+                        "lyrics": [
+                            "type": "string",
+                            "description": "Optional lyrics with section labels like [verse] and [chorus]."
+                        ],
+                        "duration": [
+                            "type": "number",
+                            "description": "Optional duration in seconds. Use 30 unless the user asks otherwise."
+                        ],
+                        "instrumental": [
+                            "type": "boolean",
+                            "description": "True when the user asks for instrumental, beat, backing track, or no vocals."
+                        ]
+                    ],
+                    "required": ["caption"]
+                ]
+            ]
+        ]
+    }
+
+    private var shouldIncludeAutoTools: Bool {
+        selectedTool == .auto
+    }
+
+    private var systemPrompt: String {
+        """
+        You are a helpful assistant.
+
+        When the user asks you to create, generate, draw, edit, or make an image, use the generate_image tool. If the image needs current information, use web_search first, then use generate_image with the current information from the search result. Do not generate markdown image tags, image URLs, data URLs, or links to external image services. After the generate_image tool runs, the app displays the image automatically; respond with concise text only.
+
+        When the user asks you to create speech, narration, voiceover, or text-to-speech audio, use the create_speech tool with the exact text that should be spoken. After the create_speech tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
+
+        When the user asks you to create music, a song, beat, loop, soundtrack, instrumental, or background music, use the generate_music tool. After the generate_music tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
+        """
+    }
+
+    private var autoTools: [[String: Any]] {
+        [webSearchTool, imageGenerationTool, speechGenerationTool, musicGenerationTool]
+    }
+
+    private func availableTools(toolDepth: Int) -> [[String: Any]]? {
+        guard shouldIncludeAutoTools else { return nil }
+        guard toolDepth < maxAutoToolDepth else { return nil }
+        return autoTools
+    }
+
+    private func generateResponse(for prompt: String, images: [URL], toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
         do {
-            // 1. Initialize Python runtime (first time only)
             if runtimeManager.state != .ready {
                 isPythonLoading = true
                 loadingMessage = "Initializing Python runtime..."
@@ -201,102 +362,129 @@ class ChatViewModel: ObservableObject {
                 isPythonLoading = false
             }
 
-            // 2. Initialize VLM executor if not ready
             if !vlmExecutor.isReady {
                 try await vlmExecutor.initialize()
             }
 
             let isImageGeneration = selectedTool == .image
+            let isSpeechGeneration = selectedTool == .tts
+            let isMusicGeneration = selectedTool == .music
             let activeModelId = isImageGeneration ? imageGenerationModelId : selectedModel.modelId
-            let activeModelName = isImageGeneration ? imageGenerationModelName : selectedModel.displayName
-            let activeBackend: RuntimeBackend = isImageGeneration ? .image : .vlm
+            let resolvedModelId = isMusicGeneration ? musicGenerationModelId : (isSpeechGeneration ? speechGenerationModelId : activeModelId)
+            let activeModelName = isImageGeneration ? imageGenerationModelName : (isMusicGeneration ? musicGenerationModelName : (isSpeechGeneration ? speechGenerationModelName : selectedModel.displayName))
+            let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isMusicGeneration ? .music : (isSpeechGeneration ? .audio : .vlm))
 
-            // 3. Load model (first message only)
             if !vlmExecutor.isModelLoaded {
                 isModelLoading = true
-                let downloadSize = isImageGeneration ? runtimeManager.estimatedModelSize(modelId: activeModelId) : selectedModel.info.downloadSize
+                let downloadSize = (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
                 loadingMessage = "Loading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
-                
-                // Check if already downloaded
-                if runtimeManager.isModelDownloaded(modelId: activeModelId) {
+
+                if runtimeManager.isModelDownloaded(modelId: resolvedModelId) {
                     loadingMessage = "Loading \(activeModelName)..."
                 } else {
                     loadingMessage = "Downloading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
                 }
-                
-                try await loadModel(activeModelId)
+
+                try await loadModel(resolvedModelId)
                 isModelLoading = false
             }
 
-            // 4. Start generation
             isGenerating = true
-            let shouldUseWebSearch = shouldUseWebSearch(for: prompt)
-            
-            // Create AI message placeholder
-            let aiMessage = Message(
-                content: "",
-                isUser: false,
-                timestamp: Date(),
-                toolCall: initialToolCall(isImageGeneration: isImageGeneration, shouldUseWebSearch: shouldUseWebSearch),
-                isStreaming: true
-            )
-            
-            if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
-                chats[index].messages.append(aiMessage)
-                chats[index].timestamp = Date()
-                streamingMessageId = aiMessage.id
-                persistConversationHistory()
-            }
 
-            // Build conversation history
-            var messages: [ExecutionMessage] = []
-            
-            // Add system message
-            messages.append(ExecutionMessage(
-                role: .system,
-                content: "You are a helpful assistant."
-            ))
-            
-            // Add conversation history from current chat
-            if let chat = selectedChat {
-                for message in contextMessages(from: chat, excluding: aiMessage.id) {
-                    let role: MessageRole = message.isUser ? .user : .assistant
-                    messages.append(ExecutionMessage(role: role, content: message.content))
+            let aiMessage: Message
+            let isFollowUp = toolMessages != nil
+
+            if isFollowUp {
+                guard let existingId = streamingMessageId,
+                      let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+                      let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == existingId }) else {
+                    isGenerating = false
+                    return
+                }
+                aiMessage = chats[chatIndex].messages[messageIndex]
+                loadingMessage = "Using tool result..."
+            } else {
+                let initialToolCall: ToolCall?
+                if isImageGeneration {
+                    initialToolCall = ToolCall(toolName: "FLUX.2 image generation", status: prompt, icon: "photo")
+                } else if isSpeechGeneration {
+                    initialToolCall = ToolCall(toolName: "KugelAudio speech generation", status: prompt, icon: "waveform")
+                } else if isMusicGeneration {
+                    initialToolCall = ToolCall(toolName: "ACE-Step music generation", status: prompt, icon: "music.note")
+                } else {
+                    initialToolCall = nil
+                }
+
+                aiMessage = Message(
+                    content: "",
+                    isUser: false,
+                    timestamp: Date(),
+                    toolCall: initialToolCall,
+                    isStreaming: true
+                )
+
+                if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
+                    chats[index].messages.append(aiMessage)
+                    chats[index].timestamp = Date()
+                    streamingMessageId = aiMessage.id
+                    persistConversationHistory()
                 }
             }
-            
-            let chatTemplateKwargs: [String: Any]? = !isImageGeneration && selectedModel.modelId.lowercased().contains("qwen")
+
+            var messages: [ExecutionMessage]
+            if let toolMessages {
+                messages = toolMessages
+            } else {
+                messages = []
+                messages.append(ExecutionMessage(role: .system, content: systemPrompt))
+
+                if let chat = selectedChat {
+                    for message in contextMessages(from: chat, excluding: aiMessage.id) {
+                        let role: MessageRole = message.isUser ? .user : .assistant
+                        messages.append(ExecutionMessage(role: role, content: message.content))
+                    }
+                }
+            }
+
+            let chatTemplateKwargs: [String: Any]? = !isImageGeneration && !isSpeechGeneration && !isMusicGeneration && selectedModel.modelId.lowercased().contains("qwen")
                 ? ["enable_thinking": selectedModel.enableThinking]
                 : nil
-            if shouldUseWebSearch, let searchContext = await fetchWebSearchContext(for: prompt, messageId: aiMessage.id) {
-                messages.insert(
-                    ExecutionMessage(
-                        role: .system,
-                        content: webSearchSystemPrompt(searchContext: searchContext)
-                    ),
-                    at: 0
-                )
-            }
+
+            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? nil : availableTools(toolDepth: toolDepth)
+            let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isMusicGeneration ? generatedMusicDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil))
+            let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration || isMusicGeneration
 
             let request = ExecutionRequest(
                 backend: activeBackend,
-                modelId: activeModelId,
-                messages: isImageGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
+                modelId: resolvedModelId,
+                messages: isDirectMediaGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
                 images: images.isEmpty ? nil : images,
-                outputDirectory: isImageGeneration ? generatedImagesDirectory : nil,
-                maxTokens: isImageGeneration ? 0 : selectedModel.defaultMaxTokens,
-                temperature: isImageGeneration ? 1.0 : selectedModel.temperatureRange.default,
-                topP: isImageGeneration ? nil : selectedModel.topP,
-                topK: isImageGeneration ? nil : selectedModel.topK,
-                minP: isImageGeneration ? nil : selectedModel.minP,
-                repetitionPenalty: isImageGeneration ? nil : selectedModel.repetitionPenalty,
-                chatTemplateKwargs: chatTemplateKwargs
+                outputDirectory: outputDirectory,
+                maxTokens: isDirectMediaGeneration ? 0 : selectedModel.defaultMaxTokens,
+                temperature: isDirectMediaGeneration ? 1.0 : selectedModel.temperatureRange.default,
+                topP: isDirectMediaGeneration ? nil : selectedModel.topP,
+                topK: isDirectMediaGeneration ? nil : selectedModel.topK,
+                minP: isDirectMediaGeneration ? nil : selectedModel.minP,
+                repetitionPenalty: isDirectMediaGeneration ? nil : selectedModel.repetitionPenalty,
+                chatTemplateKwargs: chatTemplateKwargs,
+                tools: tools,
+                parameters: isMusicGeneration ? defaultMusicParameters(caption: prompt) : nil
             )
-            
-            // Execute and stream
+
             let stream = try await vlmExecutor.execute(request: request)
-            
-            await processStream(stream, forMessage: aiMessage.id)
+
+            await processStream(
+                stream,
+                forMessage: aiMessage.id,
+                messages: messages,
+                images: images,
+                prompt: prompt,
+                toolDepth: toolDepth,
+                hasTools: tools != nil,
+                isImageGeneration: isImageGeneration,
+                isSpeechGeneration: isSpeechGeneration,
+                isMusicGeneration: isMusicGeneration
+            )
 
         } catch {
             if Task.isCancelled {
@@ -306,100 +494,358 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func fetchWebSearchContext(for prompt: String, messageId: UUID) async -> String? {
-        loadingMessage = "Searching the web with Exa..."
-        updateMessageToolCall(messageId, status: "Searching")
+    private func executeToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String) async {
+        switch toolCall.function.name {
+        case "web_search":
+            await executeWebSearchToolCall(toolCall, messages: &messages, prompt: prompt)
+        case "generate_image":
+            await executeImageGenerationToolCall(toolCall, messages: &messages, images: images, prompt: prompt)
+        case "create_speech":
+            await executeSpeechGenerationToolCall(toolCall, messages: &messages, prompt: prompt)
+        case "generate_music":
+            await executeMusicGenerationToolCall(toolCall, messages: &messages, prompt: prompt)
+        default:
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: "Unsupported tool: \(toolCall.function.name)",
+                toolCallId: toolCall.id,
+                name: toolCall.function.name
+            ))
+        }
+    }
+
+    private func defaultMusicParameters(caption: String) -> [String: Any] {
+        [
+            "caption": caption,
+            "duration": 30,
+            "batch_size": 1,
+            "inference_steps": 8,
+            "audio_format": "wav",
+            "thinking": false,
+            "instrumental": caption.localizedCaseInsensitiveContains("instrumental")
+                || caption.localizedCaseInsensitiveContains("beat")
+                || caption.localizedCaseInsensitiveContains("background music")
+        ]
+    }
+
+    private func executeWebSearchToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
+        let args = toolCall.function.arguments
+        var searchQuery = prompt
+        if let data = args.data(using: .utf8),
+           let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let query = decoded["query"] as? String {
+            searchQuery = query
+        }
+
+        loadingMessage = "Searching for \"\(searchQuery)\"..."
+        if let messageId = streamingMessageId {
+            if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+               let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+                appendToolCall(
+                    ToolCall(
+                        toolName: "Web search",
+                        status: searchQuery,
+                        icon: "magnifyingglass"
+                    ),
+                    toMessage: messageId
+                )
+                chats[chatIndex].messages[messageIndex].content = ""
+                persistConversationHistory()
+            }
+        }
 
         do {
-            guard let context = try await mcpWebSearchService.searchContext(for: prompt) else {
-                updateMessageToolCall(messageId, status: "No results")
-                return nil
+            guard let context = try await mcpWebSearchService.searchContext(for: searchQuery) else {
+                messages.append(ExecutionMessage(role: .tool, content: "No results found.", toolCallId: toolCall.id, name: "web_search"))
+                return
             }
 
-            updateMessageToolCall(messageId, status: "Done")
-            return context
+            messages.append(ExecutionMessage(role: .tool, content: context, toolCallId: toolCall.id, name: "web_search"))
         } catch {
-            print("MCP web search failed: \(error)")
-            loadingMessage = "Web search unavailable; answering without live sources..."
-            updateMessageToolCall(messageId, status: "Unavailable")
-            return nil
+            messages.append(ExecutionMessage(role: .tool, content: "Web search unavailable: \(error.localizedDescription)", toolCallId: toolCall.id, name: "web_search"))
         }
     }
 
-    private func webSearchSystemPrompt(searchContext: String) -> String {
-        if selectedTool == .research {
-            return """
-            You are in Deep research mode. Use the live web search context below as primary evidence.
-
-            Requirements:
-            - Answer from the provided web context first.
-            - Include source URLs when available.
-            - Compare sources when they disagree.
-            - State what is unknown or missing if the context is insufficient.
-            - Do not claim you cannot browse or search; the search has already been performed for you.
-
-            Live web search context:
-            \(searchContext)
-            """
+    private func executeImageGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String) async {
+        let args = toolCall.function.arguments
+        var imagePrompt = prompt
+        if let data = args.data(using: .utf8),
+           let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let decodedPrompt = decoded["prompt"] as? String,
+           !decodedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            imagePrompt = decodedPrompt
         }
 
-        return """
-        Use the following live web search context when it is relevant. Cite source URLs from the search results when available. If the search context does not answer the question, say what is missing. Do not claim you cannot browse or search; the search has already been performed for you.
+        loadingMessage = "Generating image..."
+        if let messageId = streamingMessageId {
+            if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+               let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+                appendToolCall(
+                    ToolCall(
+                        toolName: "FLUX.2 image generation",
+                        status: imagePrompt,
+                        icon: "photo"
+                    ),
+                    toMessage: messageId
+                )
+                chats[chatIndex].messages[messageIndex].content = ""
+                persistConversationHistory()
+            }
+        }
 
-        \(searchContext)
-        """
+        do {
+            let request = ExecutionRequest(
+                backend: .image,
+                modelId: imageGenerationModelId,
+                messages: [ExecutionMessage(role: .user, content: imagePrompt)],
+                images: images.isEmpty ? nil : images,
+                outputDirectory: generatedImagesDirectory,
+                maxTokens: 0,
+                temperature: 1.0
+            )
+
+            let stream = try await vlmExecutor.execute(request: request)
+            var generatedImageURL: URL?
+            var generationSummary = "Image generation completed."
+
+            for await event in stream {
+                if Task.isCancelled {
+                    break
+                }
+
+                switch event {
+                case .image(let imageURL):
+                    generatedImageURL = imageURL
+                    if let messageId = streamingMessageId {
+                        appendGeneratedImage(imageURL, toMessage: messageId)
+                    }
+                case .complete(let response, _):
+                    if !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        generationSummary = response
+                    }
+                case .progress(let message):
+                    loadingMessage = message
+                case .error(let error):
+                    throw error
+                case .started, .token, .toolCalls, .audio:
+                    break
+                }
+            }
+
+            if generatedImageURL != nil {
+                messages.append(ExecutionMessage(
+                    role: .tool,
+                    content: "\(generationSummary)\nThe generated image is already displayed in the app UI. In your final response, use text only. Do not include markdown image syntax, image URLs, local file paths, HTML image tags, data URLs, or links to external image services such as Pollinations.",
+                    toolCallId: toolCall.id,
+                    name: "generate_image"
+                ))
+            } else {
+                messages.append(ExecutionMessage(
+                    role: .tool,
+                    content: "Image generation finished without returning an image.",
+                    toolCallId: toolCall.id,
+                    name: "generate_image"
+                ))
+            }
+        } catch {
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: "Image generation unavailable: \(error.localizedDescription)",
+                toolCallId: toolCall.id,
+                name: "generate_image"
+            ))
+        }
     }
 
-    private func initialToolCall(isImageGeneration: Bool, shouldUseWebSearch: Bool) -> ToolCall? {
-        if isImageGeneration {
-            return ToolCall(toolName: "FLUX.2 image generation", status: "Generating", icon: "photo")
+    private func executeSpeechGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
+        let args = toolCall.function.arguments
+        var speechText = prompt
+        if let data = args.data(using: .utf8),
+           let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let decodedText = decoded["text"] as? String,
+           !decodedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            speechText = decodedText
         }
 
-        if shouldUseWebSearch {
-            return ToolCall(toolName: "Exa web search", status: "Searching", icon: "magnifyingglass")
+        loadingMessage = "Generating speech..."
+        if let messageId = streamingMessageId {
+            appendToolCall(
+                ToolCall(
+                    toolName: "KugelAudio speech generation",
+                    status: speechText,
+                    icon: "waveform"
+                ),
+                toMessage: messageId
+            )
+            if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+               let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+                chats[chatIndex].messages[messageIndex].content = ""
+                persistConversationHistory()
+            }
         }
 
-        return nil
+        do {
+            let request = ExecutionRequest(
+                backend: .audio,
+                modelId: speechGenerationModelId,
+                messages: [ExecutionMessage(role: .user, content: speechText)],
+                outputDirectory: generatedSpeechDirectory,
+                maxTokens: 0,
+                temperature: 1.0
+            )
+
+            let stream = try await vlmExecutor.execute(request: request)
+            var generatedAudioURL: URL?
+            var generationSummary = "Speech generation completed."
+
+            for await event in stream {
+                if Task.isCancelled {
+                    break
+                }
+
+                switch event {
+                case .audio(let audioURL):
+                    generatedAudioURL = audioURL
+                    if let messageId = streamingMessageId {
+                        appendGeneratedAudio(audioURL, toMessage: messageId)
+                    }
+                case .complete(let response, _):
+                    if !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        generationSummary = response
+                    }
+                case .progress(let message):
+                    loadingMessage = message
+                case .error(let error):
+                    throw error
+                case .started, .token, .toolCalls, .image:
+                    break
+                }
+            }
+
+            if generatedAudioURL != nil {
+                messages.append(ExecutionMessage(
+                    role: .tool,
+                    content: "\(generationSummary)\nThe generated audio is already displayed in the app UI. In your final response, use text only. Do not include local file paths.",
+                    toolCallId: toolCall.id,
+                    name: "create_speech"
+                ))
+            } else {
+                messages.append(ExecutionMessage(
+                    role: .tool,
+                    content: "Speech generation finished without returning audio.",
+                    toolCallId: toolCall.id,
+                    name: "create_speech"
+                ))
+            }
+        } catch {
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: "Speech generation unavailable: \(error.localizedDescription)",
+                toolCallId: toolCall.id,
+                name: "create_speech"
+            ))
+        }
     }
 
-    private func shouldUseWebSearch(for prompt: String) -> Bool {
-        if selectedTool == .research {
-            return true
+    private func executeMusicGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
+        let args = toolCall.function.arguments
+        var parameters = defaultMusicParameters(caption: prompt)
+        if let data = args.data(using: .utf8),
+           let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let caption = decoded["caption"] as? String,
+               !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parameters["caption"] = caption
+            }
+            if let lyrics = decoded["lyrics"] as? String {
+                parameters["lyrics"] = lyrics
+            }
+            if let duration = decoded["duration"] {
+                parameters["duration"] = duration
+            }
+            if let instrumental = decoded["instrumental"] {
+                parameters["instrumental"] = instrumental
+            }
         }
 
-        guard selectedTool == .auto else {
-            return false
+        let musicPrompt = (parameters["caption"] as? String) ?? prompt
+        loadingMessage = "Generating music..."
+        if let messageId = streamingMessageId {
+            appendToolCall(
+                ToolCall(
+                    toolName: "ACE-Step music generation",
+                    status: musicPrompt,
+                    icon: "music.note"
+                ),
+                toMessage: messageId
+            )
+            if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+               let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+                chats[chatIndex].messages[messageIndex].content = ""
+                persistConversationHistory()
+            }
         }
 
-        let normalizedPrompt = prompt.lowercased()
-        let explicitSearchPhrases = [
-            "web search",
-            "search the web",
-            "do a search",
-            "look up",
-            "google",
-            "browse"
-        ]
-        if explicitSearchPhrases.contains(where: normalizedPrompt.contains) {
-            return true
-        }
+        do {
+            let request = ExecutionRequest(
+                backend: .music,
+                modelId: musicGenerationModelId,
+                messages: [ExecutionMessage(role: .user, content: musicPrompt)],
+                outputDirectory: generatedMusicDirectory,
+                maxTokens: 0,
+                temperature: 1.0,
+                parameters: parameters
+            )
 
-        let currentInfoTerms = [
-            "latest",
-            "current",
-            "right now",
-            "today",
-            "recent",
-            "live",
-            "price",
-            "stock",
-            "bitcoin",
-            "btc",
-            "weather",
-            "news"
-        ]
-        return currentInfoTerms.contains { term in
-            normalizedPrompt.contains(term)
+            let stream = try await vlmExecutor.execute(request: request)
+            var generatedAudioURL: URL?
+            var generationSummary = "Music generation completed."
+
+            for await event in stream {
+                if Task.isCancelled {
+                    break
+                }
+
+                switch event {
+                case .audio(let audioURL):
+                    generatedAudioURL = audioURL
+                    if let messageId = streamingMessageId {
+                        appendGeneratedAudio(audioURL, toMessage: messageId)
+                    }
+                case .complete(let response, _):
+                    if !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        generationSummary = response
+                    }
+                case .progress(let message):
+                    loadingMessage = message
+                case .error(let error):
+                    throw error
+                case .started, .token, .toolCalls, .image:
+                    break
+                }
+            }
+
+            if generatedAudioURL != nil {
+                messages.append(ExecutionMessage(
+                    role: .tool,
+                    content: "\(generationSummary)\nThe generated music is already displayed in the app UI. In your final response, use text only. Do not include local file paths.",
+                    toolCallId: toolCall.id,
+                    name: "generate_music"
+                ))
+            } else {
+                messages.append(ExecutionMessage(
+                    role: .tool,
+                    content: "Music generation finished without returning audio.",
+                    toolCallId: toolCall.id,
+                    name: "generate_music"
+                ))
+            }
+        } catch {
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: "Music generation unavailable: \(error.localizedDescription)",
+                toolCallId: toolCall.id,
+                name: "generate_music"
+            ))
         }
     }
 
@@ -408,11 +854,21 @@ class ChatViewModel: ObservableObject {
         // by sending a request
     }
 
-    private func processStream(_ stream: AsyncStream<ExecutionEvent>, forMessage messageId: UUID) async {
+    private func processStream(
+        _ stream: AsyncStream<ExecutionEvent>,
+        forMessage messageId: UUID,
+        messages: [ExecutionMessage]? = nil,
+        images: [URL]? = nil,
+        prompt: String? = nil,
+        toolDepth: Int = 0,
+        hasTools: Bool = false,
+        isImageGeneration: Bool = false,
+        isSpeechGeneration: Bool = false,
+        isMusicGeneration: Bool = false
+    ) async {
         var fullResponse = ""
         
         for await event in stream {
-            // Check if cancelled
             if Task.isCancelled {
                 markMessageStopped(messageId)
                 break
@@ -420,24 +876,44 @@ class ChatViewModel: ObservableObject {
             
             switch event {
             case .started:
-                break // Already handled
+                break
                 
             case .token(let token):
                 fullResponse += token
-                updateStreamingMessage(messageId, content: fullResponse)
+                if hasTools && shouldBufferToolEnabledOutput(fullResponse) {
+                    loadingMessage = "Thinking..."
+                } else {
+                    updateStreamingMessage(messageId, content: fullResponse)
+                }
 
             case .image(let imageURL):
                 appendGeneratedImage(imageURL, toMessage: messageId)
-                updateMessageToolCall(messageId, status: "Done")
+
+            case .audio(let audioURL):
+                appendGeneratedAudio(audioURL, toMessage: messageId)
                 
             case .complete(let response, let usage):
                 fullResponse = response
-                finalizeMessage(messageId, content: fullResponse, usage: usage)
+                finalizeMessage(
+                    messageId,
+                    content: (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? "" : fullResponse,
+                    usage: usage,
+                    clearToolCall: isImageGeneration || isSpeechGeneration || isMusicGeneration
+                )
                 isGenerating = false
                 streamingMessageId = nil
                 generationTask = nil
                 loadingMessage = ""
                 
+            case .toolCalls(let toolCalls):
+                guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
+                for toolCall in toolCalls {
+                    currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
+                    await executeToolCall(toolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
+                }
+                await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+                return
+
             case .error(let error):
                 handleGenerationError(error)
                 isGenerating = false
@@ -453,6 +929,16 @@ class ChatViewModel: ObservableObject {
             isGenerating = false
             streamingMessageId = nil
             generationTask = nil
+        }
+    }
+
+    private func shouldBufferToolEnabledOutput(_ output: String) -> Bool {
+        let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOutput.isEmpty else { return true }
+
+        let toolPrefixes = ["<function=", "<|tool_call|>"]
+        return toolPrefixes.contains { prefix in
+            prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
         }
     }
 
@@ -479,11 +965,36 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func finalizeMessage(_ messageId: UUID, content: String, usage: TokenUsage) {
+    private func appendGeneratedAudio(_ audioURL: URL, toMessage messageId: UUID) {
+        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+            var updatedMessages = chats[chatIndex].messages
+            if !updatedMessages[messageIndex].audioURLs.contains(audioURL) {
+                updatedMessages[messageIndex].audioURLs.append(audioURL)
+            }
+            chats[chatIndex].messages = updatedMessages
+            persistConversationHistory()
+        }
+    }
+
+    private func appendToolCall(_ toolCall: ToolCall, toMessage messageId: UUID) {
+        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+            var updatedMessages = chats[chatIndex].messages
+            updatedMessages[messageIndex].toolCalls.append(toolCall)
+            chats[chatIndex].messages = updatedMessages
+            persistConversationHistory()
+        }
+    }
+
+    private func finalizeMessage(_ messageId: UUID, content: String, usage: TokenUsage, clearToolCall: Bool = false) {
         if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
            let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
             chats[chatIndex].messages[messageIndex].content = content
             chats[chatIndex].messages[messageIndex].isStreaming = false
+            if clearToolCall {
+                chats[chatIndex].messages[messageIndex].toolCalls = []
+            }
             chats[chatIndex].timestamp = Date()
             // Store token usage if needed
             persistConversationHistory()
@@ -501,9 +1012,9 @@ class ChatViewModel: ObservableObject {
     private func updateMessageToolCall(_ messageId: UUID, status: String) {
         if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
            let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }),
-           var toolCall = chats[chatIndex].messages[messageIndex].toolCall {
+           var toolCall = chats[chatIndex].messages[messageIndex].toolCalls.last {
             toolCall.status = status
-            chats[chatIndex].messages[messageIndex].toolCall = toolCall
+            chats[chatIndex].messages[messageIndex].toolCalls[chats[chatIndex].messages[messageIndex].toolCalls.count - 1] = toolCall
             persistConversationHistory()
         }
     }
@@ -696,6 +1207,19 @@ private final class ChatStore {
                 print("Failed to copy attachment \(sourceURL.path): \(error)")
                 return sourceURL
             }
+        }
+    }
+
+    func deleteAttachments(for chatId: UUID) {
+        let chatAttachmentsDirectory = attachmentsDirectory
+            .appendingPathComponent(chatId.uuidString, isDirectory: true)
+
+        guard fileManager.fileExists(atPath: chatAttachmentsDirectory.path) else { return }
+
+        do {
+            try fileManager.removeItem(at: chatAttachmentsDirectory)
+        } catch {
+            print("Failed to delete attachments for chat \(chatId): \(error)")
         }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MessageBubble: View {
     let message: Message
@@ -31,7 +32,7 @@ struct MessageBubble: View {
 
             // Message content
             VStack(alignment: .leading, spacing: 4) {
-                if let toolCall = message.toolCall {
+                ForEach(message.toolCalls) { toolCall in
                     ToolCallView(toolCall: toolCall)
                 }
 
@@ -50,15 +51,26 @@ struct MessageBubble: View {
                         .frame(maxWidth: 540, alignment: .leading)
                     }
 
-                    AIContentView(
-                        content: message.content,
-                        isStreaming: isStreaming,
-                        cursorVisible: cursorVisible,
-                        onCopy: copyToClipboard
-                    )
-                    .contextMenu {
-                        Button("Copy") {
-                            copyToClipboard()
+                    if !message.audioURLs.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(message.audioURLs, id: \.self) { audioURL in
+                                GeneratedAudioAttachmentView(audioURL: audioURL)
+                            }
+                        }
+                        .frame(maxWidth: 360, alignment: .leading)
+                    }
+
+                    if !message.content.isEmpty || isStreaming {
+                        AIContentView(
+                            content: message.content,
+                            isStreaming: isStreaming,
+                            cursorVisible: cursorVisible,
+                            onCopy: copyToClipboard
+                        )
+                        .contextMenu {
+                            Button("Copy") {
+                                copyToClipboard()
+                            }
                         }
                     }
                 } else {
@@ -149,6 +161,10 @@ struct MessageBubble: View {
             let attachments = message.imageURLs.map { $0.lastPathComponent }.joined(separator: ", ")
             clipboardText += clipboardText.isEmpty ? "Attachments: \(attachments)" : "\n\nAttachments: \(attachments)"
         }
+        if !message.audioURLs.isEmpty {
+            let attachments = message.audioURLs.map { $0.lastPathComponent }.joined(separator: ", ")
+            clipboardText += clipboardText.isEmpty ? "Audio: \(attachments)" : "\n\nAudio: \(attachments)"
+        }
 
         NSPasteboard.general.setString(clipboardText, forType: .string)
 
@@ -175,6 +191,108 @@ struct MessageBubble: View {
                 }
             }
             cursorVisible = false
+        }
+    }
+}
+
+struct GeneratedAudioAttachmentView: View {
+    let audioURL: URL
+    @State private var sound: NSSound?
+    @State private var isPlaying = false
+    @State private var downloadError: String?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: togglePlayback) {
+                Image(systemName: isPlaying ? "stop.fill" : "play.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Color.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help(isPlaying ? "Stop" : "Play")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Generated speech")
+                    .font(.system(size: 13, weight: .medium))
+                Text(audioURL.lastPathComponent)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: downloadAudio) {
+                Label("Download", systemImage: "square.and.arrow.down")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Download audio")
+        }
+        .padding(10)
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
+        )
+        .help(audioURL.lastPathComponent)
+        .contextMenu {
+            Button(isPlaying ? "Stop Audio" : "Play Audio", action: togglePlayback)
+            Button("Download Audio", action: downloadAudio)
+        }
+        .onDisappear {
+            sound?.stop()
+            isPlaying = false
+        }
+        .alert("Download failed", isPresented: Binding(
+            get: { downloadError != nil },
+            set: { if !$0 { downloadError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(downloadError ?? "Unable to save the audio.")
+        }
+    }
+
+    private func togglePlayback() {
+        if isPlaying {
+            sound?.stop()
+            isPlaying = false
+            return
+        }
+
+        let loadedSound = sound ?? NSSound(contentsOf: audioURL, byReference: true)
+        sound = loadedSound
+        loadedSound?.play()
+        isPlaying = loadedSound != nil
+    }
+
+    private func downloadAudio() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.wav]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = audioURL.lastPathComponent
+        panel.begin { response in
+            guard response == .OK, let destinationURL = panel.url else { return }
+
+            do {
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                try FileManager.default.copyItem(at: audioURL, to: destinationURL)
+            } catch {
+                downloadError = error.localizedDescription
+            }
         }
     }
 }
@@ -245,18 +363,80 @@ struct SentImageAttachmentView: View {
 
 struct GeneratedImageAttachmentView: View {
     let imageURL: URL
+    @State private var downloadError: String?
+
+    private var loadedImage: NSImage? {
+        NSImage(contentsOf: imageURL)
+    }
 
     var body: some View {
-        Image(nsImage: NSImage(contentsOf: imageURL) ?? NSImage())
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(maxWidth: 260, maxHeight: 260)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
-            )
-            .help(imageURL.lastPathComponent)
+        ZStack(alignment: .topTrailing) {
+            if let loadedImage {
+                Image(nsImage: loadedImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.secondary)
+                    Text("Image not available")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 260, maxHeight: 260)
+            }
+
+            Button(action: downloadImage) {
+                Label("Download", systemImage: "square.and.arrow.down")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Color.black.opacity(0.58))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .padding(8)
+            .help("Download image")
+        }
+        .frame(maxWidth: 260, maxHeight: 260)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
+        )
+        .help(imageURL.lastPathComponent)
+        .contextMenu {
+            Button("Download Image", action: downloadImage)
+        }
+        .alert("Download failed", isPresented: Binding(
+            get: { downloadError != nil },
+            set: { if !$0 { downloadError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(downloadError ?? "Unable to save the image.")
+        }
+    }
+
+    private func downloadImage() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = imageURL.lastPathComponent
+        panel.begin { response in
+            guard response == .OK, let destinationURL = panel.url else { return }
+
+            do {
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                try FileManager.default.copyItem(at: imageURL, to: destinationURL)
+            } catch {
+                downloadError = error.localizedDescription
+            }
+        }
     }
 }
 
@@ -833,23 +1013,39 @@ struct ToolCallView: View {
     @State private var isExpanded = true
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: toolCall.icon)
-                .font(.system(size: 12))
-                .foregroundStyle(Color.accentColor)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: toolCall.icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentColor)
 
-            Text(toolCall.toolName)
-                .font(.system(size: 12, weight: .medium))
+                Text(toolCall.toolName)
+                    .font(.system(size: 12, weight: .medium))
 
-            Spacer()
+                Spacer()
 
-            Text(toolCall.status)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                Text(headerStatus)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
 
-            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            if isExpanded, shouldShowDetails {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(detailTitle)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(toolCall.status)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.leading, 20)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -861,6 +1057,42 @@ struct ToolCallView: View {
                 isExpanded.toggle()
             }
         }
+    }
+
+    private var isImageGeneration: Bool {
+        toolCall.icon == "photo" || toolCall.toolName.localizedCaseInsensitiveContains("image")
+    }
+
+    private var isWebSearch: Bool {
+        toolCall.icon == "magnifyingglass" || toolCall.toolName.localizedCaseInsensitiveContains("search")
+    }
+
+    private var shouldShowDetails: Bool {
+        !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var headerStatus: String {
+        if isImageGeneration {
+            return "Generating"
+        }
+
+        if isWebSearch {
+            return "Searching"
+        }
+
+        return toolCall.status
+    }
+
+    private var detailTitle: String {
+        if isImageGeneration {
+            return "Prompt"
+        }
+
+        if isWebSearch {
+            return "Query"
+        }
+
+        return "Details"
     }
 }
 

@@ -134,28 +134,31 @@ class VLMExecutor: NSObject, ModelExecutor {
     private func waitForReady(timeout: TimeInterval) async throws {
         let startTime = Date()
         let readyState = ReadyState()
+        let lineBuffer = BridgeLineBuffer()
 
         stdoutPipe?.fileHandleForReading.readabilityHandler = { [weak readyState] handle in
             let data = handle.availableData
-            guard let line = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !line.isEmpty else { return }
+            guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
 
-            print("[VLMExecutor] Bridge output: \(line)")
+            for line in lineBuffer.append(output) {
+                print("[VLMExecutor] Bridge output: \(line)")
 
-            do {
-                if let json = try JSONSerialization.jsonObject(with: line.data(using: .utf8)!) as? [String: Any],
-                   let type = json["type"] as? String {
-                    if type == "system.ready" {
-                        print("[VLMExecutor] Bridge is ready")
-                        Task { await readyState?.setReady() }
-                    } else if type == "error" {
-                        let message = json["message"] as? String ?? "Unknown error"
-                        print("[VLMExecutor] Bridge initialization error: \(message)")
+                do {
+                    if let lineData = line.data(using: .utf8),
+                       let json = try JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                       let type = json["type"] as? String {
+                        if type == "system.ready" {
+                            print("[VLMExecutor] Bridge is ready")
+                            Task { await readyState?.setReady() }
+                        } else if type == "error" {
+                            let message = json["message"] as? String ?? "Unknown error"
+                            print("[VLMExecutor] Bridge initialization error: \(message)")
+                        }
                     }
+                } catch {
+                    // Ignore parse errors but log them
+                    print("[VLMExecutor] Parse error: \(error)")
                 }
-            } catch {
-                // Ignore parse errors but log them
-                print("[VLMExecutor] Parse error: \(error)")
             }
         }
 
@@ -190,7 +193,7 @@ class VLMExecutor: NSObject, ModelExecutor {
 
         let messages = request.messages.map { $0.toDictionary() }
         var payload: [String: Any] = [
-            "type": request.backend == .image ? "image.generate" : "chat.completions",
+            "type": messageType(for: request.backend),
             "model": request.modelId,
             "messages": messages,
             "max_tokens": request.maxTokens,
@@ -215,9 +218,16 @@ class VLMExecutor: NSObject, ModelExecutor {
             payload["repetition_penalty"] = repetitionPenalty
         }
 
-        // Pass chat_template_kwargs if provided (e.g., enable_thinking)
         if let chatTemplateKwargs = request.chatTemplateKwargs {
             payload["chat_template_kwargs"] = chatTemplateKwargs
+        }
+
+        if let tools = request.tools {
+            payload["tools"] = tools
+        }
+
+        if let parameters = request.parameters {
+            payload["parameters"] = parameters
         }
 
         // Send request
@@ -278,76 +288,103 @@ class VLMExecutor: NSObject, ModelExecutor {
         continuation.yield(.started)
 
         let responseBuilder = ResponseBuilder()
+        let lineBuffer = BridgeLineBuffer()
 
         stdoutPipe?.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty,
-                  let line = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !line.isEmpty else { return }
+            guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
 
-            // Debug: Log all received lines
-            print("[VLMExecutor] Received: \(line.prefix(200))...")
+            for line in lineBuffer.append(output) {
+                // Debug: Log all received lines
+                print("[VLMExecutor] Received: \(line.prefix(200))...")
 
-            do {
-                guard let json = try JSONSerialization.jsonObject(with: line.data(using: .utf8)!) as? [String: Any],
-                      let type = json["type"] as? String else {
-                    print("[VLMExecutor] Could not parse JSON or missing type field")
-                    return
-                }
-
-                switch type {
-                case "chat.completion.chunk":
-                    if let choices = json["choices"] as? [[String: Any]],
-                       let first = choices.first,
-                       let delta = first["delta"] as? [String: Any],
-                       let content = delta["content"] as? String {
-                        responseBuilder.append(content)
-                        continuation.yield(.token(content))
+                do {
+                    guard let lineData = line.data(using: .utf8),
+                          let json = try JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                          let type = json["type"] as? String else {
+                        print("[VLMExecutor] Could not parse JSON or missing type field")
+                        continue
                     }
 
-                case "chat.completion.complete":
-                    if let usage = json["usage"] as? [String: Any],
-                       let promptTokens = usage["prompt_tokens"] as? Int,
-                       let completionTokens = usage["completion_tokens"] as? Int {
-                        let completedContent: String
-                        if responseBuilder.fullResponse.isEmpty,
-                           let choices = json["choices"] as? [[String: Any]],
+                    switch type {
+                    case "chat.completion.chunk":
+                        if let choices = json["choices"] as? [[String: Any]],
                            let first = choices.first,
-                           let message = first["message"] as? [String: Any],
-                           let content = message["content"] as? String {
-                            completedContent = content
-                        } else {
-                            completedContent = responseBuilder.fullResponse
+                           let delta = first["delta"] as? [String: Any],
+                           let content = delta["content"] as? String {
+                            responseBuilder.append(content)
+                            continuation.yield(.token(content))
                         }
-                        let tokenUsage = TokenUsage(
-                            promptTokens: promptTokens,
-                            completionTokens: completionTokens
-                        )
-                        continuation.yield(.complete(completedContent, usage: tokenUsage))
+
+                    case "chat.completion.complete":
+                        if let usage = json["usage"] as? [String: Any],
+                           let promptTokens = usage["prompt_tokens"] as? Int,
+                           let completionTokens = usage["completion_tokens"] as? Int {
+                            let completedContent: String
+                            if responseBuilder.fullResponse.isEmpty,
+                               let choices = json["choices"] as? [[String: Any]],
+                               let first = choices.first,
+                               let message = first["message"] as? [String: Any],
+                               let content = message["content"] as? String {
+                                completedContent = content
+                            } else {
+                                completedContent = responseBuilder.fullResponse
+                            }
+                            let tokenUsage = TokenUsage(
+                                promptTokens: promptTokens,
+                                completionTokens: completionTokens
+                            )
+                            continuation.yield(.complete(completedContent, usage: tokenUsage))
+                            continuation.finish()
+                        }
+
+                    case "chat.completion.tool_calls":
+                        if let toolCallDicts = json["tool_calls"] as? [[String: Any]] {
+                            var parsedToolCalls: [ExecutionToolCall] = []
+                            for tcDict in toolCallDicts {
+                                if let id = tcDict["id"] as? String,
+                                   let fnDict = tcDict["function"] as? [String: Any],
+                                   let name = fnDict["name"] as? String,
+                                   let arguments = fnDict["arguments"] as? String {
+                                    parsedToolCalls.append(ExecutionToolCall(
+                                        id: id,
+                                        function: ExecutionToolCallFunction(name: name, arguments: arguments)
+                                    ))
+                                }
+                            }
+                            if !parsedToolCalls.isEmpty {
+                                continuation.yield(.toolCalls(parsedToolCalls))
+                            }
+                            continuation.finish()
+                        }
+
+                    case "image.generated":
+                        if let path = json["path"] as? String {
+                            continuation.yield(.image(URL(fileURLWithPath: path)))
+                        }
+
+                    case "audio.generated":
+                        if let path = json["path"] as? String {
+                            continuation.yield(.audio(URL(fileURLWithPath: path)))
+                        }
+
+                    case "model.loading":
+                        if let status = json["status"] as? String {
+                            continuation.yield(.progress("Loading model: \(status)..."))
+                        }
+
+                    case "error":
+                        let errorMessage = json["message"] as? String ?? "Unknown Python error"
+                        print("[Python Error] \(errorMessage)")
+                        continuation.yield(.error(ExecutionError.pythonError(errorMessage)))
                         continuation.finish()
+
+                    default:
+                        break
                     }
-
-                case "image.generated":
-                    if let path = json["path"] as? String {
-                        continuation.yield(.image(URL(fileURLWithPath: path)))
-                    }
-
-                case "model.loading":
-                    if let status = json["status"] as? String {
-                        continuation.yield(.progress("Loading model: \(status)..."))
-                    }
-
-            case "error":
-                let errorMessage = json["message"] as? String ?? "Unknown Python error"
-                print("[Python Error] \(errorMessage)")
-                continuation.yield(.error(ExecutionError.pythonError(errorMessage)))
-                continuation.finish()
-
-                default:
-                    break
+                } catch {
+                    print("[VLMExecutor] Parse error: \(error)")
                 }
-            } catch {
-                // Ignore parse errors
             }
         }
 
@@ -374,6 +411,19 @@ class VLMExecutor: NSObject, ModelExecutor {
         }
     }
 
+    private func messageType(for backend: RuntimeBackend) -> String {
+        switch backend {
+        case .image:
+            return "image.generate"
+        case .audio:
+            return "audio.speech"
+        case .music:
+            return "music.generate"
+        case .vlm, .llm:
+            return "chat.completions"
+        }
+    }
+
     private func shouldRetry(error: Error) -> Bool {
         guard retryCount < maxRetries else { return false }
 
@@ -388,6 +438,32 @@ class VLMExecutor: NSObject, ModelExecutor {
         }
 
         return false
+    }
+}
+
+// MARK: - Bridge Line Buffer
+private final class BridgeLineBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending = ""
+
+    func append(_ output: String) -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        pending += output
+        var lines: [String] = []
+
+        while let newlineRange = pending.range(of: "\n") {
+            let line = String(pending[..<newlineRange.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            pending.removeSubrange(...newlineRange.lowerBound)
+
+            if !line.isEmpty {
+                lines.append(line)
+            }
+        }
+
+        return lines
     }
 }
 

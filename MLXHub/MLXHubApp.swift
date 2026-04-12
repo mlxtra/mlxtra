@@ -8,5 +8,9 @@ struct MLXHubApp: App {
         }
         .defaultSize(width: 1200, height: 700)
         .windowStyle(.titleBar)
+
+        Settings {
+            SettingsView()
+        }
     }
 }

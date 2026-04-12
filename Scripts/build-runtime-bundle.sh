@@ -43,8 +43,13 @@ cd -
 echo "Step 3: Setting up Python virtual environment..."
 PYTHON_BIN="${BUILD_DIR}/python/Frameworks/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 if [ ! -f "${PYTHON_BIN}" ]; then
-    # Fallback: use system Python to create venv
-    python3 -m venv "${BUILD_DIR}/venv"
+    # Fallback: ACE-Step 1.5 requires Python <3.13, so prefer python3.12.
+    if command -v python3.12 >/dev/null 2>&1; then
+        python3.12 -m venv "${BUILD_DIR}/venv"
+    else
+        echo "Python 3.12 is required for ACE-Step 1.5 when bundled Python extraction fails."
+        exit 1
+    fi
 else
     "${PYTHON_BIN}" -m venv "${BUILD_DIR}/venv"
 fi
@@ -62,6 +67,9 @@ echo "Installing mlx..."
 
 echo "Installing mlx-vlm..."
 "${VENV_PIP}" install "mlx-vlm>=0.4.0"
+
+echo "Installing mlx-audio..."
+"${VENV_PIP}" install "mlx-audio>=0.4.2"
 
 echo "Installing mflux..."
 "${VENV_PIP}" install "mflux>=0.17.5"
@@ -86,9 +94,17 @@ echo "Installing torchvision..."
 
 echo "Step 5: Creating runtime structure..."
 mkdir -p "${OUTPUT_DIR}"
+rm -rf "${OUTPUT_DIR}/venv" "${OUTPUT_DIR}/python" "${OUTPUT_DIR}/acestep-venv"
 
 # Copy venv
 cp -R "${BUILD_DIR}/venv" "${OUTPUT_DIR}/venv"
+
+echo "Creating isolated ACE-Step runtime..."
+"${VENV_PYTHON}" -m venv "${BUILD_DIR}/acestep-venv"
+ACE_PIP="${BUILD_DIR}/acestep-venv/bin/pip"
+"${ACE_PIP}" install --upgrade pip
+"${ACE_PIP}" install "git+https://github.com/ace-step/ACE-Step-1.5.git"
+cp -R "${BUILD_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep-venv"
 
 # Copy Python framework (minimal)
 mkdir -p "${OUTPUT_DIR}/python"
@@ -113,6 +129,7 @@ cat > "${OUTPUT_DIR}/runtime-manifest.json" << EOF
   "packages": [
     "mlx>=0.21.0",
     "mlx-vlm>=0.4.0",
+    "mlx-audio>=0.4.2",
     "mflux>=0.17.5",
     "transformers>=4.40.0",
     "huggingface-hub>=0.20.0",
@@ -121,11 +138,17 @@ cat > "${OUTPUT_DIR}/runtime-manifest.json" << EOF
     "torch>=2.0.0",
     "torchvision>=0.15.0"
   ],
+  "isolatedPackages": [
+    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git"
+  ],
   "supportedModels": [
     "mlx-community/Qwen3.5-9B-MLX-4bit",
     "google/gemma-4-4b-it",
     "mlx-community/Qwen3.5-2B-MLX-4bit",
-    "black-forest-labs/FLUX.2-klein-4B"
+    "black-forest-labs/FLUX.2-klein-4B",
+    "kugelaudio/kugelaudio-0-open",
+    "ACE-Step/acestep-v15-turbo-continuous",
+    "ACE-Step/acestep-v15-xl-turbo"
   ]
 }
 EOF
@@ -133,18 +156,27 @@ EOF
 echo "Step 7: Verifying installation..."
 "${OUTPUT_DIR}/venv/bin/python" -c "
 import sys
+import importlib.metadata as metadata
 print(f'Python: {sys.version}')
 
 import mlx
-print(f'mlx: {mlx.__version__}')
+print(f'mlx: {metadata.version(\"mlx\")}')
 
 from mlx_vlm import load
 print('mlx-vlm: OK')
+
+from mlx_audio.tts.utils import load_model
+print('mlx-audio: OK')
 
 import mflux
 print('mflux: OK')
 
 print('All dependencies verified!')
+"
+
+"${OUTPUT_DIR}/acestep-venv/bin/python" -c "
+from acestep.inference import GenerationConfig, GenerationParams, generate_music
+print('ACE-Step: OK')
 "
 
 echo ""

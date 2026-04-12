@@ -21,6 +21,7 @@ let package = Package(
             path: "MLXHub",
             resources: [
                 .copy("Resources/python_bridge.py"),
+                .copy("Resources/acestep_bridge.py"),
                 .copy("Resources/runtime")
             ],
             swiftSettings: [

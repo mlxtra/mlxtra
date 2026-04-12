@@ -13,16 +13,25 @@
   "packages": [
     "mlx>=0.21.0",
     "mlx-vlm>=0.4.0",
+    "mlx-audio>=0.4.2",
     "mflux>=0.17.5",
     "transformers>=4.40.0",
     "huggingface-hub>=0.20.0",
     "pillow>=10.0.0",
-    "numpy>=1.24.0"
+    "numpy>=1.24.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0"
+  ],
+  "isolatedPackages": [
+    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git"
   ],
   "supportedModels": [
     "mlx-community/Qwen3.5-9B-MLX-4bit",
     "google/gemma-4-4b-it",
     "mlx-community/Qwen3.5-2B-MLX-4bit",
-    "black-forest-labs/FLUX.2-klein-4B"
+    "black-forest-labs/FLUX.2-klein-4B",
+    "kugelaudio/kugelaudio-0-open",
+    "ACE-Step/acestep-v15-turbo-continuous",
+    "ACE-Step/acestep-v15-xl-turbo"
   ]
 }

@@ -107,6 +107,26 @@ class RuntimeManager: ObservableObject {
     
     /// Check if model is already downloaded
     func isModelDownloaded(modelId: String) -> Bool {
+        if modelId.hasPrefix("ACE-Step/") {
+            let checkpointName: String
+            if modelId.contains("acestep-v15-turbo-continuous") {
+                checkpointName = "acestep-v15-turbo"
+            } else {
+                checkpointName = modelId.components(separatedBy: "/").last ?? modelId
+            }
+
+            let checkpointPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cache/ace-step/checkpoints")
+                .appendingPathComponent(checkpointName)
+
+            if FileManager.default.fileExists(atPath: checkpointPath.path),
+               let contents = try? FileManager.default.contentsOfDirectory(atPath: checkpointPath.path),
+               contents.contains(where: { $0.contains("safetensors") || $0.hasSuffix(".pt") || $0.hasSuffix(".bin") }) {
+                print("[RuntimeManager] ACE-Step model \(modelId) found at \(checkpointPath.path)")
+                return true
+            }
+        }
+
         let path = modelCachePath(modelId: modelId)
         // Check for model weights file presence
         let snapshotsPath = path.appendingPathComponent("snapshots")
@@ -115,11 +135,10 @@ class RuntimeManager: ObservableObject {
         if FileManager.default.fileExists(atPath: snapshotsPath.path) {
             if let snapshots = try? FileManager.default.contentsOfDirectory(atPath: snapshotsPath.path),
                !snapshots.isEmpty {
-                // Check if any snapshot has model files
+                // Check if any snapshot has model files, including nested Diffusers-style folders.
                 for snapshot in snapshots {
                     let snapshotPath = snapshotsPath.appendingPathComponent(snapshot)
-                    if let contents = try? FileManager.default.contentsOfDirectory(atPath: snapshotPath.path),
-                       contents.contains(where: { $0.contains("safetensors") || $0 == "model.safetensors.index.json" }) {
+                    if snapshotContainsModelFiles(snapshotPath) {
                         print("[RuntimeManager] Model \(modelId) found at \(snapshotPath.path)")
                         return true
                     }
@@ -129,6 +148,19 @@ class RuntimeManager: ObservableObject {
 
         print("[RuntimeManager] Model \(modelId) not fully downloaded yet")
         return false
+    }
+
+    private func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
+        // Just check if the snapshots directory exists and has any snapshot folders
+        // In HuggingFace's cache structure, presence of snapshot = downloaded
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: snapshotPath,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return false
+        }
+        return !contents.isEmpty
     }
     
     /// Get estimated model size
@@ -142,6 +174,14 @@ class RuntimeManager: ObservableObject {
             return 1.5
         } else if modelId.contains("FLUX.2-klein-4B") {
             return 15.0
+        } else if modelId.contains("kugelaudio-0-open") {
+            return 15.0
+        } else if modelId.contains("acestep-v15-xl") {
+            return 19.0
+        } else if modelId.contains("acestep-v15-turbo-continuous") {
+            return 4.8
+        } else if modelId.contains("acestep-v15") {
+            return 5.0
         }
         return 5.0 // Default estimate
     }

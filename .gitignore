@@ -37,6 +37,14 @@ Package.resolved
 ## Python runtime (bundled)
 MLXHub/Resources/runtime/macos-arm64/python/
 MLXHub/Resources/runtime/macos-arm64/venv/
+MLXHub/Resources/runtime/macos-arm64/acestep-venv/
+
+## Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
 
 ## Cached models
 .cache/

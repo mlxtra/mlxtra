@@ -3,6 +3,7 @@ import SwiftUI
 struct SidebarView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var searchText: String = ""
+    @Environment(\.openSettings) private var openSettings
 
     private var filteredChats: [Chat] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -61,7 +62,13 @@ struct SidebarView: View {
 
             List(selection: $viewModel.selectedChatId) {
                 ForEach(filteredChats) { chat in
-                    ChatHistoryItem(chat: chat, isSelected: viewModel.selectedChatId == chat.id)
+                    ChatHistoryItem(
+                        chat: chat,
+                        isSelected: viewModel.selectedChatId == chat.id,
+                        onDelete: {
+                            viewModel.deleteChat(chat)
+                        }
+                    )
                         .tag(chat.id)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
@@ -71,7 +78,7 @@ struct SidebarView: View {
                         }
                         .contextMenu {
                             Button("Delete") {
-                                // Handle delete
+                                viewModel.deleteChat(chat)
                             }
                             Divider()
                             Button("Rename") {
@@ -92,6 +99,31 @@ struct SidebarView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+
+            Divider()
+
+            Button(action: {
+                openSettings()
+            }) {
+                HStack(spacing: 9) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .regular))
+                        .frame(width: 20, height: 20)
+
+                    Text("Settings")
+                        .font(.system(size: 13))
+
+                    Spacer()
+                }
+                .foregroundStyle(.primary)
+                .frame(minHeight: 30)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(",", modifiers: .command)
+            .help("Settings (⌘,)")
         }
         .frame(minWidth: 240, idealWidth: 280)
         .background(Color(NSColor.controlBackgroundColor))
@@ -101,6 +133,9 @@ struct SidebarView: View {
 struct ChatHistoryItem: View {
     let chat: Chat
     let isSelected: Bool
+    let onDelete: () -> Void
+    @State private var isHovered = false
+    @State private var isConfirmingDelete = false
 
     var body: some View {
         HStack(spacing: 9) {
@@ -116,10 +151,51 @@ struct ChatHistoryItem: View {
                 .truncationMode(.tail)
 
             Spacer()
+
+            if isHovered || isConfirmingDelete {
+                Button(action: handleDeleteTap) {
+                    Text(isConfirmingDelete ? "Confirm" : "")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(isConfirmingDelete ? Color.white : Color.secondary)
+                        .frame(minWidth: isConfirmingDelete ? 52 : 24, minHeight: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(isConfirmingDelete ? Color.red : Color.clear)
+                        )
+                        .overlay {
+                            if !isConfirmingDelete {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .help(isConfirmingDelete ? "Confirm delete" : "Delete chat")
+                .transition(.opacity)
+            }
         }
         .frame(minHeight: 28)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovered = hovering
+                if !hovering {
+                    isConfirmingDelete = false
+                }
+            }
+        }
+    }
+
+    private func handleDeleteTap() {
+        if isConfirmingDelete {
+            onDelete()
+        } else {
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isConfirmingDelete = true
+            }
+        }
     }
 }
 

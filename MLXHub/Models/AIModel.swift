@@ -25,7 +25,7 @@ enum AIModel: String, CaseIterable, Identifiable {
         case .qwen35:
             return "mlx-community/Qwen3.5-9B-MLX-4bit"
         case .gemma4:
-            return "google/gemma-4-4b-it"
+            return "google/gemma-4-e4b-it"
         case .mini:
             return "mlx-community/Qwen3.5-2B-MLX-4bit"
         }
@@ -171,4 +171,71 @@ struct ModelInfo {
     let memoryRequired: Double
     let downloadSize: Double
     let supportsVision: Bool
+}
+
+enum ModelModality: String, CaseIterable, Identifiable {
+    case vision = "Vision"
+    case image = "Image"
+    case audio = "Audio"
+    case music = "Music"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .vision: return "eye"
+        case .image: return "photo"
+        case .audio: return "waveform"
+        case .music: return "music.note"
+        }
+    }
+}
+
+struct DownloadableModel: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let subtitle: String
+    let modelId: String
+    let modality: ModelModality
+    let downloadSizeGB: Double
+
+    static var embedded: [DownloadableModel] {
+        let visionModels = AIModel.allCases.map { model in
+            DownloadableModel(
+                id: model.modelId,
+                name: model.displayName,
+                subtitle: model.subtitle,
+                modelId: model.modelId,
+                modality: .vision,
+                downloadSizeGB: model.downloadSizeGB
+            )
+        }
+
+        return visionModels + [
+            DownloadableModel(
+                id: "black-forest-labs/FLUX.2-klein-4B",
+                name: "FLUX.2-klein-4B",
+                subtitle: "Image generation model",
+                modelId: "black-forest-labs/FLUX.2-klein-4B",
+                modality: .image,
+                downloadSizeGB: 15.0
+            ),
+            DownloadableModel(
+                id: "kugelaudio/kugelaudio-0-open",
+                name: "KugelAudio 0 Open",
+                subtitle: "Speech generation model",
+                modelId: "kugelaudio/kugelaudio-0-open",
+                modality: .audio,
+                downloadSizeGB: 15.0
+            ),
+            DownloadableModel(
+                id: "ACE-Step/acestep-v15-turbo-continuous",
+                name: "ACE-Step 1.5 Turbo",
+                subtitle: "Music generation model",
+                modelId: "ACE-Step/acestep-v15-turbo-continuous",
+                modality: .music,
+                downloadSizeGB: 4.8
+            ),
+        ]
+    }
 }
