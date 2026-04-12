@@ -5,7 +5,7 @@ A macOS-native GUI application for running and interacting with MLX (Machine Lea
 ## Features
 
 ### Model Support
-- **Vision-Language Models (VLM)**: Chat with vision models like LLaVA, Qwen2-VL
+- **Vision-Language Models (VLM)**: Chat with vision models like Qwen3.5 and Gemma4
 - **Text-to-Image**: Generate images with mflux (Flux-based models)
 - **Image Editing**: Edit images with Flux2KleinEdit
 - **Text-to-Speech**: Generate speech with KugelAudio
