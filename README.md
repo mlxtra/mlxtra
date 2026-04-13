@@ -32,6 +32,9 @@ A macOS-native GUI application for running and interacting with MLX (Machine Lea
 ### Web Tool Integration
 ![Web Tool](web.png)
 
+### Model Management
+![Models](models.png)
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later
