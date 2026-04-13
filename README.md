@@ -18,6 +18,20 @@ A macOS-native GUI application for running and interacting with MLX (Machine Lea
 - **Multi-turn Conversations**: Persistent chat history with context
 - **Drag & Drop**: Easy image attachment for vision tasks
 
+## Screenshots
+
+### Welcome Screen
+![Welcome Screen](welcome.png)
+
+### Chat Interface with Image Generation
+![Image Generation](image.png)
+
+### Speech Generation
+![Speech Generation](speech.png)
+
+### Web Tool Integration
+![Web Tool](web.png)
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later
