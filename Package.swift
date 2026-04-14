@@ -27,6 +27,11 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
+        ),
+        .testTarget(
+            name: "MLXHubTests",
+            dependencies: ["MLXHub"],
+            path: "Tests/MLXHubTests"
         )
     ]
 )

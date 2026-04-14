@@ -14,6 +14,24 @@ def send_json(obj: dict) -> None:
     print(json.dumps(obj), flush=True)
 
 
+def _normalize_music_model_id(model_id: str) -> str:
+    """Normalize HuggingFace repo ID to local ACE-Step directory name.
+
+    ACE-Step expects local directory names like 'acestep-v15-turbo',
+    not HuggingFace repo IDs like 'ACE-Step/acestep-v15-turbo-continuous'.
+    """
+    # Strip HuggingFace organization prefix
+    if model_id.startswith("ACE-Step/"):
+        model_id = model_id[len("ACE-Step/") :]
+
+    # Map variant suffixes to base model name
+    # The local directory is 'acestep-v15-turbo' for all turbo variants
+    if model_id.startswith("acestep-v15-turbo"):
+        return "acestep-v15-turbo"
+
+    return model_id
+
+
 def last_user_prompt(messages: list[dict]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
@@ -27,27 +45,45 @@ def generate_music_once(request: dict) -> None:
     from acestep.llm_inference import LLMHandler
 
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
+    # Normalize the model ID for ACE-Step lookup
+    normalized_id = _normalize_music_model_id(model_id)
+
     messages = request.get("messages", [])
     parameters = request.get("parameters", {}) or {}
-    prompt = (parameters.get("caption") or request.get("prompt") or last_user_prompt(messages)).strip()
+    prompt = (
+        parameters.get("caption") or request.get("prompt") or last_user_prompt(messages)
+    ).strip()
     lyrics = (parameters.get("lyrics") or "").strip()
     output_dir = Path(request.get("output_dir") or Path.home() / "Music" / "MLXHub")
 
     if not prompt:
-        send_json({"type": "error", "message": "No prompt provided for music generation"})
+        send_json(
+            {"type": "error", "message": "No prompt provided for music generation"}
+        )
         return
 
     package_spec = importlib.util.find_spec("acestep")
-    project_root = Path(package_spec.origin).parent.parent if package_spec and package_spec.origin else Path.cwd()
-    config_path = os.environ.get("ACESTEP_CONFIG_PATH") or model_id
+    project_root = (
+        Path(package_spec.origin).parent.parent
+        if package_spec and package_spec.origin
+        else Path.cwd()
+    )
+    config_path = os.environ.get("ACESTEP_CONFIG_PATH") or normalized_id
 
     send_json({"type": "model.loading", "model": model_id, "status": "loading"})
     dit_handler = AceStepHandler()
-    dit_handler.initialize_service(
+    init_result = dit_handler.initialize_service(
         project_root=str(project_root),
         config_path=str(config_path),
         device=os.environ.get("ACESTEP_DEVICE", "mps"),
     )
+    # Check if initialization succeeded
+    if not init_result or init_result[1] is False:
+        error_msg = init_result[0] if init_result else "Unknown initialization error"
+        send_json(
+            {"type": "error", "message": f"Model initialization failed: {error_msg}"}
+        )
+        return
     llm_handler = LLMHandler()
     send_json({"type": "model.loaded", "model": model_id})
 
@@ -113,7 +149,9 @@ def generate_music_once(request: dict) -> None:
     send_json(
         {
             "type": "chat.completion.complete",
-            "choices": [{"message": {"content": f"Generated music with ACE-Step. Seed: {seed}"}}],
+            "choices": [
+                {"message": {"content": f"Generated music with ACE-Step. Seed: {seed}"}}
+            ],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
     )

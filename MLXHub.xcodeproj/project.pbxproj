@@ -26,6 +26,7 @@
 		8A0100010000000000000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001016 /* SettingsView.swift */; };
 		8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001017 /* ModelDownloadManager.swift */; };
 		8A0100010000000000000010 /* python_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001011 /* python_bridge.py */; };
+		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000011 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
 /* End PBXBuildFile section */
 
@@ -47,6 +48,7 @@
 		8A010001000000000000100F /* RuntimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeManager.swift; sourceTree = "<group>"; };
 		8A0100010000000000001010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		8A0100010000000000001011 /* python_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = python_bridge.py; sourceTree = "<group>"; };
+		8A0100010000000000001018 /* acestep_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = acestep_bridge.py; sourceTree = "<group>"; };
 		8A0100010000000000001012 /* runtime */ = {isa = PBXFileReference; lastKnownFileType = folder; path = runtime; sourceTree = "<group>"; };
 		8A0100010000000000001013 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = text; path = Package.swift; sourceTree = "<group>"; };
 		8A0100010000000000001014 /* MLXHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MLXHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -140,13 +142,14 @@
 			path = Execution;
 			sourceTree = "<group>";
 		};
-		8A0100010000000000003008 /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				8A0100010000000000001010 /* Info.plist */,
-				8A0100010000000000001011 /* python_bridge.py */,
-				8A0100010000000000001012 /* runtime */,
-			);
+	8A0100010000000000003008 /* Resources */ = {
+		isa = PBXGroup;
+		children = (
+			8A0100010000000000001010 /* Info.plist */,
+			8A0100010000000000001011 /* python_bridge.py */,
+			8A0100010000000000001018 /* acestep_bridge.py */,
+			8A0100010000000000001012 /* runtime */,
+		);
 			path = Resources;
 			sourceTree = "<group>";
 		};
@@ -244,14 +247,15 @@
 		};
 /* End PBXProject section */
 
-/* Begin PBXResourcesBuildPhase section */
-		8A0100010000000000002002 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				8A0100010000000000000010 /* python_bridge.py in Resources */,
-				8A0100010000000000000011 /* runtime in Resources */,
-			);
+	/* Begin PBXResourcesBuildPhase section */
+	8A0100010000000000002002 /* Resources */ = {
+		isa = PBXResourcesBuildPhase;
+		buildActionMask = 2147483647;
+		files = (
+			8A0100010000000000000010 /* python_bridge.py in Resources */,
+			8A0100010000000000000018 /* acestep_bridge.py in Resources */,
+			8A0100010000000000000011 /* runtime in Resources */,
+		);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */

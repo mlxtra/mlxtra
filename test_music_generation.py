@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Test script for ACE-Step music generation."""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+# Add the runtime venv path
+RUNTIME_DIR = Path(
+    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXHub-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXHub.app/Contents/Resources/runtime/macos-arm64"
+)
+VENV_SITE_PACKAGES = RUNTIME_DIR / "acestep-venv/lib/python3.12/site-packages"
+
+if str(VENV_SITE_PACKAGES) not in sys.path:
+    sys.path.insert(0, str(VENV_SITE_PACKAGES))
+
+
+def send_json(obj: dict) -> None:
+    print(json.dumps(obj, indent=2), flush=True)
+
+
+def test_model_presence():
+    """Test if the model files are actually present where ACE-Step expects them."""
+    print("=" * 60)
+    print("TEST 1: Checking model presence")
+    print("=" * 60)
+
+    from acestep.model_downloader import (
+        check_main_model_exists,
+        check_model_exists,
+        get_checkpoints_dir,
+    )
+
+    checkpoints_dir = get_checkpoints_dir()
+    print(f"Checkpoints directory: {checkpoints_dir}")
+    print(f"Exists: {checkpoints_dir.exists()}")
+
+    if checkpoints_dir.exists():
+        print("\nContents:")
+        for item in checkpoints_dir.iterdir():
+            print(f"  {item.name} - {'dir' if item.is_dir() else 'file'}")
+            if item.is_dir():
+                sub_items = list(item.iterdir())
+                print(f"    ({len(sub_items)} items)")
+
+    main_exists = check_main_model_exists(checkpoints_dir)
+    print(f"\nMain model exists: {main_exists}")
+
+    model_id = "ACE-Step/acestep-v15-turbo-continuous"
+    dit_exists = check_model_exists(model_id, checkpoints_dir)
+    print(f"DiT model '{model_id}' exists: {dit_exists}")
+
+    return main_exists and dit_exists
+
+
+def test_initialization():
+    """Test ACE-Step handler initialization."""
+    print("\n" + "=" * 60)
+    print("TEST 2: Testing handler initialization")
+    print("=" * 60)
+
+    try:
+        from acestep.handler import AceStepHandler
+        from acestep.llm_inference import LLMHandler
+
+        handler = AceStepHandler()
+
+        import importlib.util
+
+        package_spec = importlib.util.find_spec("acestep")
+        project_root = (
+            Path(package_spec.origin).parent.parent
+            if package_spec and package_spec.origin
+            else Path.cwd()
+        )
+
+        config_path = "ACE-Step/acestep-v15-turbo-continuous"
+
+        print(f"Project root: {project_root}")
+        print(f"Config path: {config_path}")
+
+        print("\nCalling initialize_service()...")
+        result = handler.initialize_service(
+            project_root=str(project_root),
+            config_path=str(config_path),
+            device="mps",
+        )
+
+        print(f"Initialize result: {result}")
+
+        if result and result[1] is True:
+            print("\n✓ Initialization succeeded!")
+            print(f"  Model: {type(handler.model)}")
+            print(f"  VAE: {type(handler.vae)}")
+            print(f"  Text encoder: {type(handler.text_encoder)}")
+            print(f"  Text tokenizer: {type(handler.text_tokenizer)}")
+            return True
+        else:
+            print(
+                f"\n✗ Initialization failed: {result[0] if result else 'Unknown error'}"
+            )
+            return False
+
+    except Exception as e:
+        print(f"\n✗ Exception during initialization: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
+def test_bridge():
+    """Test the acestep_bridge module."""
+    print("\n" + "=" * 60)
+    print("TEST 3: Testing acestep_bridge")
+    print("=" * 60)
+
+    bridge_path = Path(__file__).parent / "MLXHub/Resources/acestep_bridge.py"
+    if not bridge_path.exists():
+        bridge_path = (
+            Path(__file__).parent / "MLXHub/MLXHub/Resources/acestep_bridge.py"
+        )
+
+    print(f"Bridge script: {bridge_path}")
+    print(f"Exists: {bridge_path.exists()}")
+
+    # Add bridge directory to path
+    sys.path.insert(0, str(bridge_path.parent))
+
+    try:
+        import acestep_bridge
+
+        print("✓ acestep_bridge imported successfully")
+
+        # Test generation with a simple prompt
+        request = {
+            "model": "ACE-Step/acestep-v15-turbo-continuous",
+            "messages": [{"role": "user", "content": "upbeat electronic dance music"}],
+            "parameters": {
+                "caption": "upbeat electronic dance music",
+                "duration": 10,  # Short for testing
+                "inference_steps": 4,  # Fewer steps for testing
+            },
+        }
+
+        print(f"\nSending request: {json.dumps(request, indent=2)}")
+        print("\nGenerating music...")
+
+        acestep_bridge.generate_music_once(request)
+        print("\n✓ generate_music_once completed")
+        return True
+
+    except Exception as e:
+        print(f"\n✗ Exception: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
+def main():
+    print("ACE-Step Music Generation Test")
+    print(f"Python: {sys.version}")
+    print(f"Runtime: {RUNTIME_DIR}")
+
+    results = []
+
+    # Test 1: Model presence
+    results.append(("Model presence", test_model_presence()))
+
+    # Test 2: Initialization
+    results.append(("Initialization", test_initialization()))
+
+    # Test 3: Bridge (only if initialization succeeded)
+    if results[-1][1]:
+        results.append(("Bridge", test_bridge()))
+    else:
+        print("\n⚠ Skipping bridge test due to initialization failure")
+        results.append(("Bridge", False))
+
+    # Summary
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    for name, passed in results:
+        status = "✓ PASS" if passed else "✗ FAIL"
+        print(f"  {status}: {name}")
+
+
+if __name__ == "__main__":
+    main()

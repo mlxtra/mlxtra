@@ -129,8 +129,29 @@ def load_audio_model_if_needed(model_id: str):
         raise
 
 
+def _normalize_music_model_id(model_id: str) -> str:
+    """Normalize HuggingFace repo ID to local ACE-Step directory name.
+
+    ACE-Step expects local directory names like 'acestep-v15-turbo',
+    not HuggingFace repo IDs like 'ACE-Step/acestep-v15-turbo-continuous'.
+    """
+    # Strip HuggingFace organization prefix
+    if model_id.startswith("ACE-Step/"):
+        model_id = model_id[len("ACE-Step/") :]
+
+    # Map variant suffixes to base model name
+    # The local directory is 'acestep-v15-turbo' for all turbo variants
+    if model_id.startswith("acestep-v15-turbo"):
+        return "acestep-v15-turbo"
+
+    return model_id
+
+
 def load_music_model_if_needed(model_id: str):
     """Lazy load ACE-Step music generation handlers."""
+    # Normalize the model ID for ACE-Step lookup
+    normalized_id = _normalize_music_model_id(model_id)
+
     if model_id in MUSIC_MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Music model {model_id} already loaded, using cache")
         return MUSIC_MODEL_REGISTRY[model_id]
@@ -138,23 +159,34 @@ def load_music_model_if_needed(model_id: str):
     send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
 
     try:
-        log_debug(f"[Python Bridge] Loading music model: {model_id}")
+        log_debug(
+            f"[Python Bridge] Loading music model: {model_id} (normalized: {normalized_id})"
+        )
         import importlib.util
 
         from acestep.handler import AceStepHandler
         from acestep.llm_inference import LLMHandler
 
         package_spec = importlib.util.find_spec("acestep")
-        project_root = Path(package_spec.origin).parent.parent if package_spec and package_spec.origin else Path.cwd()
+        project_root = (
+            Path(package_spec.origin).parent.parent
+            if package_spec and package_spec.origin
+            else Path.cwd()
+        )
 
-        config_path = os.environ.get("ACESTEP_CONFIG_PATH") or model_id
+        config_path = os.environ.get("ACESTEP_CONFIG_PATH") or normalized_id
 
         dit_handler = AceStepHandler()
-        dit_handler.initialize_service(
+        init_result = dit_handler.initialize_service(
             project_root=str(project_root),
             config_path=str(config_path),
             device=os.environ.get("ACESTEP_DEVICE", "mps"),
         )
+        if not init_result or init_result[1] is False:
+            error_msg = (
+                init_result[0] if init_result else "Unknown initialization error"
+            )
+            raise RuntimeError(f"Failed to initialize ACE-Step model: {error_msg}")
 
         llm_handler = LLMHandler()
         MUSIC_MODEL_REGISTRY[model_id] = (dit_handler, llm_handler)
@@ -393,10 +425,17 @@ def _write_wav(path: Path, audio: Any, sample_rate: int = 24000) -> None:
         wav_file.writeframes(pcm.tobytes())
 
 
-def _generate_speech_segments(model: Any, text: str, cfg_scale: float, ddpm_steps: int, voice: str):
+def _generate_speech_segments(
+    model: Any, text: str, cfg_scale: float, ddpm_steps: int, voice: str
+):
     """Try mlx-audio TTS generation with model-specific KugelAudio-friendly args."""
     attempts = [
-        {"text": text, "voice": voice, "cfg_scale": cfg_scale, "ddpm_steps": ddpm_steps},
+        {
+            "text": text,
+            "voice": voice,
+            "cfg_scale": cfg_scale,
+            "ddpm_steps": ddpm_steps,
+        },
         {"text": text, "voice": voice, "cfg_scale": cfg_scale},
         {"text": text, "cfg_scale": cfg_scale, "ddpm_steps": ddpm_steps},
         {"text": text, "cfg_scale": cfg_scale},
@@ -511,14 +550,18 @@ def handle_audio_speech(request: dict) -> None:
 
     model_id = request.get("model", "kugelaudio/kugelaudio-0-open")
     messages = request.get("messages", [])
-    text = (request.get("input") or request.get("text") or _last_user_prompt(messages)).strip()
+    text = (
+        request.get("input") or request.get("text") or _last_user_prompt(messages)
+    ).strip()
     output_dir = Path(request.get("output_dir") or Path.home() / "Music" / "MLXHub")
     cfg_scale = float(request.get("cfg_scale", 3.0))
     ddpm_steps = int(request.get("ddpm_steps", 10))
     voice = request.get("voice", "default")
 
     if not text:
-        send_json({"type": "error", "message": "No text provided for speech generation"})
+        send_json(
+            {"type": "error", "message": "No text provided for speech generation"}
+        )
         return
 
     try:
@@ -533,9 +576,13 @@ def handle_audio_speech(request: dict) -> None:
         sample_rate = 24000
 
         with contextlib.redirect_stdout(sys.stderr):
-            for result in _generate_speech_segments(model, text, cfg_scale, ddpm_steps, voice):
+            for result in _generate_speech_segments(
+                model, text, cfg_scale, ddpm_steps, voice
+            ):
                 audio = result.audio
-                sample_rate = int(getattr(result, "sample_rate", sample_rate) or sample_rate)
+                sample_rate = int(
+                    getattr(result, "sample_rate", sample_rate) or sample_rate
+                )
                 audio_segments.append(audio)
                 try:
                     total_samples += int(audio.shape[0])
@@ -543,7 +590,9 @@ def handle_audio_speech(request: dict) -> None:
                     pass
 
         if not audio_segments:
-            send_json({"type": "error", "message": "Speech generation finished without audio"})
+            send_json(
+                {"type": "error", "message": "Speech generation finished without audio"}
+            )
             return
 
         if len(audio_segments) == 1:
@@ -566,11 +615,7 @@ def handle_audio_speech(request: dict) -> None:
             {
                 "type": "chat.completion.complete",
                 "choices": [
-                    {
-                        "message": {
-                            "content": "Generated speech with KugelAudio."
-                        }
-                    }
+                    {"message": {"content": "Generated speech with KugelAudio."}}
                 ],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0},
             }
@@ -592,11 +637,22 @@ def handle_music_generation(request: dict) -> None:
     """Handle text-to-music request via ACE-Step 1.5."""
     ace_python = os.environ.get("ACESTEP_PYTHON")
     if not ace_python:
-        ace_python_path = Path(__file__).parent.parent / "runtime" / "macos-arm64" / "acestep-venv" / "bin" / "python"
+        ace_python_path = (
+            Path(__file__).parent
+            / "runtime"
+            / "macos-arm64"
+            / "acestep-venv"
+            / "bin"
+            / "python"
+        )
         if ace_python_path.exists():
             ace_python = str(ace_python_path)
 
-    if ace_python and Path(ace_python).exists() and Path(ace_python) != Path(sys.executable):
+    if (
+        ace_python
+        and Path(ace_python).exists()
+        and Path(ace_python) != Path(sys.executable)
+    ):
         helper_path = Path(__file__).with_name("acestep_bridge.py")
         child = subprocess.Popen(
             [ace_python, str(helper_path)],
@@ -614,18 +670,29 @@ def handle_music_generation(request: dict) -> None:
             if line.strip():
                 print(line, flush=True)
         if child.returncode != 0:
-            send_json({"type": "error", "message": f"ACE-Step helper exited with code {child.returncode}"})
+            send_json(
+                {
+                    "type": "error",
+                    "message": f"ACE-Step helper exited with code {child.returncode}",
+                }
+            )
         return
 
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
     messages = request.get("messages", [])
     parameters = request.get("parameters", {}) or {}
-    prompt = (parameters.get("caption") or request.get("prompt") or _last_user_prompt(messages)).strip()
+    prompt = (
+        parameters.get("caption")
+        or request.get("prompt")
+        or _last_user_prompt(messages)
+    ).strip()
     lyrics = (parameters.get("lyrics") or "").strip()
     output_dir = Path(request.get("output_dir") or Path.home() / "Music" / "MLXHub")
 
     if not prompt:
-        send_json({"type": "error", "message": "No prompt provided for music generation"})
+        send_json(
+            {"type": "error", "message": "No prompt provided for music generation"}
+        )
         return
 
     try:
@@ -727,12 +794,29 @@ def handle_ping() -> None:
 def handle_unload() -> None:
     import mlx.core as mx
 
-    MODEL_REGISTRY.clear()
-    IMAGE_MODEL_REGISTRY.clear()
-    AUDIO_MODEL_REGISTRY.clear()
-    MUSIC_MODEL_REGISTRY.clear()
+    for key in list(MODEL_REGISTRY.keys()):
+        model_tuple = MODEL_REGISTRY.pop(key, None)
+        if model_tuple:
+            del model_tuple
+
+    for key in list(IMAGE_MODEL_REGISTRY.keys()):
+        model = IMAGE_MODEL_REGISTRY.pop(key, None)
+        if model:
+            del model
+
+    for key in list(AUDIO_MODEL_REGISTRY.keys()):
+        model = AUDIO_MODEL_REGISTRY.pop(key, None)
+        if model:
+            del model
+
+    for key in list(MUSIC_MODEL_REGISTRY.keys()):
+        handlers = MUSIC_MODEL_REGISTRY.pop(key, None)
+        if handlers:
+            del handlers
+
     mx.clear_cache()
     gc.collect()
+
     send_json({"type": "model.unloaded"})
 
 
@@ -748,12 +832,13 @@ def handle_init(request: dict) -> None:
             elif backend == "music":
                 # Music generation runs in an isolated ACE-Step process when available
                 # because ACE-Step and the main MLX stack require incompatible package
-                # versions.
+                # versions. We don't load here eagerly - loading happens in the subprocess
+                # when music.generate is called, which properly waits for initialization.
                 send_json({"type": "model.initialized", "model": model_id})
                 return
             else:
                 load_model_if_needed(model_id)
-            send_json({"type": "model.initialized", "model": model_id})
+                send_json({"type": "model.initialized", "model": model_id})
         except Exception as e:
             send_json(
                 {"type": "error", "message": f"Failed to initialize model: {str(e)}"}

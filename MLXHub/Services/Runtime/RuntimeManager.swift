@@ -44,6 +44,10 @@ class RuntimeManager: ObservableObject {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("MLXHub")
     }
+
+    var checkpointsPath: URL {
+        appSupportURL.appendingPathComponent("checkpoints")
+    }
     
     /// Initialize the Python runtime
     func initialize() async throws {
@@ -77,6 +81,16 @@ class RuntimeManager: ObservableObject {
     func pythonExecutablePath() -> URL {
         runtimeBundleURL.appendingPathComponent("venv/bin/python")
     }
+
+    /// Get path to ACE-Step Python executable (separate venv)
+    func acestepPythonExecutablePath() -> URL {
+        runtimeBundleURL.appendingPathComponent("acestep-venv/bin/python")
+    }
+
+    /// Get path to ACE-Step download helper script
+    func acestepDownloadHelperPath() -> URL {
+        runtimeBundleURL.appendingPathComponent("acestep_download_helper.py")
+    }
     
     /// Get Python version directory
     func pythonSitePackagesPath() -> URL {
@@ -97,57 +111,76 @@ class RuntimeManager: ObservableObject {
             .appendingPathComponent("Contents/Resources/python_bridge.py")
     }
     
-    /// Get path to a specific model in cache
+/// Get path to a specific model in HF cache
     func modelCachePath(modelId: String) -> URL {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        return homeDir
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/huggingface/hub")
             .appendingPathComponent("models--" + modelId.replacingOccurrences(of: "/", with: "--"))
     }
-    
-    /// Check if model is already downloaded
+
+    /// Check if model is already downloaded (HF cache)
     func isModelDownloaded(modelId: String) -> Bool {
+        // Special handling for ACE-Step models - check component subdirectories under checkpoints/
         if modelId.hasPrefix("ACE-Step/") {
-            let checkpointName: String
-            if modelId.contains("acestep-v15-turbo-continuous") {
-                checkpointName = "acestep-v15-turbo"
-            } else {
-                checkpointName = modelId.components(separatedBy: "/").last ?? modelId
-            }
-
-            let checkpointPath = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache/ace-step/checkpoints")
-                .appendingPathComponent(checkpointName)
-
-            if FileManager.default.fileExists(atPath: checkpointPath.path),
-               let contents = try? FileManager.default.contentsOfDirectory(atPath: checkpointPath.path),
-               contents.contains(where: { $0.contains("safetensors") || $0.hasSuffix(".pt") || $0.hasSuffix(".bin") }) {
-                print("[RuntimeManager] ACE-Step model \(modelId) found at \(checkpointPath.path)")
-                return true
-            }
+            return isAceStepModelDownloaded()
         }
 
+        // For other models, check HF cache structure
         let path = modelCachePath(modelId: modelId)
-        // Check for model weights file presence
-        let snapshotsPath = path.appendingPathComponent("snapshots")
+        print("[RuntimeManager] Checking HF cache for \(modelId) at \(path.path)")
 
-        // Check if snapshots directory exists and has files
+        // Check if directory exists and has contents
+        guard FileManager.default.fileExists(atPath: path.path),
+              let contents = try? FileManager.default.contentsOfDirectory(atPath: path.path),
+              !contents.isEmpty else {
+            print("[RuntimeManager] Model \(modelId) not in HF cache")
+            return false
+        }
+
+        // Check for snapshots subdirectory (standard HF cache structure)
+        let snapshotsPath = path.appendingPathComponent("snapshots")
         if FileManager.default.fileExists(atPath: snapshotsPath.path) {
             if let snapshots = try? FileManager.default.contentsOfDirectory(atPath: snapshotsPath.path),
-               !snapshots.isEmpty {
-                // Check if any snapshot has model files, including nested Diffusers-style folders.
+                !snapshots.isEmpty {
                 for snapshot in snapshots {
                     let snapshotPath = snapshotsPath.appendingPathComponent(snapshot)
                     if snapshotContainsModelFiles(snapshotPath) {
-                        print("[RuntimeManager] Model \(modelId) found at \(snapshotPath.path)")
+                        print("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
                         return true
                     }
                 }
             }
         }
 
-        print("[RuntimeManager] Model \(modelId) not fully downloaded yet")
+        print("[RuntimeManager] Model \(modelId) not in HF cache")
         return false
+    }
+
+    /// ACE-Step models download to component subdirectories under checkpoints/
+    /// Check if all main model components exist
+    private func isAceStepModelDownloaded() -> Bool {
+        let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+        let checkpointsDir = checkpointsPath
+
+        print("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
+
+        for component in aceStepComponents {
+            let componentPath = checkpointsDir.appendingPathComponent(component)
+            if !FileManager.default.fileExists(atPath: componentPath.path) {
+                print("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
+                return false
+            }
+            // Check if component directory has any files
+            if let contents = try? FileManager.default.contentsOfDirectory(atPath: componentPath.path),
+               contents.isEmpty {
+                print("[RuntimeManager] ACE-Step component empty: \(componentPath.path)")
+                return false
+            }
+            print("[RuntimeManager] ACE-Step component found: \(componentPath.path)")
+        }
+
+        print("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
+        return true
     }
 
     private func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {

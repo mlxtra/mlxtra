@@ -338,7 +338,7 @@ class ChatViewModel: ObservableObject {
 
         When the user asks you to create speech, narration, voiceover, or text-to-speech audio, use the create_speech tool with the exact text that should be spoken. After the create_speech tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
 
-        When the user asks you to create music, a song, beat, loop, soundtrack, instrumental, or background music, use the generate_music tool. After the generate_music tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
+        When the user asks you to create music, a song, beat, loop, soundtrack, instrumental, or background music, first determine if they want lyrics or instrumental. If the user does not specify, ask them: "Would you like instrumental music, or should I include vocals with lyrics? If you'd like lyrics, you can provide your own or I can write them for you." If the user wants instrumental, set instrumental to true. If the user wants lyrics and provides them, use their lyrics. If the user wants lyrics but doesn't provide them, write appropriate lyrics and ask: "Here are the lyrics I wrote for your song:\n\n<lyrics>\n\nDo these look good, or would you like me to change anything before I generate the music?" After the user approves, then use the generate_music tool with the caption (music description) and lyrics. Use section labels like [verse], [chorus], [bridge] in the lyrics. After the generate_music tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
         """
     }
 
@@ -374,20 +374,25 @@ class ChatViewModel: ObservableObject {
             let activeModelName = isImageGeneration ? imageGenerationModelName : (isMusicGeneration ? musicGenerationModelName : (isSpeechGeneration ? speechGenerationModelName : selectedModel.displayName))
             let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isMusicGeneration ? .music : (isSpeechGeneration ? .audio : .vlm))
 
-            if !vlmExecutor.isModelLoaded {
-                isModelLoading = true
-                let downloadSize = (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
-                loadingMessage = "Loading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
+if !vlmExecutor.isModelLoaded {
+        isModelLoading = true
+        let downloadSize = (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
+        loadingMessage = "Loading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
 
-                if runtimeManager.isModelDownloaded(modelId: resolvedModelId) {
-                    loadingMessage = "Loading \(activeModelName)..."
-                } else {
-                    loadingMessage = "Downloading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
-                }
+        if runtimeManager.isModelDownloaded(modelId: resolvedModelId) {
+            loadingMessage = "Loading \(activeModelName)..."
+        } else {
+            loadingMessage = "Downloading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
+        }
 
-                try await loadModel(resolvedModelId)
-                isModelLoading = false
-            }
+        do {
+            try await loadModel(resolvedModelId)
+        } catch {
+            isModelLoading = false
+            throw error
+        }
+        // isModelLoading will be set to false in processStream when .complete or .error is received
+    }
 
             isGenerating = true
 
@@ -450,26 +455,26 @@ class ChatViewModel: ObservableObject {
                 ? ["enable_thinking": selectedModel.enableThinking]
                 : nil
 
-            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? nil : availableTools(toolDepth: toolDepth)
-            let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isMusicGeneration ? generatedMusicDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil))
-            let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration || isMusicGeneration
+            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth))
+        let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isMusicGeneration ? generatedMusicDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil))
+        let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration
 
-            let request = ExecutionRequest(
-                backend: activeBackend,
-                modelId: resolvedModelId,
-                messages: isDirectMediaGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
-                images: images.isEmpty ? nil : images,
-                outputDirectory: outputDirectory,
-                maxTokens: isDirectMediaGeneration ? 0 : selectedModel.defaultMaxTokens,
-                temperature: isDirectMediaGeneration ? 1.0 : selectedModel.temperatureRange.default,
-                topP: isDirectMediaGeneration ? nil : selectedModel.topP,
-                topK: isDirectMediaGeneration ? nil : selectedModel.topK,
-                minP: isDirectMediaGeneration ? nil : selectedModel.minP,
-                repetitionPenalty: isDirectMediaGeneration ? nil : selectedModel.repetitionPenalty,
-                chatTemplateKwargs: chatTemplateKwargs,
-                tools: tools,
-                parameters: isMusicGeneration ? defaultMusicParameters(caption: prompt) : nil
-            )
+        let request = ExecutionRequest(
+            backend: activeBackend,
+            modelId: resolvedModelId,
+            messages: isDirectMediaGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
+            images: images.isEmpty ? nil : images,
+            outputDirectory: outputDirectory,
+            maxTokens: isDirectMediaGeneration ? 0 : selectedModel.defaultMaxTokens,
+            temperature: isDirectMediaGeneration ? 1.0 : selectedModel.temperatureRange.default,
+            topP: isDirectMediaGeneration ? nil : selectedModel.topP,
+            topK: isDirectMediaGeneration ? nil : selectedModel.topK,
+            minP: isDirectMediaGeneration ? nil : selectedModel.minP,
+            repetitionPenalty: isDirectMediaGeneration ? nil : selectedModel.repetitionPenalty,
+            chatTemplateKwargs: chatTemplateKwargs,
+            tools: tools,
+            parameters: nil
+        )
 
             let stream = try await vlmExecutor.execute(request: request)
 
@@ -905,14 +910,19 @@ class ChatViewModel: ObservableObject {
                 generationTask = nil
                 loadingMessage = ""
                 
-            case .toolCalls(let toolCalls):
-                guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
-                for toolCall in toolCalls {
-                    currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
-                    await executeToolCall(toolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
-                }
-                await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+case .toolCalls(let toolCalls):
+            guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
+            guard toolDepth < maxAutoToolDepth else {
+                // Max tool depth reached, skip recursive tool execution
+                currentMessages.append(ExecutionMessage(role: .assistant, content: "Maximum tool call depth reached. Cannot execute more tool calls."))
                 return
+            }
+            for toolCall in toolCalls {
+                currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
+                await executeToolCall(toolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
+            }
+            await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+            return
 
             case .error(let error):
                 handleGenerationError(error)
@@ -1072,11 +1082,13 @@ class ChatViewModel: ObservableObject {
             persistConversationHistory()
         }
 
-        isGenerating = false
-        streamingMessageId = nil
-    }
+isGenerating = false
+    isModelLoading = false
+    streamingMessageId = nil
+    loadingMessage = ""
+}
 
-    func selectTool(_ tool: Tool) {
+func selectTool(_ tool: Tool) {
         selectedTool = tool
         isToolMenuOpen = false
     }
@@ -1227,21 +1239,24 @@ private final class ChatStore {
 // MARK: - VLMExecutionDelegate
 extension ChatViewModel: VLMExecutionDelegate {
     func modelLoadingStarted(modelId: String) {
-        // Handled in generateResponse
+        // Already handled in generateResponse
     }
-    
+
     func modelLoadingCompleted(modelId: String) {
-        // Handled in generateResponse
+        isModelLoading = false
+        loadingMessage = ""
     }
-    
+
     func modelLoadingFailed(modelId: String, error: Error) {
+        isModelLoading = false
+        loadingMessage = ""
         handleGenerationError(error)
     }
-    
+
     func executionWillRetry(attempt: Int) {
         loadingMessage = "Retrying (attempt \(attempt))..."
     }
-    
+
     func executionDidFail(error: Error) {
         handleGenerationError(error)
     }
