@@ -46,6 +46,27 @@ class TestNormalizeMessages(unittest.TestCase):
         assert python_bridge._normalize_messages([]) == []
 
 
+class TestParseToolCalls(unittest.TestCase):
+    def test_qwen_tool_call_coerces_music_parameters(self):
+        text = """
+        <tool_call>
+        <function=generate_music>
+        <parameter=caption>A mysterious orchestral clockwork garden cue</parameter>
+        <parameter=duration>60</parameter>
+        <parameter=instrumental>True</parameter>
+        </function>
+        </tool_call>
+        """
+
+        result = python_bridge.parse_tool_calls(text)
+        assert len(result) == 1
+
+        args = json.loads(result[0]["function"]["arguments"])
+        assert args["caption"] == "A mysterious orchestral clockwork garden cue"
+        assert args["duration"] == 60
+        assert args["instrumental"] is True
+
+
 class TestLastUserPrompt(unittest.TestCase):
     def test_returns_last_user_content(self):
         messages = [

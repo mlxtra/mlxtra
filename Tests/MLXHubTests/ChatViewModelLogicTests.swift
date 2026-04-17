@@ -2,6 +2,23 @@ import XCTest
 @testable import MLXHub
 
 final class ChatViewModelLogicTests: XCTestCase {
+    private func activeBackend(isImageGeneration: Bool, isSpeechGeneration: Bool) -> RuntimeBackend {
+        isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vlm)
+    }
+
+    private func resolvedModelId(selectedModel: AIModel, isImageGeneration: Bool, isSpeechGeneration: Bool) -> String {
+        let imageGenerationModelId = "black-forest-labs/FLUX.2-klein-4B"
+        let activeModelId = isImageGeneration ? imageGenerationModelId : selectedModel.modelId
+        return isSpeechGeneration ? "speech-model" : activeModelId
+    }
+
+    private func finalContent(fullResponse: String, isImageGeneration: Bool, isSpeechGeneration: Bool) -> String {
+        (isImageGeneration || isSpeechGeneration) ? "" : fullResponse
+    }
+
+    private func selectedTools(isImageGeneration: Bool, isSpeechGeneration: Bool, isMusicGeneration: Bool, musicTool: [String: Any]) -> [[String: Any]]? {
+        (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicTool] : [])
+    }
 
     // MARK: - Tool Detection Tests
 
@@ -72,6 +89,13 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertTrue(systemPrompt.contains("create_speech"))
         XCTAssertTrue(systemPrompt.contains("generate_music"))
         XCTAssertTrue(systemPrompt.contains("helpful assistant"))
+    }
+
+    func testMusicReadinessSystemInstructionBlocksPrematureGeneration() {
+        let instruction = MusicIntentState.needsInstrumentalOrVocals.systemInstruction
+
+        XCTAssertTrue(instruction.contains("ask whether"))
+        XCTAssertTrue(instruction.contains("before calling generate_music"))
     }
 
     // MARK: - Available Tools Tests
@@ -152,93 +176,193 @@ final class ChatViewModelLogicTests: XCTestCase {
         }
     }
 
+    func testMusicSelectedUsesOnlyMusicTool() {
+        let musicTool: [String: Any] = [
+            "type": "function",
+            "function": [
+                "name": "generate_music",
+                "description": "Create music only after the user has specified instrumental music or approved lyrics for vocals."
+            ]
+        ]
+
+        let isImageGeneration = false
+        let isSpeechGeneration = false
+        let isMusicGeneration = true
+        let tools = selectedTools(
+            isImageGeneration: isImageGeneration,
+            isSpeechGeneration: isSpeechGeneration,
+            isMusicGeneration: isMusicGeneration,
+            musicTool: musicTool
+        )
+
+        XCTAssertEqual(tools?.count, 1)
+        let function = tools?.first?["function"] as? [String: Any]
+        XCTAssertEqual(function?["name"] as? String, "generate_music")
+    }
+
     // MARK: - Backend Selection Tests
 
     func testBackendForImageTool() {
         let isImageGeneration = true
-        let isMusicGeneration = false
         let isSpeechGeneration = false
 
-        let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isMusicGeneration ? .music : (isSpeechGeneration ? .audio : .vlm))
-
-        XCTAssertEqual(activeBackend, .image)
+        XCTAssertEqual(activeBackend(isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration), .image)
     }
 
     func testBackendForMusicTool() {
         let isImageGeneration = false
-        let isMusicGeneration = true
         let isSpeechGeneration = false
 
-        let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isMusicGeneration ? .music : (isSpeechGeneration ? .audio : .vlm))
+        XCTAssertEqual(activeBackend(isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration), .vlm)
+    }
 
-        XCTAssertEqual(activeBackend, .music)
+    func testMusicPlanningRequestUsesSelectedChatModel() {
+        let selectedModel = AIModel.qwen35
+        let isImageGeneration = false
+        let isSpeechGeneration = false
+
+        XCTAssertEqual(activeBackend(isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration), .vlm)
+        XCTAssertEqual(
+            resolvedModelId(selectedModel: selectedModel, isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration),
+            selectedModel.modelId
+        )
     }
 
     func testBackendForSpeechTool() {
         let isImageGeneration = false
-        let isMusicGeneration = false
         let isSpeechGeneration = true
 
-        let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isMusicGeneration ? .music : (isSpeechGeneration ? .audio : .vlm))
-
-        XCTAssertEqual(activeBackend, .audio)
+        XCTAssertEqual(activeBackend(isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration), .audio)
     }
 
     func testBackendForVLM() {
         let isImageGeneration = false
-        let isMusicGeneration = false
         let isSpeechGeneration = false
 
-        let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isMusicGeneration ? .music : (isSpeechGeneration ? .audio : .vlm))
-
-        XCTAssertEqual(activeBackend, .vlm)
+        XCTAssertEqual(activeBackend(isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration), .vlm)
     }
 
     // MARK: - Model ID Selection Tests
 
     func testModelIdForMusicGeneration() {
         let selectedModel = AIModel.qwen35
-        let musicGenerationModelId = "ACE-Step/acestep-v15-turbo-continuous"
-        let isMusicGeneration = true
         let isSpeechGeneration = false
+        let isImageGeneration = false
 
-        let resolvedModelId = isMusicGeneration ? musicGenerationModelId : (isSpeechGeneration ? "speech-model" : selectedModel.modelId)
-
-        XCTAssertEqual(resolvedModelId, musicGenerationModelId)
+        XCTAssertEqual(
+            resolvedModelId(selectedModel: selectedModel, isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration),
+            selectedModel.modelId
+        )
     }
 
     func testModelIdForVLM() {
         let selectedModel = AIModel.qwen35
-        let isMusicGeneration = false
         let isSpeechGeneration = false
 
-        let resolvedModelId = isMusicGeneration ? "ACE-Step/acestep-v15-turbo-continuous" : (isSpeechGeneration ? "speech-model" : selectedModel.modelId)
+        let isImageGeneration = false
 
-        XCTAssertEqual(resolvedModelId, selectedModel.modelId)
+        XCTAssertEqual(
+            resolvedModelId(selectedModel: selectedModel, isImageGeneration: isImageGeneration, isSpeechGeneration: isSpeechGeneration),
+            selectedModel.modelId
+        )
     }
 
     // MARK: - Temperature Selection Tests
 
     func testTemperatureForDirectMediaGeneration() {
         let isImageGeneration = true
-        let isMusicGeneration = false
         let isSpeechGeneration = false
         let defaultTemp = 0.7
 
-        let temp = isImageGeneration || isSpeechGeneration || isMusicGeneration ? 1.0 : defaultTemp
+        let temp = isImageGeneration || isSpeechGeneration ? 1.0 : defaultTemp
 
         XCTAssertEqual(temp, 1.0)
     }
 
     func testTemperatureForChat() {
         let isImageGeneration = false
-        let isMusicGeneration = false
         let isSpeechGeneration = false
         let defaultTemp = 0.7
 
-        let temp = isImageGeneration || isSpeechGeneration || isMusicGeneration ? 1.0 : defaultTemp
+        let temp = isImageGeneration || isSpeechGeneration ? 1.0 : defaultTemp
 
         XCTAssertEqual(temp, defaultTemp)
+    }
+
+    func testMusicPlanningCompletionKeepsAssistantText() {
+        let response = "Would you like instrumental music, or vocals with lyrics?"
+
+        XCTAssertEqual(finalContent(fullResponse: response, isImageGeneration: false, isSpeechGeneration: false), response)
+    }
+
+    // MARK: - Music Intent State Tests
+
+    func testMusicIntentReadyForInstrumentalPrompt() {
+        XCTAssertEqual(MusicIntentState.forPrompt("Create an instrumental synthwave loop"), .readyToGenerate)
+    }
+
+    func testMusicIntentNeedsLyricsForVocalPrompt() {
+        XCTAssertEqual(MusicIntentState.forPrompt("Create a pop song with vocals"), .needsLyrics)
+    }
+
+    func testMusicIntentNeedsInstrumentalOrVocalsWhenAmbiguous() {
+        XCTAssertEqual(MusicIntentState.forPrompt("Create a moody cyberpunk track"), .needsInstrumentalOrVocals)
+    }
+
+    func testMusicToolCallBlockedWhenAmbiguous() {
+        let state = MusicIntentState.forToolCall(
+            prompt: "Create a moody cyberpunk track",
+            parameters: ["caption": "moody cyberpunk track"]
+        )
+
+        XCTAssertEqual(state, .needsInstrumentalOrVocals)
+        XCTAssertNotNil(state.blockedToolMessage)
+    }
+
+    func testMusicToolCallBlockedWhenLyricsAreDraftedWithoutApproval() {
+        let state = MusicIntentState.forToolCall(
+            prompt: "Create a pop song with vocals",
+            parameters: [
+                "caption": "bright pop song with vocals",
+                "lyrics": "[verse]\nNeon hearts are waking\n[chorus]\nWe rise into the light"
+            ]
+        )
+
+        XCTAssertEqual(state, .awaitingLyricsApproval)
+        XCTAssertNotNil(state.blockedToolMessage)
+    }
+
+    func testMusicToolCallReadyWhenUserApprovesLyrics() {
+        let state = MusicIntentState.forToolCall(
+            prompt: "Yes, those lyrics look good. Go ahead.",
+            parameters: [
+                "caption": "bright pop song with vocals",
+                "lyrics": "[verse]\nNeon hearts are waking\n[chorus]\nWe rise into the light"
+            ]
+        )
+
+        XCTAssertEqual(state, .readyToGenerate)
+        XCTAssertNil(state.blockedToolMessage)
+    }
+
+    func testMusicToolCallReadyWhenUserProvidesLyrics() {
+        let prompt = """
+        Create a pop song with these lyrics:
+        [verse]
+        Neon hearts are waking
+        [chorus]
+        We rise into the light
+        """
+        let state = MusicIntentState.forToolCall(
+            prompt: prompt,
+            parameters: [
+                "caption": "bright pop song with vocals",
+                "lyrics": "[verse]\nNeon hearts are waking\n[chorus]\nWe rise into the light"
+            ]
+        )
+
+        XCTAssertEqual(state, .readyToGenerate)
+        XCTAssertNil(state.blockedToolMessage)
     }
 
     // MARK: - Tool Call Execution Tests
@@ -266,6 +390,20 @@ final class ChatViewModelLogicTests: XCTestCase {
         } else {
             XCTFail("Failed to parse arguments")
         }
+    }
+
+    func testMusicIntentAcceptsStringInstrumentalToolParameter() {
+        let state = MusicIntentState.forToolCall(
+            prompt: "Create a mysterious orchestral clockwork garden cue",
+            parameters: [
+                "caption": "A 1-minute orchestral piece with violin, cello, harp, ticking rhythm, and soft chimes",
+                "duration": "60",
+                "instrumental": "True"
+            ]
+        )
+
+        XCTAssertEqual(state, .readyToGenerate)
+        XCTAssertNil(state.blockedToolMessage)
     }
 
     // MARK: - Context Message Extraction Tests
@@ -305,7 +443,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         let shouldBuffer = { (output: String) -> Bool in
             let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedOutput.isEmpty else { return true }
-            let toolPrefixes = ["<function=", "<|tool_call|>"]
+            let toolPrefixes = ["<tool_call>", "<function=", "<|tool_call|>"]
             return toolPrefixes.contains { prefix in
                 prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
             }
@@ -319,7 +457,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         let shouldBuffer = { (output: String) -> Bool in
             let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedOutput.isEmpty else { return true }
-            let toolPrefixes = ["<function=", "<|tool_call|>"]
+            let toolPrefixes = ["<tool_call>", "<function=", "<|tool_call|>"]
             return toolPrefixes.contains { prefix in
                 prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
             }
@@ -327,13 +465,14 @@ final class ChatViewModelLogicTests: XCTestCase {
 
         XCTAssertTrue(shouldBuffer("<function=web_search>"))
         XCTAssertTrue(shouldBuffer("<|tool_call|>"))
+        XCTAssertTrue(shouldBuffer("<tool_call>"))
     }
 
     func testShouldNotBufferRegularText() {
         let shouldBuffer = { (output: String) -> Bool in
             let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedOutput.isEmpty else { return true }
-            let toolPrefixes = ["<function=", "<|tool_call|>"]
+            let toolPrefixes = ["<tool_call>", "<function=", "<|tool_call|>"]
             return toolPrefixes.contains { prefix in
                 prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
             }

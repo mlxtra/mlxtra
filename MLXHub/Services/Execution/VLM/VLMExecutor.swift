@@ -1,6 +1,24 @@
 import Foundation
 import Combine
 
+#if DEBUG
+private enum VLMStreamDiagnostics {
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["MLXHUB_STREAM_DIAGNOSTICS"] == "1"
+            || UserDefaults.standard.bool(forKey: "MLXHub.streamDiagnostics")
+    }
+
+    static func now() -> TimeInterval {
+        Date().timeIntervalSinceReferenceDate
+    }
+
+    static func log(_ message: String) {
+        guard isEnabled else { return }
+        print("[StreamDiag][VLMExecutor] \(String(format: "%.6f", now())) \(message)")
+    }
+}
+#endif
+
 /// Executor for Vision Language Models using mlx-vlm via Python bridge
 @MainActor
 class VLMExecutor: NSObject, ModelExecutor {
@@ -422,7 +440,11 @@ stdoutPipe?.fileHandleForReading.readabilityHandler = { [weak responseBuilder, w
 
         for line in lineBuffer?.append(output) ?? [] {
             // Debug: Log all received lines
-            print("[VLMExecutor] Received: \(line.prefix(200))...")
+#if DEBUG
+            if VLMStreamDiagnostics.isEnabled {
+                print("[VLMExecutor] Received: \(line.prefix(200))...")
+            }
+#endif
 
             do {
                 guard let lineData = line.data(using: .utf8),
@@ -438,11 +460,22 @@ stdoutPipe?.fileHandleForReading.readabilityHandler = { [weak responseBuilder, w
                         let first = choices.first,
                         let delta = first["delta"] as? [String: Any],
                         let content = delta["content"] as? String {
+#if DEBUG
+                        let yieldStartedAt = VLMStreamDiagnostics.now()
+                        VLMStreamDiagnostics.log("chunk.received tokenChars=\(content.count)")
+#endif
                         responseBuilder?.append(content)
                         continuation.yield(.token(content))
+#if DEBUG
+                        let yieldFinishedAt = VLMStreamDiagnostics.now()
+                        VLMStreamDiagnostics.log("chunk.yielded tokenChars=\(content.count) elapsedMs=\(String(format: "%.2f", (yieldFinishedAt - yieldStartedAt) * 1000))")
+#endif
                     }
 
                 case "chat.completion.complete":
+#if DEBUG
+                    VLMStreamDiagnostics.log("complete.received")
+#endif
                     if let usage = json["usage"] as? [String: Any],
                         let promptTokens = usage["prompt_tokens"] as? Int,
                         let completionTokens = usage["completion_tokens"] as? Int {

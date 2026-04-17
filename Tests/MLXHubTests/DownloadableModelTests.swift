@@ -97,6 +97,17 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertEqual(imageModels.first?.modelId, "black-forest-labs/FLUX.2-klein-4B")
     }
 
+    func testEmbeddedModelLookupByModelId() {
+        let model = DownloadableModel.embeddedModel(modelId: "black-forest-labs/FLUX.2-klein-4B")
+
+        XCTAssertEqual(model?.name, "FLUX.2-klein-4B")
+        XCTAssertEqual(model?.modality, .image)
+    }
+
+    func testEmbeddedModelLookupReturnsNilForUnknownModel() {
+        XCTAssertNil(DownloadableModel.embeddedModel(modelId: "unknown/model"))
+    }
+
     func testEmbeddedAudioModel() {
         let embedded = DownloadableModel.embedded
         let audioModels = embedded.filter { $0.modality == .audio }

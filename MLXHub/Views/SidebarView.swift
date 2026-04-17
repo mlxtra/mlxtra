@@ -51,11 +51,11 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(.thinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
-                    .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
             )
             .padding(.horizontal, 14)
             .padding(.bottom, 8)
@@ -99,8 +99,11 @@ struct SidebarView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .background(Color.clear)
 
-            Divider()
+            Rectangle()
+                .fill(Color(NSColor.separatorColor).opacity(0.28))
+                .frame(height: 1)
 
             Button(action: {
                 openSettings()
@@ -120,13 +123,31 @@ struct SidebarView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.thinMaterial.opacity(0.45))
+                        .opacity(0.001)
+                }
             }
             .buttonStyle(.plain)
             .keyboardShortcut(",", modifiers: .command)
             .help("Settings (⌘,)")
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
         }
         .frame(minWidth: 240, idealWidth: 280)
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(.regularMaterial)
+        .overlay(alignment: .trailing) {
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.16),
+                    Color(NSColor.separatorColor).opacity(0.18)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(width: 1)
+        }
     }
 }
 
@@ -178,6 +199,14 @@ struct ChatHistoryItem: View {
         .frame(minHeight: 28)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(rowBackground)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(rowBorder, lineWidth: 1)
+        }
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
                 isHovered = hovering
@@ -186,6 +215,26 @@ struct ChatHistoryItem: View {
                 }
             }
         }
+    }
+
+    private var rowBackground: AnyShapeStyle {
+        if isSelected {
+            return AnyShapeStyle(.thinMaterial)
+        }
+
+        if isHovered {
+            return AnyShapeStyle(Color.white.opacity(0.08))
+        }
+
+        return AnyShapeStyle(Color.clear)
+    }
+
+    private var rowBorder: Color {
+        guard isSelected else {
+            return Color.clear
+        }
+
+        return Color.white.opacity(0.18)
     }
 
     private func handleDeleteTap() {

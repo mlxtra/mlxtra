@@ -49,33 +49,44 @@ class RuntimeManager: ObservableObject {
         appSupportURL.appendingPathComponent("checkpoints")
     }
     
-    /// Initialize the Python runtime
-    func initialize() async throws {
-        guard state == .notInitialized else { return }
-        
-        state = .checkingBundle
-        loadingMessage = "Checking Python runtime..."
-        
-        // Check if Python runtime exists in bundle
-        guard FileManager.default.fileExists(atPath: runtimeBundleURL.path) else {
-            throw RuntimeError.bundleNotFound(runtimeBundleURL.path)
-        }
-        
-        // Check if Python executable exists
-        let pythonPath = pythonExecutablePath()
-        guard FileManager.default.fileExists(atPath: pythonPath.path) else {
-            throw RuntimeError.pythonNotFound(pythonPath.path)
-        }
-        
-        // Check if bridge script exists
-        let bridgePath = bridgeScriptPath()
-        guard FileManager.default.fileExists(atPath: bridgePath.path) else {
-            throw RuntimeError.bridgeScriptNotFound(bridgePath.path)
-        }
-        
-        state = .ready
-        loadingMessage = ""
-    }
+/// Initialize the Python runtime
+	func initialize() async throws {
+		switch state {
+		case .notInitialized, .error:
+			break
+		default:
+			return
+		}
+
+		state = .checkingBundle
+		loadingMessage = "Checking Python runtime..."
+
+		// Check if Python runtime exists in bundle
+		guard FileManager.default.fileExists(atPath: runtimeBundleURL.path) else {
+			let error = RuntimeError.bundleNotFound(runtimeBundleURL.path)
+			state = .error(error.localizedDescription)
+			throw error
+		}
+
+		// Check if Python executable exists
+		let pythonPath = pythonExecutablePath()
+		guard FileManager.default.fileExists(atPath: pythonPath.path) else {
+			let error = RuntimeError.pythonNotFound(pythonPath.path)
+			state = .error(error.localizedDescription)
+			throw error
+		}
+
+		// Check if bridge script exists
+		let bridgePath = bridgeScriptPath()
+		guard FileManager.default.fileExists(atPath: bridgePath.path) else {
+			let error = RuntimeError.bridgeScriptNotFound(bridgePath.path)
+			state = .error(error.localizedDescription)
+			throw error
+		}
+
+		state = .ready
+		loadingMessage = ""
+	}
     
     /// Get path to Python executable
     func pythonExecutablePath() -> URL {
@@ -90,6 +101,11 @@ class RuntimeManager: ObservableObject {
     /// Get path to ACE-Step download helper script
     func acestepDownloadHelperPath() -> URL {
         runtimeBundleURL.appendingPathComponent("acestep_download_helper.py")
+    }
+
+    /// Get path to Hugging Face download helper script
+    func huggingFaceDownloadHelperPath() -> URL {
+        runtimeBundleURL.appendingPathComponent("hf_download_helper.py")
     }
     
     /// Get Python version directory
@@ -118,6 +134,15 @@ class RuntimeManager: ObservableObject {
             .appendingPathComponent("models--" + modelId.replacingOccurrences(of: "/", with: "--"))
     }
 
+    /// Get the expected local storage path for a model.
+    /// Hugging Face models use the default HF cache so downloads can be shared with other apps.
+    func modelStoragePath(modelId: String) -> URL {
+        if modelId.hasPrefix("ACE-Step/") {
+            return checkpointsPath
+        }
+        return modelCachePath(modelId: modelId)
+    }
+
     /// Check if model is already downloaded (HF cache)
     func isModelDownloaded(modelId: String) -> Bool {
         // Special handling for ACE-Step models - check component subdirectories under checkpoints/
@@ -144,7 +169,7 @@ class RuntimeManager: ObservableObject {
                 !snapshots.isEmpty {
                 for snapshot in snapshots {
                     let snapshotPath = snapshotsPath.appendingPathComponent(snapshot)
-                    if snapshotContainsModelFiles(snapshotPath) {
+                    if Self.snapshotContainsModelFiles(snapshotPath) {
                         print("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
                         return true
                     }
@@ -156,45 +181,102 @@ class RuntimeManager: ObservableObject {
         return false
     }
 
-    /// ACE-Step models download to component subdirectories under checkpoints/
-    /// Check if all main model components exist
-    private func isAceStepModelDownloaded() -> Bool {
-        let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
-        let checkpointsDir = checkpointsPath
+/// ACE-Step models download to component subdirectories under checkpoints/
+	/// Check if all main model components exist and contain actual weight files
+	private func isAceStepModelDownloaded() -> Bool {
+		let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+		let checkpointsDir = checkpointsPath
 
-        print("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
+		print("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
 
-        for component in aceStepComponents {
-            let componentPath = checkpointsDir.appendingPathComponent(component)
-            if !FileManager.default.fileExists(atPath: componentPath.path) {
-                print("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
-                return false
-            }
-            // Check if component directory has any files
-            if let contents = try? FileManager.default.contentsOfDirectory(atPath: componentPath.path),
-               contents.isEmpty {
-                print("[RuntimeManager] ACE-Step component empty: \(componentPath.path)")
-                return false
-            }
-            print("[RuntimeManager] ACE-Step component found: \(componentPath.path)")
-        }
+		for component in aceStepComponents {
+			let componentPath = checkpointsDir.appendingPathComponent(component)
+			if !FileManager.default.fileExists(atPath: componentPath.path) {
+				print("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
+				return false
+			}
+			if !Self.containsModelWeights(at: componentPath) {
+				print("[RuntimeManager] ACE-Step component missing weight files: \(componentPath.path)")
+				return false
+			}
+			print("[RuntimeManager] ACE-Step component found with weights: \(componentPath.path)")
+		}
 
-        print("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
-        return true
-    }
+		print("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
+		return true
+	}
 
-    private func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
-        // Just check if the snapshots directory exists and has any snapshot folders
-        // In HuggingFace's cache structure, presence of snapshot = downloaded
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: snapshotPath,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else {
-            return false
-        }
-        return !contents.isEmpty
-    }
+	nonisolated static func containsModelWeights(at path: URL) -> Bool {
+		var isDirectory: ObjCBool = false
+		guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
+		      isDirectory.boolValue else {
+			return false
+		}
+
+		let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+		guard let enumerator = FileManager.default.enumerator(
+			at: path,
+			includingPropertiesForKeys: resourceKeys,
+			options: [.skipsHiddenFiles, .skipsPackageDescendants]
+		) else {
+			return false
+		}
+
+		for case let fileURL as URL in enumerator {
+			guard isModelWeightArtifact(fileURL),
+			      modelWeightArtifactHasContent(fileURL) else {
+				continue
+			}
+			return true
+		}
+
+		return false
+	}
+
+	private nonisolated static func modelWeightArtifactHasContent(_ fileURL: URL) -> Bool {
+		let resolvedURL = fileURL.resolvingSymlinksInPath()
+		let pathToCheck = resolvedURL.path == fileURL.path ? fileURL.path : resolvedURL.path
+
+		guard FileManager.default.fileExists(atPath: pathToCheck),
+		      let attributes = try? FileManager.default.attributesOfItem(atPath: pathToCheck),
+		      let fileType = attributes[.type] as? FileAttributeType,
+		      fileType == .typeRegular,
+		      let fileSize = attributes[.size] as? NSNumber else {
+			return false
+		}
+
+		return fileSize.int64Value > 0
+	}
+
+	nonisolated static func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
+		containsModelWeights(at: snapshotPath)
+	}
+
+	private nonisolated static func isModelWeightArtifact(_ fileURL: URL) -> Bool {
+		let filename = fileURL.lastPathComponent
+		let knownWeightFilenames = Set([
+			"model.safetensors",
+			"model.safetensors.index.json",
+			"pytorch_model.bin",
+			"pytorch_model.bin.index.json",
+			"model.bin",
+			"diffusion_pytorch_model.safetensors",
+			"diffusion_pytorch_model.safetensors.index.json",
+			"diffusion_pytorch_model.bin",
+			"diffusion_pytorch_model.bin.index.json"
+		])
+
+		if knownWeightFilenames.contains(filename) {
+			return true
+		}
+		if filename.hasSuffix(".safetensors") || filename.hasSuffix(".gguf") || filename.hasSuffix(".ckpt") {
+			return true
+		}
+		if filename.hasSuffix(".bin") {
+			return filename.contains("model") || filename.contains("weight") || filename.contains("diffusion")
+		}
+		return false
+	}
     
     /// Get estimated model size
     func estimatedModelSize(modelId: String) -> Double {

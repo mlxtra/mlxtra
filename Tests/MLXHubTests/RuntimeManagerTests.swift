@@ -109,6 +109,70 @@ final class RuntimeManagerTests: XCTestCase {
         let path = "/some/path/acestep-venv/bin/python"
         XCTAssertTrue(path.hasSuffix("/acestep-venv/bin/python"))
     }
+
+    // MARK: - Model Cache Validation
+
+    func testSnapshotValidationFindsWeightsAtSnapshotRoot() throws {
+        let snapshotPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: snapshotPath) }
+
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        XCTAssertFalse(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+        XCTAssertTrue(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
+    func testSnapshotValidationFindsNestedWeights() throws {
+        let snapshotPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: snapshotPath) }
+
+        let transformerPath = snapshotPath.appendingPathComponent("transformer")
+        try FileManager.default.createDirectory(at: transformerPath, withIntermediateDirectories: true)
+        try Data([1]).write(to: transformerPath.appendingPathComponent("diffusion_pytorch_model.safetensors"))
+
+        XCTAssertTrue(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
+    func testSnapshotValidationFindsSymlinkedWeights() throws {
+        let rootPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootPath) }
+
+        let blobsPath = rootPath.appendingPathComponent("blobs")
+        let snapshotPath = rootPath.appendingPathComponent("snapshots/revision")
+        try FileManager.default.createDirectory(at: blobsPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+
+        let blobPath = blobsPath.appendingPathComponent("weight-blob")
+        try Data([1]).write(to: blobPath)
+
+        try FileManager.default.createSymbolicLink(
+            atPath: snapshotPath.appendingPathComponent("model.safetensors").path,
+            withDestinationPath: "../../blobs/weight-blob"
+        )
+
+        XCTAssertTrue(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
+    func testSnapshotValidationRejectsZeroByteWeights() throws {
+        let snapshotPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: snapshotPath) }
+
+        FileManager.default.createFile(
+            atPath: snapshotPath.appendingPathComponent("model.safetensors").path,
+            contents: Data()
+        )
+
+        XCTAssertFalse(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MLXHubTests")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
 }
 
 // MARK: - RuntimeError Extension for Testing

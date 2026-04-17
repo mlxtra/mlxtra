@@ -160,6 +160,29 @@ enum AIModel: String, CaseIterable, Identifiable {
             supportsVision: supportsVision
         )
     }
+
+    static var currentHardwareMemoryGB: Double {
+        Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+    }
+
+    static var defaultForCurrentHardware: AIModel {
+        bestModelsForHardware(memoryGB: currentHardwareMemoryGB).first ?? .mini
+    }
+
+    static var currentHardwareRecommendationText: String {
+        let models = bestModelsForHardware(memoryGB: currentHardwareMemoryGB)
+            .map(\.displayName)
+            .joined(separator: ", ")
+
+        return "These are the best models that should run comfortably on your hardware: \(models)."
+    }
+
+    static func bestModelsForHardware(memoryGB: Double) -> [AIModel] {
+        let comfortableBudgetGB = memoryGB * 0.65
+        let preferredOrder: [AIModel] = [.qwen35, .gemma4, .mini]
+        let comfortableModels = preferredOrder.filter { $0.memoryRequirementGB <= comfortableBudgetGB }
+        return comfortableModels.isEmpty ? [.mini] : comfortableModels
+    }
 }
 
 // MARK: - Supporting Types
@@ -198,6 +221,10 @@ struct DownloadableModel: Identifiable, Equatable {
     let modelId: String
     let modality: ModelModality
     let downloadSizeGB: Double
+
+    static func embeddedModel(modelId: String) -> DownloadableModel? {
+        embedded.first { $0.modelId == modelId }
+    }
 
     static var embedded: [DownloadableModel] {
         let visionModels = AIModel.allCases.map { model in

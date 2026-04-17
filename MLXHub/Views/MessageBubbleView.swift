@@ -5,9 +5,9 @@ struct MessageBubble: View {
     let message: Message
     let isStreaming: Bool
     @State private var isHovered = false
-    @State private var isCopyAreaHovered = false
     @State private var cursorVisible = true
     @State private var showCopyFeedback = false
+    @State private var saveError: String?
 
     init(message: Message, isStreaming: Bool = false) {
         self.message = message
@@ -33,7 +33,11 @@ struct MessageBubble: View {
             // Message content
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(message.toolCalls) { toolCall in
-                    ToolCallView(toolCall: toolCall)
+                    ToolCallView(
+                        toolCall: toolCall,
+                        isStreaming: isStreaming,
+                        hasGeneratedMedia: !message.imageURLs.isEmpty || !message.audioURLs.isEmpty
+                    )
                 }
 
                 // AI message with thinking and markdown
@@ -81,34 +85,15 @@ struct MessageBubble: View {
                     )
                 }
 
-                // Copy button (visible on hover for completed messages)
+                // Response actions (visible on hover for completed messages)
                 if !message.isUser && !message.content.isEmpty && !isStreaming {
-                    HStack {
-                        Button(action: copyToClipboard) {
-                            HStack(spacing: 4) {
-                                Image(systemName: showCopyFeedback ? "checkmark" : "doc.on.doc")
-                                    .font(.system(size: 11))
-                                Text(showCopyFeedback ? "Copied!" : "Copy")
-                                    .font(.system(size: 11))
-                            }
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color(NSColor.controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                        .buttonStyle(.plain)
-                        .opacity(isHovered || isCopyAreaHovered || showCopyFeedback ? 1 : 0)
-                        .animation(.easeInOut(duration: 0.15), value: isHovered || isCopyAreaHovered || showCopyFeedback)
-
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                    .onHover { hovering in
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            isCopyAreaHovered = hovering
-                        }
-                    }
+                    ResponseActionsToolbar(
+                        showCopyFeedback: showCopyFeedback,
+                        onCopy: copyToClipboard,
+                        onSave: saveResponseText
+                    )
+                    .opacity(isHovered || showCopyFeedback ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered || showCopyFeedback)
                 }
 
                 // Timestamp
@@ -150,6 +135,14 @@ struct MessageBubble: View {
             if streaming {
                 startCursorAnimation()
             }
+        }
+        .alert("Save failed", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "Unable to save the response.")
         }
     }
 
@@ -193,6 +186,22 @@ struct MessageBubble: View {
             cursorVisible = false
         }
     }
+
+    private func saveResponseText() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "MLXHub Response.txt"
+        panel.begin { response in
+            guard response == .OK, let destinationURL = panel.url else { return }
+
+            do {
+                try message.content.write(to: destinationURL, atomically: true, encoding: .utf8)
+            } catch {
+                saveError = error.localizedDescription
+            }
+        }
+    }
 }
 
 struct GeneratedAudioAttachmentView: View {
@@ -201,8 +210,26 @@ struct GeneratedAudioAttachmentView: View {
     @State private var isPlaying = false
     @State private var downloadError: String?
 
+    private var mediaTitle: String {
+        let path = audioURL.path.lowercased()
+        return path.contains("music") ? "Generated music" : "Generated speech"
+    }
+
+    private var durationText: String? {
+        guard let duration = (sound ?? NSSound(contentsOf: audioURL, byReference: true))?.duration,
+              duration.isFinite,
+              duration > 0
+        else {
+            return nil
+        }
+
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return "\(minutes):\(String(format: "%02d", seconds))"
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Button(action: togglePlayback) {
                 Image(systemName: isPlaying ? "stop.fill" : "play.fill")
                     .font(.system(size: 13, weight: .semibold))
@@ -215,16 +242,41 @@ struct GeneratedAudioAttachmentView: View {
             .help(isPlaying ? "Stop" : "Play")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Generated speech")
+                HStack(spacing: 6) {
+                    Text(mediaTitle)
+                        .font(.system(size: 13, weight: .semibold))
+
+                    if let durationText {
+                        Text(durationText)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text("Ready to play")
                     .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+
                 Text(audioURL.lastPathComponent)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
 
             Spacer(minLength: 8)
+
+            Button(action: revealAudio) {
+                Label("Reveal", systemImage: "folder")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Reveal in Finder")
 
             Button(action: downloadAudio) {
                 Label("Download", systemImage: "square.and.arrow.down")
@@ -238,8 +290,17 @@ struct GeneratedAudioAttachmentView: View {
             .buttonStyle(.plain)
             .help("Download audio")
         }
-        .padding(10)
-        .background(Color(NSColor.controlBackgroundColor))
+        .padding(12)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(NSColor.controlBackgroundColor),
+                    Color.accentColor.opacity(0.055)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -248,6 +309,7 @@ struct GeneratedAudioAttachmentView: View {
         .help(audioURL.lastPathComponent)
         .contextMenu {
             Button(isPlaying ? "Stop Audio" : "Play Audio", action: togglePlayback)
+            Button("Reveal in Finder", action: revealAudio)
             Button("Download Audio", action: downloadAudio)
         }
         .onDisappear {
@@ -294,6 +356,10 @@ struct GeneratedAudioAttachmentView: View {
                 downloadError = error.localizedDescription
             }
         }
+    }
+
+    private func revealAudio() {
+        NSWorkspace.shared.activateFileViewerSelecting([audioURL])
     }
 }
 
@@ -361,53 +427,111 @@ struct SentImageAttachmentView: View {
     }
 }
 
+struct ResponseActionsToolbar: View {
+    let showCopyFeedback: Bool
+    let onCopy: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: onCopy) {
+                Label(showCopyFeedback ? "Copied" : "Copy", systemImage: showCopyFeedback ? "checkmark" : "doc.on.doc")
+            }
+            .help("Copy response")
+
+            Button(action: onSave) {
+                Label("Save", systemImage: "square.and.arrow.down")
+            }
+            .help("Save response")
+
+            Spacer()
+        }
+        .font(.system(size: 11, weight: .medium))
+        .labelStyle(.titleAndIcon)
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
+    }
+}
+
 struct GeneratedImageAttachmentView: View {
     let imageURL: URL
     @State private var downloadError: String?
+    @State private var isHovered = false
 
     private var loadedImage: NSImage? {
         NSImage(contentsOf: imageURL)
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            if let loadedImage {
-                Image(nsImage: loadedImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "photo")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.secondary)
-                    Text("Image not available")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                if let loadedImage {
+                    Image(nsImage: loadedImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.secondary)
+                        Text("Image not available")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: 260, maxHeight: 260)
                 }
-                .frame(maxWidth: 260, maxHeight: 260)
+
+                HStack(spacing: 6) {
+                    Button(action: revealImage) {
+                        Label("Reveal", systemImage: "folder")
+                            .labelStyle(.iconOnly)
+                    }
+                    .help("Reveal in Finder")
+
+                    Button(action: downloadImage) {
+                        Label("Download", systemImage: "square.and.arrow.down")
+                            .labelStyle(.iconOnly)
+                    }
+                    .help("Download image")
+                }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .padding(8)
+                .background(Color.black.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(8)
+                .opacity(isHovered ? 1 : 0)
+                .buttonStyle(.plain)
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
             }
 
-            Button(action: downloadImage) {
-                Label("Download", systemImage: "square.and.arrow.down")
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(Color.black.opacity(0.58))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Generated image")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(imageURL.lastPathComponent)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .buttonStyle(.plain)
-            .padding(8)
-            .help("Download image")
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
         }
         .frame(maxWidth: 260, maxHeight: 260)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10)
                 .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
         )
         .help(imageURL.lastPathComponent)
+        .onHover { hovering in
+            isHovered = hovering
+        }
         .contextMenu {
+            Button("Reveal in Finder", action: revealImage)
             Button("Download Image", action: downloadImage)
         }
         .alert("Download failed", isPresented: Binding(
@@ -437,6 +561,10 @@ struct GeneratedImageAttachmentView: View {
                 downloadError = error.localizedDescription
             }
         }
+    }
+
+    private func revealImage() {
+        NSWorkspace.shared.activateFileViewerSelecting([imageURL])
     }
 }
 
@@ -1010,23 +1138,35 @@ private struct TaskListItem {
 // MARK: - Tool Call View
 struct ToolCallView: View {
     let toolCall: ToolCall
-    @State private var isExpanded = true
+    let isStreaming: Bool
+    let hasGeneratedMedia: Bool
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: toolCall.icon)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.accentColor)
+                ZStack {
+                    Circle()
+                        .fill(statusColor.opacity(0.14))
+                        .frame(width: 26, height: 26)
+
+                    Image(systemName: toolCall.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(statusColor)
+                }
 
                 Text(toolCall.toolName)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12, weight: .semibold))
 
                 Spacer()
 
                 Text(headerStatus)
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(statusColor.opacity(0.1))
+                    .clipShape(Capsule())
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 10))
@@ -1048,9 +1188,22 @@ struct ToolCallView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, 10)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(NSColor.controlBackgroundColor),
+                    statusColor.opacity(0.06)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(statusColor.opacity(0.16), lineWidth: 1)
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -1067,13 +1220,37 @@ struct ToolCallView: View {
         toolCall.icon == "magnifyingglass" || toolCall.toolName.localizedCaseInsensitiveContains("search")
     }
 
+    private var isAudioGeneration: Bool {
+        toolCall.icon == "waveform" || toolCall.icon == "music.note" || toolCall.toolName.localizedCaseInsensitiveContains("speech") || toolCall.toolName.localizedCaseInsensitiveContains("music")
+    }
+
     private var shouldShowDetails: Bool {
         !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var headerStatus: String {
+        if hasGeneratedMedia || !isStreaming {
+            if isWebSearch {
+                return "Searched"
+            }
+
+            if isImageGeneration {
+                return "Generated"
+            }
+
+            if isAudioGeneration {
+                return "Created"
+            }
+
+            return "Done"
+        }
+
         if isImageGeneration {
             return "Generating"
+        }
+
+        if isAudioGeneration {
+            return "Creating"
         }
 
         if isWebSearch {
@@ -1093,6 +1270,22 @@ struct ToolCallView: View {
         }
 
         return "Details"
+    }
+
+    private var statusColor: Color {
+        if isWebSearch {
+            return Color(red: 0.28, green: 0.55, blue: 0.95)
+        }
+
+        if isImageGeneration {
+            return Color(red: 0.88, green: 0.34, blue: 0.68)
+        }
+
+        if isAudioGeneration {
+            return Color(red: 0.42, green: 0.68, blue: 0.42)
+        }
+
+        return Color.accentColor
     }
 }
 

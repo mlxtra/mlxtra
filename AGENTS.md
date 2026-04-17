@@ -205,6 +205,16 @@ python3 test_music_integration.py  # or test_all_models_integration.py
 - Remove imports/variables/functions that YOUR changes made unused
 - Every changed line should trace directly to the request
 
+### Premium UI Standard
+
+**Keep the interface feeling premium:**
+- Prefer calm, minimal surfaces over explanatory text, clutter, or debug-like copy
+- Put technical recommendations, model details, and diagnostics in settings or dedicated status surfaces, not the homepage
+- Use concise user-facing copy; remove text that does not directly help the current task
+- Keep motion subtle, purposeful, and tied to state such as focus, loading, streaming, or generation
+- Preserve spacing, alignment, typography, and visual hierarchy when adding controls
+- Avoid making the homepage feel like a configuration screen; it should invite action
+
 ### Goal-Driven Execution
 
 **Transform tasks into verifiable goals:**

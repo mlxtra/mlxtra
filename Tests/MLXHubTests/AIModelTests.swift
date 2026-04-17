@@ -162,4 +162,18 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(info.downloadSize, 5.6)
         XCTAssertTrue(info.supportsVision)
     }
+
+    // MARK: - Hardware Recommendations
+
+    func testBestModelsForLowMemoryHardwareUsesMiniFallback() {
+        XCTAssertEqual(AIModel.bestModelsForHardware(memoryGB: 4.0), [.mini])
+    }
+
+    func testBestModelsForEightGBHardwareAvoidsLargestModel() {
+        XCTAssertEqual(AIModel.bestModelsForHardware(memoryGB: 8.0), [.gemma4, .mini])
+    }
+
+    func testBestModelsForSixteenGBHardwareIncludesLargestModel() {
+        XCTAssertEqual(AIModel.bestModelsForHardware(memoryGB: 16.0), [.qwen35, .gemma4, .mini])
+    }
 }

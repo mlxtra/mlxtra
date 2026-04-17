@@ -232,6 +232,22 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
     """Parse tool calls from model output. Tries common template formats."""
     tool_calls = []
 
+    def coerce_parameter_value(value: str) -> Any:
+        stripped = value.strip()
+        lowered = stripped.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        try:
+            if re.fullmatch(r"[-+]?\d+", stripped):
+                return int(stripped)
+            if re.fullmatch(r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|[-+]?\d+[eE][-+]?\d+", stripped):
+                return float(stripped)
+        except ValueError:
+            pass
+        return stripped
+
     # Qwen3.5 format: <function=name>\n<parameter=key>\nvalue\n</parameter>\n</function>
     fn_pattern = re.compile(r"<function=([^>]+)>(.*?)</function>", re.DOTALL)
     for m in fn_pattern.finditer(text):
@@ -240,7 +256,7 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
         args = {}
         param_pattern = re.compile(r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL)
         for p in param_pattern.finditer(fn_body):
-            args[p.group(1).strip()] = p.group(2).strip()
+            args[p.group(1).strip()] = coerce_parameter_value(p.group(2))
         tool_calls.append(
             {
                 "id": f"call_{uuid.uuid4().hex[:8]}",

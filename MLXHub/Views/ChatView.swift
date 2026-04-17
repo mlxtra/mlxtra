@@ -9,6 +9,34 @@ struct ChatView: View {
         viewModel.chats.first { $0.id == chatId }
     }
 
+    private var streamingAssistantMessage: Message? {
+        chat?.messages.last { !$0.isUser && $0.isStreaming }
+    }
+
+    private var hasStreamingProgressSurface: Bool {
+        guard let message = streamingAssistantMessage else { return false }
+
+        return !message.toolCalls.isEmpty
+            || !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !message.imageURLs.isEmpty
+            || !message.audioURLs.isEmpty
+    }
+
+    private var hasStreamingToolProgress: Bool {
+        !(streamingAssistantMessage?.toolCalls.isEmpty ?? true)
+    }
+
+    private var shouldShowTypingIndicator: Bool {
+        viewModel.isGenerating
+            && !hasStreamingProgressSurface
+            && !viewModel.isPythonLoading
+            && !viewModel.isModelLoading
+    }
+
+    private var shouldShowModelLoading: Bool {
+        (viewModel.isPythonLoading || viewModel.isModelLoading) && !hasStreamingToolProgress
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Chat title in toolbar area
@@ -34,7 +62,7 @@ struct ChatView: View {
                             .id(message.id)
                         }
 
-                        if viewModel.isGenerating {
+                        if shouldShowTypingIndicator {
                             TypingIndicator()
                         }
                     }
@@ -70,7 +98,7 @@ struct ChatView: View {
             }
 
             // Loading indicator
-            if viewModel.isPythonLoading || viewModel.isModelLoading {
+            if shouldShowModelLoading {
                 ModelLoadingView(message: viewModel.loadingMessage)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -114,21 +142,35 @@ struct TypingIndicator: View {
     @State private var animating = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<3) { index in
-                Circle()
-                    .fill(Color.secondary)
-                    .frame(width: 6, height: 6)
-                    .scaleEffect(animating ? 1.0 : 0.5)
-                    .opacity(animating ? 1.0 : 0.5)
-                    .animation(
-                        .easeInOut(duration: 0.5)
-                        .repeatForever(autoreverses: true)
-                        .delay(Double(index) * 0.15),
-                        value: animating
-                    )
+        HStack(spacing: 8) {
+            Text("Responding")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 4) {
+                ForEach(0..<3) { index in
+                    Circle()
+                        .fill(Color.secondary)
+                        .frame(width: 5, height: 5)
+                        .scaleEffect(animating ? 1.0 : 0.55)
+                        .opacity(animating ? 1.0 : 0.45)
+                        .animation(
+                            .easeInOut(duration: 0.55)
+                            .repeatForever(autoreverses: true)
+                            .delay(Double(index) * 0.16),
+                            value: animating
+                        )
+                }
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 1)
+        )
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 48)
         .onAppear {

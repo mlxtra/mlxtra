@@ -34,7 +34,7 @@ struct SettingsView: View {
             Text("Models")
                 .font(.largeTitle.weight(.semibold))
 
-            Text("Download embedded models to the default Hugging Face cache.")
+            Text("Download Hugging Face models to the default cache when possible. ACE-Step uses MLXHub checkpoints.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -102,13 +102,30 @@ private struct ModelDownloadRow: View {
             }
             .buttonStyle(.borderedProminent)
 
-        case .downloading:
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Downloading")
+        case .downloading(let progress):
+            VStack(alignment: .trailing, spacing: 5) {
+                if let fractionCompleted = progress?.fractionCompleted {
+                    ProgressView(value: fractionCompleted)
+                        .frame(width: 140)
+                } else {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(progress?.displayText ?? "Downloading")
+                    }
+                }
+
+                Text(progress?.displayText ?? "Downloading")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let detailText = progress?.detailText {
+                    Text(detailText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
-            .foregroundStyle(.secondary)
 
         case .downloaded:
             Label("Downloaded", systemImage: "checkmark.circle.fill")

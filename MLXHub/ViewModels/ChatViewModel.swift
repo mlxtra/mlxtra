@@ -1,6 +1,159 @@
 import SwiftUI
 import Combine
 
+#if DEBUG
+private enum ChatStreamDiagnostics {
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["MLXHUB_STREAM_DIAGNOSTICS"] == "1"
+            || UserDefaults.standard.bool(forKey: "MLXHub.streamDiagnostics")
+    }
+
+    static func now() -> TimeInterval {
+        Date().timeIntervalSinceReferenceDate
+    }
+
+    static func log(_ message: String) {
+        guard isEnabled else { return }
+        print("[StreamDiag][ChatVM] \(String(format: "%.6f", now())) \(message)")
+    }
+}
+#endif
+
+enum MusicIntentState: Equatable {
+    case needsInstrumentalOrVocals
+    case needsLyrics
+    case awaitingLyricsApproval
+    case readyToGenerate
+
+    var systemInstruction: String {
+        switch self {
+        case .needsInstrumentalOrVocals:
+            return "Current music intent state: ask whether the user wants instrumental music or vocals with lyrics before calling generate_music."
+        case .needsLyrics:
+            return "Current music intent state: the user wants vocals, but lyrics are missing. Write lyrics or ask for lyrics, then wait for approval before calling generate_music."
+        case .awaitingLyricsApproval:
+            return "Current music intent state: lyrics are drafted but not approved. Ask for explicit approval before calling generate_music."
+        case .readyToGenerate:
+            return "Current music intent state: enough information is available to call generate_music."
+        }
+    }
+
+    var blockedToolMessage: String? {
+        switch self {
+        case .needsInstrumentalOrVocals:
+            return "Do not call generate_music yet. Ask the user whether they want instrumental music or vocals with lyrics."
+        case .needsLyrics:
+            return "Do not call generate_music yet. The user wants vocals, but lyrics are missing. Write lyrics or ask the user for lyrics, then wait for approval."
+        case .awaitingLyricsApproval:
+            return "Do not call generate_music yet. You drafted lyrics, but the user has not explicitly approved them. Ask whether the lyrics look good or need changes."
+        case .readyToGenerate:
+            return nil
+        }
+    }
+
+    static func forPrompt(_ prompt: String) -> MusicIntentState {
+        let normalized = prompt.lowercased()
+        if containsAny(normalized, ["instrumental", "no vocals", "without vocals", "beat", "backing track", "background music"]) {
+            return .readyToGenerate
+        }
+        if containsLyricsMarkers(prompt) {
+            return .readyToGenerate
+        }
+        if containsAny(normalized, ["lyrics", "vocal", "vocals", "sing", "sung"]) {
+            return .needsLyrics
+        }
+        if containsApproval(normalized) {
+            return .readyToGenerate
+        }
+        return .needsInstrumentalOrVocals
+    }
+
+    static func forToolCall(prompt: String, parameters: [String: Any]) -> MusicIntentState {
+        let caption = (parameters["caption"] as? String) ?? prompt
+        let lyrics = ((parameters["lyrics"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let instrumental = boolValue(parameters["instrumental"])
+        let normalizedPrompt = prompt.lowercased()
+        let normalizedCaption = caption.lowercased()
+
+        if instrumental || containsAny(normalizedPrompt + " " + normalizedCaption, ["instrumental", "no vocals", "without vocals", "beat", "backing track", "background music"]) {
+            return .readyToGenerate
+        }
+
+        if lyrics.isEmpty {
+            if containsAny(normalizedPrompt + " " + normalizedCaption, ["lyrics", "vocal", "vocals", "sing", "sung"]) {
+                return .needsLyrics
+            }
+            return .needsInstrumentalOrVocals
+        }
+
+        if userProvidedLyrics(prompt: prompt, lyrics: lyrics) || containsApproval(normalizedPrompt) {
+            return .readyToGenerate
+        }
+
+        return .awaitingLyricsApproval
+    }
+
+    private static func boolValue(_ value: Any?) -> Bool {
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let string = value as? String {
+            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "yes", "1":
+                return true
+            default:
+                return false
+            }
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        return false
+    }
+
+    private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
+        needles.contains { text.contains($0) }
+    }
+
+    private static func containsLyricsMarkers(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        return containsAny(normalized, ["[verse]", "[chorus]", "[bridge]", "lyrics:"])
+    }
+
+    private static func containsApproval(_ text: String) -> Bool {
+        let approvalPhrases = [
+            "yes",
+            "approved",
+            "looks good",
+            "go ahead",
+            "use those lyrics",
+            "use the lyrics",
+            "use them",
+            "that's fine",
+            "that works",
+            "ok",
+            "okay"
+        ]
+        return approvalPhrases.contains { phrase in
+            text == phrase || text.contains(" \(phrase)") || text.contains("\(phrase) ")
+        }
+    }
+
+    private static func userProvidedLyrics(prompt: String, lyrics: String) -> Bool {
+        if containsLyricsMarkers(prompt) {
+            return true
+        }
+        let normalizedPrompt = prompt.lowercased()
+        let lyricWords = lyrics
+            .lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .filter { $0.count > 3 }
+        guard lyricWords.count >= 4 else { return false }
+        let matchingWords = lyricWords.filter { normalizedPrompt.contains(String($0)) }
+        return matchingWords.count >= min(6, lyricWords.count)
+    }
+}
+
 @MainActor
 class ChatViewModel: ObservableObject {
     // MARK: - Published Properties
@@ -8,7 +161,7 @@ class ChatViewModel: ObservableObject {
     @Published var selectedChatId: UUID?
     @Published var inputText: String = ""
     @Published var selectedTool: Tool = .auto
-    @Published var selectedModel: AIModel = .qwen35
+    @Published var selectedModel: AIModel = AIModel.defaultForCurrentHardware
     @Published var isToolMenuOpen: Bool = false
     @Published var isModelMenuOpen: Bool = false
     @Published var selectedImagePaths: [URL] = []
@@ -19,6 +172,8 @@ class ChatViewModel: ObservableObject {
     @Published var isGenerating: Bool = false
     @Published var loadingMessage: String = ""
     @Published var streamingMessageId: UUID?
+    @Published private(set) var modelDownloadRequest: DownloadableModel?
+    @Published private(set) var musicIntentState: MusicIntentState = .needsInstrumentalOrVocals
 
     // MARK: - Private Properties
     private let chatStore = ChatStore()
@@ -299,7 +454,7 @@ class ChatViewModel: ObservableObject {
             "type": "function",
             "function": [
                 "name": "generate_music",
-                "description": "Create a song, instrumental track, beat, loop, background music, or music sample from a text prompt.",
+                "description": "Create a song, instrumental track, beat, loop, background music, or music sample only after the user has specified instrumental music or approved lyrics for vocals.",
                 "parameters": [
                     "type": "object",
                     "properties": [
@@ -338,7 +493,15 @@ class ChatViewModel: ObservableObject {
 
         When the user asks you to create speech, narration, voiceover, or text-to-speech audio, use the create_speech tool with the exact text that should be spoken. After the create_speech tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
 
-        When the user asks you to create music, a song, beat, loop, soundtrack, instrumental, or background music, first determine if they want lyrics or instrumental. If the user does not specify, ask them: "Would you like instrumental music, or should I include vocals with lyrics? If you'd like lyrics, you can provide your own or I can write them for you." If the user wants instrumental, set instrumental to true. If the user wants lyrics and provides them, use their lyrics. If the user wants lyrics but doesn't provide them, write appropriate lyrics and ask: "Here are the lyrics I wrote for your song:\n\n<lyrics>\n\nDo these look good, or would you like me to change anything before I generate the music?" After the user approves, then use the generate_music tool with the caption (music description) and lyrics. Use section labels like [verse], [chorus], [bridge] in the lyrics. After the generate_music tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
+        When the user asks you to create music, a song, beat, loop, soundtrack, instrumental, or background music, do not call generate_music until the request is ready.
+
+        Music readiness rules:
+        - If the user clearly asks for instrumental music, a beat, background music, a backing track, or no vocals, call generate_music with instrumental=true.
+        - If the user does not say whether they want instrumental music or vocals, ask: "Would you like instrumental music, or should I include vocals with lyrics? If you'd like lyrics, you can provide your own or I can write them for you."
+        - If the user wants vocals and provides lyrics, call generate_music with those lyrics.
+        - If the user wants vocals but does not provide lyrics, write lyrics with section labels like [verse], [chorus], and [bridge], then ask: "Here are the lyrics I wrote for your song:\n\n<lyrics>\n\nDo these look good, or would you like me to change anything before I generate the music?"
+        - If you wrote or revised lyrics, wait for explicit user approval before calling generate_music.
+        - After generate_music runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
         """
     }
 
@@ -352,8 +515,80 @@ class ChatViewModel: ObservableObject {
         return autoTools
     }
 
+    private func downloadableModel(modelId: String, name: String, modality: ModelModality, downloadSizeGB: Double) -> DownloadableModel {
+        DownloadableModel.embeddedModel(modelId: modelId) ?? DownloadableModel(
+            id: modelId,
+            name: name,
+            subtitle: "\(modality.rawValue) model",
+            modelId: modelId,
+            modality: modality,
+            downloadSizeGB: downloadSizeGB
+        )
+    }
+
+    private func requestDownloadBeforeUse(model: DownloadableModel) {
+        modelDownloadRequest = model
+        loadingMessage = ""
+    }
+
+    func clearModelDownloadRequest() {
+        modelDownloadRequest = nil
+    }
+
+    private func modelDownloadRequiredMessage(for model: DownloadableModel, operation: String) -> String {
+        "\(operation) needs \(model.name) (\(String(format: "%.1f", model.downloadSizeGB)) GB). Opened Models so you can download it first, then try again."
+    }
+
+    private func appendAssistantMessage(_ content: String) {
+        let message = Message(
+            content: content,
+            isUser: false,
+            timestamp: Date()
+        )
+
+        if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
+            chats[index].messages.append(message)
+            chats[index].timestamp = Date()
+            persistConversationHistory()
+        }
+    }
+
+    private func requireDownloadedModel(model: DownloadableModel, operation: String) -> Bool {
+        guard !runtimeManager.isModelDownloaded(modelId: model.modelId) else {
+            return true
+        }
+
+        requestDownloadBeforeUse(model: model)
+        appendAssistantMessage(modelDownloadRequiredMessage(for: model, operation: operation))
+        isGenerating = false
+        isModelLoading = false
+        streamingMessageId = nil
+        generationTask = nil
+        return false
+    }
+
     private func generateResponse(for prompt: String, images: [URL], toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
         do {
+            let isImageGeneration = selectedTool == .image
+            let isSpeechGeneration = selectedTool == .tts
+            let isMusicGeneration = selectedTool == .music
+            let activeModelId = isImageGeneration ? imageGenerationModelId : selectedModel.modelId
+            let resolvedModelId = isSpeechGeneration ? speechGenerationModelId : activeModelId
+            let activeModelName = isImageGeneration ? imageGenerationModelName : (isSpeechGeneration ? speechGenerationModelName : selectedModel.displayName)
+            let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vlm)
+            let activeModality: ModelModality = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vision)
+            let downloadSize = (isImageGeneration || isSpeechGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
+            let requiredModel = downloadableModel(
+                modelId: resolvedModelId,
+                name: activeModelName,
+                modality: activeModality,
+                downloadSizeGB: downloadSize
+            )
+
+            guard requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
+                return
+            }
+
             if runtimeManager.state != .ready {
                 isPythonLoading = true
                 loadingMessage = "Initializing Python runtime..."
@@ -366,24 +601,10 @@ class ChatViewModel: ObservableObject {
                 try await vlmExecutor.initialize()
             }
 
-            let isImageGeneration = selectedTool == .image
-            let isSpeechGeneration = selectedTool == .tts
-            let isMusicGeneration = selectedTool == .music
-            let activeModelId = isImageGeneration ? imageGenerationModelId : selectedModel.modelId
-            let resolvedModelId = isMusicGeneration ? musicGenerationModelId : (isSpeechGeneration ? speechGenerationModelId : activeModelId)
-            let activeModelName = isImageGeneration ? imageGenerationModelName : (isMusicGeneration ? musicGenerationModelName : (isSpeechGeneration ? speechGenerationModelName : selectedModel.displayName))
-            let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isMusicGeneration ? .music : (isSpeechGeneration ? .audio : .vlm))
-
 if !vlmExecutor.isModelLoaded {
         isModelLoading = true
-        let downloadSize = (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
         loadingMessage = "Loading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
-
-        if runtimeManager.isModelDownloaded(modelId: resolvedModelId) {
-            loadingMessage = "Loading \(activeModelName)..."
-        } else {
-            loadingMessage = "Downloading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
-        }
+        loadingMessage = "Loading \(activeModelName)..."
 
         do {
             try await loadModel(resolvedModelId)
@@ -414,8 +635,6 @@ if !vlmExecutor.isModelLoaded {
                     initialToolCall = ToolCall(toolName: "FLUX.2 image generation", status: prompt, icon: "photo")
                 } else if isSpeechGeneration {
                     initialToolCall = ToolCall(toolName: "KugelAudio speech generation", status: prompt, icon: "waveform")
-                } else if isMusicGeneration {
-                    initialToolCall = ToolCall(toolName: "ACE-Step music generation", status: prompt, icon: "music.note")
                 } else {
                     initialToolCall = nil
                 }
@@ -449,6 +668,11 @@ if !vlmExecutor.isModelLoaded {
                         messages.append(ExecutionMessage(role: role, content: message.content))
                     }
                 }
+
+                if isMusicGeneration {
+                    musicIntentState = MusicIntentState.forPrompt(prompt)
+                    messages.append(ExecutionMessage(role: .system, content: musicIntentState.systemInstruction))
+                }
             }
 
             let chatTemplateKwargs: [String: Any]? = !isImageGeneration && !isSpeechGeneration && !isMusicGeneration && selectedModel.modelId.lowercased().contains("qwen")
@@ -456,7 +680,7 @@ if !vlmExecutor.isModelLoaded {
                 : nil
 
             let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth))
-        let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isMusicGeneration ? generatedMusicDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil))
+        let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil)
         let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration
 
         let request = ExecutionRequest(
@@ -572,6 +796,23 @@ if !vlmExecutor.isModelLoaded {
     }
 
     private func executeImageGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String) async {
+        let imageModel = downloadableModel(
+            modelId: imageGenerationModelId,
+            name: imageGenerationModelName,
+            modality: .image,
+            downloadSizeGB: runtimeManager.estimatedModelSize(modelId: imageGenerationModelId)
+        )
+        guard runtimeManager.isModelDownloaded(modelId: imageModel.modelId) else {
+            requestDownloadBeforeUse(model: imageModel)
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: modelDownloadRequiredMessage(for: imageModel, operation: "Image generation"),
+                toolCallId: toolCall.id,
+                name: "generate_image"
+            ))
+            return
+        }
+
         let args = toolCall.function.arguments
         var imagePrompt = prompt
         if let data = args.data(using: .utf8),
@@ -663,6 +904,23 @@ if !vlmExecutor.isModelLoaded {
     }
 
     private func executeSpeechGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
+        let speechModel = downloadableModel(
+            modelId: speechGenerationModelId,
+            name: speechGenerationModelName,
+            modality: .audio,
+            downloadSizeGB: runtimeManager.estimatedModelSize(modelId: speechGenerationModelId)
+        )
+        guard runtimeManager.isModelDownloaded(modelId: speechModel.modelId) else {
+            requestDownloadBeforeUse(model: speechModel)
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: modelDownloadRequiredMessage(for: speechModel, operation: "Speech generation"),
+                toolCallId: toolCall.id,
+                name: "create_speech"
+            ))
+            return
+        }
+
         let args = toolCall.function.arguments
         var speechText = prompt
         if let data = args.data(using: .utf8),
@@ -765,14 +1023,42 @@ if !vlmExecutor.isModelLoaded {
                 parameters["lyrics"] = lyrics
             }
             if let duration = decoded["duration"] {
-                parameters["duration"] = duration
+                parameters["duration"] = normalizedMusicNumber(duration)
             }
             if let instrumental = decoded["instrumental"] {
-                parameters["instrumental"] = instrumental
+                parameters["instrumental"] = normalizedMusicBool(instrumental) ?? instrumental
             }
         }
 
         let musicPrompt = (parameters["caption"] as? String) ?? prompt
+        musicIntentState = MusicIntentState.forToolCall(prompt: prompt, parameters: parameters)
+        if let blockedToolMessage = musicIntentState.blockedToolMessage {
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: blockedToolMessage,
+                toolCallId: toolCall.id,
+                name: "generate_music"
+            ))
+            return
+        }
+
+        let musicModel = downloadableModel(
+            modelId: musicGenerationModelId,
+            name: musicGenerationModelName,
+            modality: .music,
+            downloadSizeGB: runtimeManager.estimatedModelSize(modelId: musicGenerationModelId)
+        )
+        guard runtimeManager.isModelDownloaded(modelId: musicModel.modelId) else {
+            requestDownloadBeforeUse(model: musicModel)
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: modelDownloadRequiredMessage(for: musicModel, operation: "Music generation"),
+                toolCallId: toolCall.id,
+                name: "generate_music"
+            ))
+            return
+        }
+
         loadingMessage = "Generating music..."
         if let messageId = streamingMessageId {
             appendToolCall(
@@ -854,6 +1140,39 @@ if !vlmExecutor.isModelLoaded {
         }
     }
 
+    private func normalizedMusicNumber(_ value: Any) -> Any {
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let intValue = Int(trimmed) {
+                return intValue
+            }
+            if let doubleValue = Double(trimmed) {
+                return doubleValue
+            }
+        }
+        return value
+    }
+
+    private func normalizedMusicBool(_ value: Any) -> Bool? {
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        if let string = value as? String {
+            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "yes", "1":
+                return true
+            case "false", "no", "0":
+                return false
+            default:
+                return nil
+            }
+        }
+        return nil
+    }
+
     private func loadModel(_ modelId: String) async throws {
         // The executor handles lazy loading, we just need to trigger it
         // by sending a request
@@ -872,6 +1191,32 @@ if !vlmExecutor.isModelLoaded {
         isMusicGeneration: Bool = false
     ) async {
         var fullResponse = ""
+        var renderedResponse = ""
+        var lastRenderTime = Date.distantPast
+        let minimumRenderInterval: TimeInterval = 1.0 / 30.0
+#if DEBUG
+        var tokenIndex = 0
+#endif
+
+        func renderStreamingResponse(force: Bool = false, tokenIndex: Int? = nil, tokenReceivedAt: TimeInterval? = nil) {
+            guard fullResponse != renderedResponse else { return }
+
+            let now = Date()
+            guard force || renderedResponse.isEmpty || now.timeIntervalSince(lastRenderTime) >= minimumRenderInterval else {
+                return
+            }
+
+            updateStreamingMessage(messageId, content: fullResponse)
+            renderedResponse = fullResponse
+            lastRenderTime = now
+
+#if DEBUG
+            if let tokenIndex, let tokenReceivedAt {
+                let updateFinishedAt = ChatStreamDiagnostics.now()
+                ChatStreamDiagnostics.log("message.rendered index=\(tokenIndex) responseChars=\(fullResponse.count) elapsedMs=\(String(format: "%.2f", (updateFinishedAt - tokenReceivedAt) * 1000))")
+            }
+#endif
+        }
         
         for await event in stream {
             if Task.isCancelled {
@@ -884,11 +1229,30 @@ if !vlmExecutor.isModelLoaded {
                 break
                 
             case .token(let token):
+#if DEBUG
+                tokenIndex += 1
+                let tokenReceivedAt = ChatStreamDiagnostics.now()
+                ChatStreamDiagnostics.log("token.received index=\(tokenIndex) tokenChars=\(token.count) responseCharsBefore=\(fullResponse.count)")
+#endif
+                guard !token.isEmpty else {
+#if DEBUG
+                    ChatStreamDiagnostics.log("token.emptySkipped index=\(tokenIndex) responseChars=\(fullResponse.count)")
+#endif
+                    continue
+                }
+
                 fullResponse += token
                 if hasTools && shouldBufferToolEnabledOutput(fullResponse) {
                     loadingMessage = "Thinking..."
+#if DEBUG
+                    ChatStreamDiagnostics.log("token.buffered index=\(tokenIndex) responseChars=\(fullResponse.count)")
+#endif
                 } else {
-                    updateStreamingMessage(messageId, content: fullResponse)
+#if DEBUG
+                    renderStreamingResponse(force: renderedResponse.isEmpty, tokenIndex: tokenIndex, tokenReceivedAt: tokenReceivedAt)
+#else
+                    renderStreamingResponse(force: renderedResponse.isEmpty)
+#endif
                 }
 
             case .image(let imageURL):
@@ -898,12 +1262,15 @@ if !vlmExecutor.isModelLoaded {
                 appendGeneratedAudio(audioURL, toMessage: messageId)
                 
             case .complete(let response, let usage):
+#if DEBUG
+                ChatStreamDiagnostics.log("stream.complete responseChars=\(response.count)")
+#endif
                 fullResponse = response
                 finalizeMessage(
                     messageId,
-                    content: (isImageGeneration || isSpeechGeneration || isMusicGeneration) ? "" : fullResponse,
+                    content: (isImageGeneration || isSpeechGeneration) ? "" : fullResponse,
                     usage: usage,
-                    clearToolCall: isImageGeneration || isSpeechGeneration || isMusicGeneration
+                    clearToolCall: isImageGeneration || isSpeechGeneration
                 )
                 isGenerating = false
                 streamingMessageId = nil
@@ -946,7 +1313,7 @@ case .toolCalls(let toolCalls):
         let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedOutput.isEmpty else { return true }
 
-        let toolPrefixes = ["<function=", "<|tool_call|>"]
+        let toolPrefixes = ["<tool_call>", "<function=", "<|tool_call|>"]
         return toolPrefixes.contains { prefix in
             prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
         }
@@ -959,7 +1326,6 @@ case .toolCalls(let toolCalls):
             var updatedMessages = chats[chatIndex].messages
             updatedMessages[messageIndex].content = content
             chats[chatIndex].messages = updatedMessages
-            persistConversationHistory()
         }
     }
 
@@ -1088,8 +1454,11 @@ isGenerating = false
     loadingMessage = ""
 }
 
-func selectTool(_ tool: Tool) {
+    func selectTool(_ tool: Tool) {
         selectedTool = tool
+        if tool == .music {
+            musicIntentState = .needsInstrumentalOrVocals
+        }
         isToolMenuOpen = false
     }
 
