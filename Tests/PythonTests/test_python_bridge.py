@@ -6,7 +6,7 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "MLXHub" / "Resources"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MLXHub" / "Resources"))
 import python_bridge
 
 
@@ -131,6 +131,25 @@ class TestModelRegistries(unittest.TestCase):
         python_bridge.AUDIO_MODEL_REGISTRY.clear()
         python_bridge.MUSIC_MODEL_REGISTRY.clear()
         assert python_bridge.MODEL_REGISTRY == {}
+
+
+class TestImageModelLoading(unittest.TestCase):
+    def test_passes_model_path_to_mflux(self):
+        from unittest.mock import MagicMock, patch
+
+        model_id = "test-org/test-flux-model"
+        mock_model_instance = MagicMock()
+        mock_flux_class = MagicMock(return_value=mock_model_instance)
+
+        with patch("mflux.models.flux2.variants.Flux2Klein", mock_flux_class), \
+             patch("mflux.models.common.config.ModelConfig.flux2_klein_4b", MagicMock()):
+            
+            result = python_bridge.load_image_model_if_needed(model_id)
+
+            # Check that Flux2Klein was called with model_path=model_id
+            args, kwargs = mock_flux_class.call_args
+            assert kwargs["model_path"] == model_id
+            assert result == mock_model_instance
 
 
 if __name__ == "__main__":

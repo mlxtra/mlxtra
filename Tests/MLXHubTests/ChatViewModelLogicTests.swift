@@ -20,6 +20,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicTool] : [])
     }
 
+    private func isTerminalMediaTool(_ name: String) -> Bool {
+        name == "generate_image" || name == "create_speech" || name == "generate_music"
+    }
+
     // MARK: - Tool Detection Tests
 
     func testDefaultMusicParameters() {
@@ -198,6 +202,13 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertEqual(tools?.count, 1)
         let function = tools?.first?["function"] as? [String: Any]
         XCTAssertEqual(function?["name"] as? String, "generate_music")
+    }
+
+    func testMediaToolsDoNotRequireFollowUpChatCompletion() {
+        XCTAssertTrue(isTerminalMediaTool("generate_music"))
+        XCTAssertTrue(isTerminalMediaTool("generate_image"))
+        XCTAssertTrue(isTerminalMediaTool("create_speech"))
+        XCTAssertFalse(isTerminalMediaTool("web_search"))
     }
 
     // MARK: - Backend Selection Tests

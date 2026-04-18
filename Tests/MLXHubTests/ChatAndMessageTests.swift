@@ -206,12 +206,18 @@ final class ChatAndMessageTests: XCTestCase {
             id: UUID(),
             toolName: "generate_music",
             status: "Creating song...",
-            icon: "music.note"
+            icon: "music.note",
+            details: [
+                ToolCallDetail(label: "Lyrics", value: "[verse]\nTest lyric")
+            ]
         )
 
         XCTAssertEqual(toolCall.toolName, "generate_music")
         XCTAssertEqual(toolCall.status, "Creating song...")
         XCTAssertEqual(toolCall.icon, "music.note")
+        XCTAssertEqual(toolCall.details, [
+            ToolCallDetail(label: "Lyrics", value: "[verse]\nTest lyric")
+        ])
     }
 
     func testToolCallIdentifiable() {

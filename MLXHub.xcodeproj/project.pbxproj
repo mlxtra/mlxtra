@@ -13,7 +13,6 @@
 		8A0100010000000000000004 /* MainContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001004 /* MainContentView.swift */; };
 		8A0100010000000000000005 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001005 /* WelcomeView.swift */; };
 		8A0100010000000000000006 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001006 /* ChatView.swift */; };
-		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
 		8A0100010000000000000007 /* ChatInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001007 /* ChatInputView.swift */; };
 		8A0100010000000000000008 /* MessageBubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001008 /* MessageBubbleView.swift */; };
 		8A0100010000000000000009 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001009 /* ChatViewModel.swift */; };
@@ -23,12 +22,13 @@
 		8A010001000000000000000D /* ModelExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100D /* ModelExecutor.swift */; };
 		8A010001000000000000000E /* VLMExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100E /* VLMExecutor.swift */; };
 		8A010001000000000000000F /* RuntimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100F /* RuntimeManager.swift */; };
+		8A0100010000000000000010 /* python_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001011 /* python_bridge.py */; };
+		8A0100010000000000000011 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
 		8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001015 /* MCPWebSearchService.swift */; };
 		8A0100010000000000000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001016 /* SettingsView.swift */; };
 		8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001017 /* ModelDownloadManager.swift */; };
-		8A0100010000000000000010 /* python_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001011 /* python_bridge.py */; };
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
-		8A0100010000000000000011 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
+		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,7 +38,6 @@
 		8A0100010000000000001004 /* MainContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainContentView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001005 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001006 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
-		8A0100010000000000001019 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001007 /* ChatInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatInputView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001008 /* MessageBubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001009 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
@@ -50,13 +49,14 @@
 		8A010001000000000000100F /* RuntimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeManager.swift; sourceTree = "<group>"; };
 		8A0100010000000000001010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		8A0100010000000000001011 /* python_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = python_bridge.py; sourceTree = "<group>"; };
-		8A0100010000000000001018 /* acestep_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = acestep_bridge.py; sourceTree = "<group>"; };
 		8A0100010000000000001012 /* runtime */ = {isa = PBXFileReference; lastKnownFileType = folder; path = runtime; sourceTree = "<group>"; };
 		8A0100010000000000001013 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = text; path = Package.swift; sourceTree = "<group>"; };
 		8A0100010000000000001014 /* MLXHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MLXHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A0100010000000000001015 /* MCPWebSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPWebSearchService.swift; sourceTree = "<group>"; };
 		8A0100010000000000001016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001017 /* ModelDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadManager.swift; sourceTree = "<group>"; };
+		8A0100010000000000001018 /* acestep_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = acestep_bridge.py; sourceTree = "<group>"; };
+		8A0100010000000000001019 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -145,14 +145,14 @@
 			path = Execution;
 			sourceTree = "<group>";
 		};
-	8A0100010000000000003008 /* Resources */ = {
-		isa = PBXGroup;
-		children = (
-			8A0100010000000000001010 /* Info.plist */,
-			8A0100010000000000001011 /* python_bridge.py */,
-			8A0100010000000000001018 /* acestep_bridge.py */,
-			8A0100010000000000001012 /* runtime */,
-		);
+		8A0100010000000000003008 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001010 /* Info.plist */,
+				8A0100010000000000001011 /* python_bridge.py */,
+				8A0100010000000000001018 /* acestep_bridge.py */,
+				8A0100010000000000001012 /* runtime */,
+			);
 			path = Resources;
 			sourceTree = "<group>";
 		};
@@ -250,15 +250,15 @@
 		};
 /* End PBXProject section */
 
-	/* Begin PBXResourcesBuildPhase section */
-	8A0100010000000000002002 /* Resources */ = {
-		isa = PBXResourcesBuildPhase;
-		buildActionMask = 2147483647;
-		files = (
-			8A0100010000000000000010 /* python_bridge.py in Resources */,
-			8A0100010000000000000018 /* acestep_bridge.py in Resources */,
-			8A0100010000000000000011 /* runtime in Resources */,
-		);
+/* Begin PBXResourcesBuildPhase section */
+		8A0100010000000000002002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8A0100010000000000000010 /* python_bridge.py in Resources */,
+				8A0100010000000000000018 /* acestep_bridge.py in Resources */,
+				8A0100010000000000000011 /* runtime in Resources */,
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
@@ -423,7 +423,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.MLXHub;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.MLXHub;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
@@ -449,7 +449,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.MLXHub;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.MLXHub;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;

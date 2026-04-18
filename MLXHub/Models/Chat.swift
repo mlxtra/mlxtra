@@ -100,21 +100,46 @@ struct Message: Identifiable, Codable {
     }
 }
 
+struct ToolCallDetail: Codable, Equatable {
+    var label: String
+    var value: String
+}
+
 struct ToolCall: Identifiable, Codable {
     let id: UUID
     var toolName: String
     var status: String
     var icon: String
+    var details: [ToolCallDetail]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case toolName
+        case status
+        case icon
+        case details
+    }
 
     init(
         id: UUID = UUID(),
         toolName: String,
         status: String,
-        icon: String
+        icon: String,
+        details: [ToolCallDetail] = []
     ) {
         self.id = id
         self.toolName = toolName
         self.status = status
         self.icon = icon
+        self.details = details
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        toolName = try container.decode(String.self, forKey: .toolName)
+        status = try container.decode(String.self, forKey: .status)
+        icon = try container.decode(String.self, forKey: .icon)
+        details = try container.decodeIfPresent([ToolCallDetail].self, forKey: .details) ?? []
     }
 }

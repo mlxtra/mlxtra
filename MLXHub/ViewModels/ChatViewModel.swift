@@ -368,12 +368,14 @@ class ChatViewModel: ObservableObject {
         selectedImagePaths = []
 
         // Start generation
+        print("[ChatVM] Starting generation task for: \(messageText.prefix(50))...")
         generationTask = Task {
             await generateResponse(for: messageText, images: images)
         }
     }
 
     func cancelGeneration() {
+        print("[ChatVM] cancelGeneration called")
         generationTask?.cancel()
         generationTask = nil
         
@@ -553,8 +555,15 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func requireDownloadedModel(model: DownloadableModel, operation: String) -> Bool {
-        guard !runtimeManager.isModelDownloaded(modelId: model.modelId) else {
+    private func isModelDownloadedOffMain(modelId: String) async -> Bool {
+        let checkpointsPath = runtimeManager.checkpointsPath
+        return await Task.detached(priority: .utility) {
+            RuntimeManager.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
+        }.value
+    }
+
+    private func requireDownloadedModel(model: DownloadableModel, operation: String) async -> Bool {
+        guard !(await isModelDownloadedOffMain(modelId: model.modelId)) else {
             return true
         }
 
@@ -572,6 +581,7 @@ class ChatViewModel: ObservableObject {
             let isImageGeneration = selectedTool == .image
             let isSpeechGeneration = selectedTool == .tts
             let isMusicGeneration = selectedTool == .music
+
             let activeModelId = isImageGeneration ? imageGenerationModelId : selectedModel.modelId
             let resolvedModelId = isSpeechGeneration ? speechGenerationModelId : activeModelId
             let activeModelName = isImageGeneration ? imageGenerationModelName : (isSpeechGeneration ? speechGenerationModelName : selectedModel.displayName)
@@ -585,7 +595,7 @@ class ChatViewModel: ObservableObject {
                 downloadSizeGB: downloadSize
             )
 
-            guard requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
+            guard await requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
                 return
             }
 
@@ -601,19 +611,18 @@ class ChatViewModel: ObservableObject {
                 try await vlmExecutor.initialize()
             }
 
-if !vlmExecutor.isModelLoaded {
-        isModelLoading = true
-        loadingMessage = "Loading \(activeModelName) (\(String(format: "%.1f", downloadSize)) GB)..."
-        loadingMessage = "Loading \(activeModelName)..."
+            if !vlmExecutor.isModelLoaded {
+                isModelLoading = true
+                loadingMessage = "Loading \(activeModelName)..."
 
-        do {
-            try await loadModel(resolvedModelId)
-        } catch {
-            isModelLoading = false
-            throw error
-        }
-        // isModelLoading will be set to false in processStream when .complete or .error is received
-    }
+                do {
+                    try await loadModel(resolvedModelId)
+                } catch {
+                    isModelLoading = false
+                    throw error
+                }
+                // isModelLoading will be set to false in processStream when .complete or .error is received
+            }
 
             isGenerating = true
 
@@ -680,25 +689,25 @@ if !vlmExecutor.isModelLoaded {
                 : nil
 
             let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth))
-        let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil)
-        let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration
+            let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil)
+            let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration
 
-        let request = ExecutionRequest(
-            backend: activeBackend,
-            modelId: resolvedModelId,
-            messages: isDirectMediaGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
-            images: images.isEmpty ? nil : images,
-            outputDirectory: outputDirectory,
-            maxTokens: isDirectMediaGeneration ? 0 : selectedModel.defaultMaxTokens,
-            temperature: isDirectMediaGeneration ? 1.0 : selectedModel.temperatureRange.default,
-            topP: isDirectMediaGeneration ? nil : selectedModel.topP,
-            topK: isDirectMediaGeneration ? nil : selectedModel.topK,
-            minP: isDirectMediaGeneration ? nil : selectedModel.minP,
-            repetitionPenalty: isDirectMediaGeneration ? nil : selectedModel.repetitionPenalty,
-            chatTemplateKwargs: chatTemplateKwargs,
-            tools: tools,
-            parameters: nil
-        )
+            let request = ExecutionRequest(
+                backend: activeBackend,
+                modelId: resolvedModelId,
+                messages: isDirectMediaGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
+                images: images.isEmpty ? nil : images,
+                outputDirectory: outputDirectory,
+                maxTokens: isDirectMediaGeneration ? 0 : selectedModel.defaultMaxTokens,
+                temperature: isDirectMediaGeneration ? 1.0 : selectedModel.temperatureRange.default,
+                topP: isDirectMediaGeneration ? nil : selectedModel.topP,
+                topK: isDirectMediaGeneration ? nil : selectedModel.topK,
+                minP: isDirectMediaGeneration ? nil : selectedModel.minP,
+                repetitionPenalty: isDirectMediaGeneration ? nil : selectedModel.repetitionPenalty,
+                chatTemplateKwargs: chatTemplateKwargs,
+                tools: tools,
+                parameters: nil
+            )
 
             let stream = try await vlmExecutor.execute(request: request)
 
@@ -802,7 +811,7 @@ if !vlmExecutor.isModelLoaded {
             modality: .image,
             downloadSizeGB: runtimeManager.estimatedModelSize(modelId: imageGenerationModelId)
         )
-        guard runtimeManager.isModelDownloaded(modelId: imageModel.modelId) else {
+        guard await isModelDownloadedOffMain(modelId: imageModel.modelId) else {
             requestDownloadBeforeUse(model: imageModel)
             messages.append(ExecutionMessage(
                 role: .tool,
@@ -910,7 +919,7 @@ if !vlmExecutor.isModelLoaded {
             modality: .audio,
             downloadSizeGB: runtimeManager.estimatedModelSize(modelId: speechGenerationModelId)
         )
-        guard runtimeManager.isModelDownloaded(modelId: speechModel.modelId) else {
+        guard await isModelDownloadedOffMain(modelId: speechModel.modelId) else {
             requestDownloadBeforeUse(model: speechModel)
             messages.append(ExecutionMessage(
                 role: .tool,
@@ -1048,7 +1057,7 @@ if !vlmExecutor.isModelLoaded {
             modality: .music,
             downloadSizeGB: runtimeManager.estimatedModelSize(modelId: musicGenerationModelId)
         )
-        guard runtimeManager.isModelDownloaded(modelId: musicModel.modelId) else {
+        guard await isModelDownloadedOffMain(modelId: musicModel.modelId) else {
             requestDownloadBeforeUse(model: musicModel)
             messages.append(ExecutionMessage(
                 role: .tool,
@@ -1065,7 +1074,8 @@ if !vlmExecutor.isModelLoaded {
                 ToolCall(
                     toolName: "ACE-Step music generation",
                     status: musicPrompt,
-                    icon: "music.note"
+                    icon: "music.note",
+                    details: musicToolCallDetails(parameters)
                 ),
                 toMessage: messageId
             )
@@ -1173,6 +1183,69 @@ if !vlmExecutor.isModelLoaded {
         return nil
     }
 
+    private func musicToolCallDetails(_ parameters: [String: Any]) -> [ToolCallDetail] {
+        let userFacingKeys = [
+            "caption",
+            "lyrics",
+            "duration",
+            "instrumental"
+        ]
+
+        var details: [ToolCallDetail] = []
+
+        for key in userFacingKeys {
+            if let value = parameters[key],
+               let displayValue = musicParameterDisplayValue(value) {
+                details.append(ToolCallDetail(label: musicParameterLabel(key), value: displayValue))
+            }
+        }
+
+        return details
+    }
+
+    private func musicParameterDisplayValue(_ value: Any) -> String? {
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let bool = value as? Bool {
+            return bool ? "true" : "false"
+        }
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted]),
+           let string = String(data: data, encoding: .utf8) {
+            return string
+        }
+        return String(describing: value)
+    }
+
+    private func musicParameterLabel(_ key: String) -> String {
+        switch key {
+        case "caption": return "Caption"
+        case "lyrics": return "Lyrics"
+        case "duration": return "Duration"
+        case "instrumental": return "Instrumental"
+        case "inference_steps": return "Inference steps"
+        case "batch_size": return "Batch size"
+        case "audio_format": return "Audio format"
+        case "thinking": return "Thinking"
+        case "seed": return "Seed"
+        case "bpm": return "BPM"
+        case "keyscale": return "Key"
+        case "vocal_language": return "Vocal language"
+        default:
+            return key
+                .split(separator: "_")
+                .map { part in
+                    part.prefix(1).uppercased() + part.dropFirst()
+                }
+                .joined(separator: " ")
+        }
+    }
+
     private func loadModel(_ modelId: String) async throws {
         // The executor handles lazy loading, we just need to trigger it
         // by sending a request
@@ -1277,19 +1350,33 @@ if !vlmExecutor.isModelLoaded {
                 generationTask = nil
                 loadingMessage = ""
                 
-case .toolCalls(let toolCalls):
-            guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
-            guard toolDepth < maxAutoToolDepth else {
-                // Max tool depth reached, skip recursive tool execution
-                currentMessages.append(ExecutionMessage(role: .assistant, content: "Maximum tool call depth reached. Cannot execute more tool calls."))
+            case .toolCalls(let toolCalls):
+                guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
+                guard toolDepth < maxAutoToolDepth else {
+                    // Max tool depth reached, skip recursive tool execution
+                    currentMessages.append(ExecutionMessage(role: .assistant, content: "Maximum tool call depth reached. Cannot execute more tool calls."))
+                    return
+                }
+                let hasTerminalMediaTool = toolCalls.contains { isTerminalMediaTool($0.function.name) }
+                for toolCall in toolCalls {
+                    currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
+                    await executeToolCall(toolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
+                }
+                if hasTerminalMediaTool {
+                    if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
+                       !toolContent.contains("already displayed") {
+                        updateStreamingMessage(messageId, content: toolContent)
+                    }
+                    markMessageStopped(messageId)
+                    isGenerating = false
+                    isModelLoading = false
+                    streamingMessageId = nil
+                    generationTask = nil
+                    loadingMessage = ""
+                    return
+                }
+                await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
                 return
-            }
-            for toolCall in toolCalls {
-                currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
-                await executeToolCall(toolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
-            }
-            await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
-            return
 
             case .error(let error):
                 handleGenerationError(error)
@@ -1317,6 +1404,10 @@ case .toolCalls(let toolCalls):
         return toolPrefixes.contains { prefix in
             prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
         }
+    }
+
+    private func isTerminalMediaTool(_ name: String) -> Bool {
+        name == "generate_image" || name == "create_speech" || name == "generate_music"
     }
 
     private func updateStreamingMessage(_ messageId: UUID, content: String) {
@@ -1405,6 +1496,12 @@ case .toolCalls(let toolCalls):
 
     @MainActor
     private func handleGenerationError(_ error: Error) {
+        let errorDesc = String(describing: error)
+        if error is CancellationError || errorDesc.contains("CancellationError") || (error as NSError).code == NSUserCancelledError {
+            print("[ChatVM] Ignoring cancellation error: \(errorDesc)")
+            return
+        }
+
         print("Generation error: \(error)")
 
         // Build detailed error message
@@ -1448,11 +1545,11 @@ case .toolCalls(let toolCalls):
             persistConversationHistory()
         }
 
-isGenerating = false
-    isModelLoading = false
-    streamingMessageId = nil
-    loadingMessage = ""
-}
+        isGenerating = false
+        isModelLoading = false
+        streamingMessageId = nil
+        loadingMessage = ""
+    }
 
     func selectTool(_ tool: Tool) {
         selectedTool = tool
@@ -1619,7 +1716,7 @@ extension ChatViewModel: VLMExecutionDelegate {
     func modelLoadingFailed(modelId: String, error: Error) {
         isModelLoading = false
         loadingMessage = ""
-        handleGenerationError(error)
+        // Note: handleGenerationError is called by the main task catch block
     }
 
     func executionWillRetry(attempt: Int) {
@@ -1627,6 +1724,6 @@ extension ChatViewModel: VLMExecutionDelegate {
     }
 
     func executionDidFail(error: Error) {
-        handleGenerationError(error)
+        // Note: handleGenerationError is called by the main task catch block
     }
 }

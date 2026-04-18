@@ -55,15 +55,20 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 16) {
                         ForEach(chat?.messages ?? []) { message in
-                            MessageBubble(
-                                message: message,
-                                isStreaming: message.isStreaming
-                            )
-                            .id(message.id)
+                            if shouldShowTypingIndicator && message.id == streamingAssistantMessage?.id {
+                                EmptyView()
+                            } else {
+                                MessageBubble(
+                                    message: message,
+                                    isStreaming: message.isStreaming
+                                )
+                                .id(message.id)
+                            }
                         }
 
                         if shouldShowTypingIndicator {
                             TypingIndicator()
+                                .id(streamingAssistantMessage?.id)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -142,37 +147,47 @@ struct TypingIndicator: View {
     @State private var animating = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("Responding")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 14))
+                .foregroundStyle(Color.white)
+                .frame(width: 28, height: 28)
+                .background(Color.accentColor)
+                .clipShape(Circle())
 
-            HStack(spacing: 4) {
-                ForEach(0..<3) { index in
-                    Circle()
-                        .fill(Color.secondary)
-                        .frame(width: 5, height: 5)
-                        .scaleEffect(animating ? 1.0 : 0.55)
-                        .opacity(animating ? 1.0 : 0.45)
-                        .animation(
-                            .easeInOut(duration: 0.55)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.16),
-                            value: animating
-                        )
+            HStack(spacing: 8) {
+                Text("Responding")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 4) {
+                    ForEach(0..<3) { index in
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 5, height: 5)
+                            .scaleEffect(animating ? 1.0 : 0.55)
+                            .opacity(animating ? 1.0 : 0.45)
+                            .animation(
+                                .easeInOut(duration: 0.55)
+                                .repeatForever(autoreverses: true)
+                                .delay(Double(index) * 0.16),
+                                value: animating
+                            )
+                    }
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 1)
+            )
+
+            Spacer(minLength: 40)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 1)
-        )
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 48)
         .onAppear {
             animating = true
         }

@@ -58,9 +58,9 @@ final class AIModelTests: XCTestCase {
     // MARK: - Default Max Tokens
 
     func testAIModelDefaultMaxTokens() {
-        XCTAssertEqual(AIModel.qwen35.defaultMaxTokens, 32768)
+        XCTAssertEqual(AIModel.qwen35.defaultMaxTokens, 4096)
         XCTAssertEqual(AIModel.gemma4.defaultMaxTokens, 4096)
-        XCTAssertEqual(AIModel.mini.defaultMaxTokens, 32768)
+        XCTAssertEqual(AIModel.mini.defaultMaxTokens, 4096)
     }
 
     // MARK: - Memory Requirement

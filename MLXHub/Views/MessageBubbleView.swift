@@ -8,6 +8,8 @@ struct MessageBubble: View {
     @State private var cursorVisible = true
     @State private var showCopyFeedback = false
     @State private var saveError: String?
+    private let avatarSize: CGFloat = 28
+    private let messageMaxWidth: CGFloat = 680
 
     init(message: Message, isStreaming: Bool = false) {
         self.message = message
@@ -17,30 +19,23 @@ struct MessageBubble: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if message.isUser {
-                Spacer()
+                Spacer(minLength: 40)
             }
 
-            // Avatar
             if !message.isUser {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 28, height: 28)
-                    .background(Color.accentColor)
-                    .clipShape(Circle())
+                avatar(systemName: "sparkle", background: Color.accentColor)
             }
 
-            // Message content
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: message.isUser ? .trailing : .leading, spacing: 4) {
                 ForEach(message.toolCalls) { toolCall in
                     ToolCallView(
                         toolCall: toolCall,
                         isStreaming: isStreaming,
                         hasGeneratedMedia: !message.imageURLs.isEmpty || !message.audioURLs.isEmpty
                     )
+                    .frame(maxWidth: messageMaxWidth, alignment: message.isUser ? .trailing : .leading)
                 }
 
-                // AI message with thinking and markdown
                 if !message.isUser {
                     if !message.imageURLs.isEmpty {
                         LazyVGrid(
@@ -83,9 +78,9 @@ struct MessageBubble: View {
                         isStreaming: isStreaming,
                         cursorVisible: cursorVisible
                     )
+                    .frame(maxWidth: messageMaxWidth, alignment: .trailing)
                 }
 
-                // Response actions (visible on hover for completed messages)
                 if !message.isUser && !message.content.isEmpty && !isStreaming {
                     ResponseActionsToolbar(
                         showCopyFeedback: showCopyFeedback,
@@ -96,14 +91,14 @@ struct MessageBubble: View {
                     .animation(.easeInOut(duration: 0.15), value: isHovered || showCopyFeedback)
                 }
 
-                // Timestamp
                 if !isStreaming {
                     Text(message.timestamp, style: .time)
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 4)
+                        .frame(maxWidth: messageMaxWidth, alignment: message.isUser ? .trailing : .leading)
                 }
             }
+            .frame(maxWidth: messageMaxWidth, alignment: message.isUser ? .trailing : .leading)
             .contentShape(Rectangle())
             .onHover { hovering in
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -112,20 +107,14 @@ struct MessageBubble: View {
             }
 
             if !message.isUser {
-                Spacer()
+                Spacer(minLength: 40)
             }
 
-            // User avatar (right side)
             if message.isUser {
-                Image(systemName: "person.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 28, height: 28)
-                    .background(Color(NSColor.secondaryLabelColor))
-                    .clipShape(Circle())
+                avatar(systemName: "person.fill", background: Color(NSColor.secondaryLabelColor))
             }
         }
-        .padding(.horizontal, message.isUser ? 0 : 0)
+        .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
         .onAppear {
             if isStreaming {
                 startCursorAnimation()
@@ -144,6 +133,15 @@ struct MessageBubble: View {
         } message: {
             Text(saveError ?? "Unable to save the response.")
         }
+    }
+
+    private func avatar(systemName: String, background: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 14))
+            .foregroundStyle(Color.white)
+            .frame(width: avatarSize, height: avatarSize)
+            .background(background)
+            .clipShape(Circle())
     }
 
     private func copyToClipboard() {
@@ -1174,7 +1172,7 @@ struct ToolCallView: View {
             }
 
             if isExpanded, shouldShowDetails {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(detailTitle)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
@@ -1183,6 +1181,24 @@ struct ToolCallView: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if !toolCall.details.isEmpty {
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(Array(toolCall.details.enumerated()), id: \.offset) { _, detail in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(detail.label)
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text(detail.value)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
                 }
                 .padding(.leading, 20)
             }
@@ -1225,7 +1241,7 @@ struct ToolCallView: View {
     }
 
     private var shouldShowDetails: Bool {
-        !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !toolCall.details.isEmpty
     }
 
     private var headerStatus: String {

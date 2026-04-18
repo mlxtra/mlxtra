@@ -121,14 +121,26 @@ class RuntimeManager: ObservableObject {
         return runtimeBundleURL.appendingPathComponent("venv/lib/python3.13/site-packages")
     }
     
+    /// Get path to the bundled Python framework home.
+    /// This must be set as PYTHONHOME when launching the bundled Python so
+    /// it can locate the standard library and C extension modules.
+    func pythonHomePath() -> URL {
+        runtimeBundleURL
+            .appendingPathComponent("python/Frameworks/Versions/3.12")
+    }
+
     /// Get path to bridge script
     func bridgeScriptPath() -> URL {
         Bundle.main.bundleURL
             .appendingPathComponent("Contents/Resources/python_bridge.py")
     }
     
-/// Get path to a specific model in HF cache
+    /// Get path to a specific model in HF cache
     func modelCachePath(modelId: String) -> URL {
+        Self.modelCachePath(modelId: modelId)
+    }
+
+    nonisolated static func modelCachePath(modelId: String) -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/huggingface/hub")
             .appendingPathComponent("models--" + modelId.replacingOccurrences(of: "/", with: "--"))
@@ -145,9 +157,13 @@ class RuntimeManager: ObservableObject {
 
     /// Check if model is already downloaded (HF cache)
     func isModelDownloaded(modelId: String) -> Bool {
+        Self.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
+    }
+
+    nonisolated static func isModelDownloaded(modelId: String, checkpointsPath: URL) -> Bool {
         // Special handling for ACE-Step models - check component subdirectories under checkpoints/
         if modelId.hasPrefix("ACE-Step/") {
-            return isAceStepModelDownloaded()
+            return isAceStepModelDownloaded(checkpointsPath: checkpointsPath)
         }
 
         // For other models, check HF cache structure
@@ -165,14 +181,10 @@ class RuntimeManager: ObservableObject {
         // Check for snapshots subdirectory (standard HF cache structure)
         let snapshotsPath = path.appendingPathComponent("snapshots")
         if FileManager.default.fileExists(atPath: snapshotsPath.path) {
-            if let snapshots = try? FileManager.default.contentsOfDirectory(atPath: snapshotsPath.path),
-                !snapshots.isEmpty {
-                for snapshot in snapshots {
-                    let snapshotPath = snapshotsPath.appendingPathComponent(snapshot)
-                    if Self.snapshotContainsModelFiles(snapshotPath) {
-                        print("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
-                        return true
-                    }
+            for snapshotPath in Self.snapshotCandidates(modelCachePath: path, snapshotsPath: snapshotsPath) {
+                if Self.snapshotContainsModelFiles(snapshotPath) {
+                    print("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
+                    return true
                 }
             }
         }
@@ -183,7 +195,7 @@ class RuntimeManager: ObservableObject {
 
 /// ACE-Step models download to component subdirectories under checkpoints/
 	/// Check if all main model components exist and contain actual weight files
-	private func isAceStepModelDownloaded() -> Bool {
+	private nonisolated static func isAceStepModelDownloaded(checkpointsPath: URL) -> Bool {
 		let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
 		let checkpointsDir = checkpointsPath
 
@@ -206,28 +218,68 @@ class RuntimeManager: ObservableObject {
 		return true
 	}
 
-	nonisolated static func containsModelWeights(at path: URL) -> Bool {
-		var isDirectory: ObjCBool = false
-		guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
-		      isDirectory.boolValue else {
-			return false
-		}
+        private nonisolated static func snapshotCandidates(modelCachePath: URL, snapshotsPath: URL) -> [URL] {
+            var candidates: [URL] = []
+            let refsPath = modelCachePath.appendingPathComponent("refs/main")
+            if let revision = try? String(contentsOf: refsPath, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !revision.isEmpty {
+                candidates.append(snapshotsPath.appendingPathComponent(revision))
+            }
 
-		let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
-		guard let enumerator = FileManager.default.enumerator(
-			at: path,
-			includingPropertiesForKeys: resourceKeys,
-			options: [.skipsHiddenFiles, .skipsPackageDescendants]
-		) else {
-			return false
-		}
+            guard let snapshots = try? FileManager.default.contentsOfDirectory(
+                at: snapshotsPath,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return candidates
+            }
 
-		for case let fileURL as URL in enumerator {
-			guard isModelWeightArtifact(fileURL),
-			      modelWeightArtifactHasContent(fileURL) else {
-				continue
+            let sortedSnapshots = snapshots
+                .filter { url in
+                    (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                }
+                .sorted { lhs, rhs in
+                    let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                    let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                    return lhsDate > rhsDate
+                }
+
+            for snapshot in sortedSnapshots where !candidates.contains(snapshot) {
+                candidates.append(snapshot)
+            }
+            return candidates
+        }
+
+		nonisolated static func containsModelWeights(at path: URL, maximumDepth: Int = 2) -> Bool {
+			var isDirectory: ObjCBool = false
+			guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
+			      isDirectory.boolValue else {
+				return false
 			}
-			return true
+
+			let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
+			guard let enumerator = FileManager.default.enumerator(
+				at: path,
+				includingPropertiesForKeys: resourceKeys,
+				options: [.skipsHiddenFiles, .skipsPackageDescendants]
+			) else {
+				return false
+			}
+
+			for case let fileURL as URL in enumerator {
+                let relativeDepth = Self.relativePathDepth(fileURL, root: path)
+                if relativeDepth > maximumDepth {
+                    if (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                        enumerator.skipDescendants()
+                    }
+                    continue
+                }
+				guard isModelWeightArtifact(fileURL),
+				      modelWeightArtifactHasContent(fileURL) else {
+					continue
+				}
+				return true
 		}
 
 		return false
@@ -248,9 +300,50 @@ class RuntimeManager: ObservableObject {
 		return fileSize.int64Value > 0
 	}
 
-	nonisolated static func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
-		containsModelWeights(at: snapshotPath)
-	}
+		nonisolated static func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
+            snapshotContainsModelMetadata(snapshotPath) && containsModelWeights(at: snapshotPath)
+		}
+
+        private nonisolated static func snapshotContainsModelMetadata(_ snapshotPath: URL) -> Bool {
+            let metadataFilenames = [
+                "config.json",
+                "model_index.json",
+                "tokenizer_config.json",
+                "preprocessor_config.json",
+                "processor_config.json"
+            ]
+
+            // First check the root directory (standard for LLMs/VLMs)
+            for filename in metadataFilenames {
+                if FileManager.default.fileExists(atPath: snapshotPath.appendingPathComponent(filename).path) {
+                    return true
+                }
+            }
+
+            // Fallback: check common subdirectories (standard for multi-component models like FLUX)
+            let subdirectories = ["transformer", "vae", "unet", "text_encoder"]
+            for subdir in subdirectories {
+                let subdirPath = snapshotPath.appendingPathComponent(subdir)
+                for filename in metadataFilenames {
+                    if FileManager.default.fileExists(atPath: subdirPath.appendingPathComponent(filename).path) {
+                        return true
+                    }
+                }
+            }
+
+            return false
+        }
+
+        private nonisolated static func relativePathDepth(_ fileURL: URL, root: URL) -> Int {
+            let rootPath = root.standardizedFileURL.path
+            let filePath = fileURL.standardizedFileURL.path
+            guard filePath.hasPrefix(rootPath) else { return Int.max }
+
+            let relative = filePath.dropFirst(rootPath.count)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !relative.isEmpty else { return 0 }
+            return relative.split(separator: "/").count
+        }
 
 	private nonisolated static func isModelWeightArtifact(_ fileURL: URL) -> Bool {
 		let filename = fileURL.lastPathComponent

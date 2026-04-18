@@ -41,18 +41,12 @@ done
 cd -
 
 echo "Step 3: Setting up Python virtual environment..."
-PYTHON_BIN="${BUILD_DIR}/python/Frameworks/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+PYTHON_BIN="$(find "${BUILD_DIR}/python/Frameworks" -path "*/Versions/3.12/bin/python3" -type f | head -n 1)"
 if [ ! -f "${PYTHON_BIN}" ]; then
-    # Fallback: ACE-Step 1.5 requires Python <3.13, so prefer python3.12.
-    if command -v python3.12 >/dev/null 2>&1; then
-        python3.12 -m venv "${BUILD_DIR}/venv"
-    else
-        echo "Python 3.12 is required for ACE-Step 1.5 when bundled Python extraction fails."
-        exit 1
-    fi
-else
-    "${PYTHON_BIN}" -m venv "${BUILD_DIR}/venv"
+    echo "Bundled Python ${PYTHON_VERSION} was not extracted correctly; refusing to build a non-portable runtime from a developer-local Python."
+    exit 1
 fi
+"${PYTHON_BIN}" -m venv --copies "${BUILD_DIR}/venv"
 
 echo "Step 4: Installing dependencies..."
 VENV_PIP="${BUILD_DIR}/venv/bin/pip"
@@ -96,21 +90,136 @@ echo "Step 5: Creating runtime structure..."
 mkdir -p "${OUTPUT_DIR}"
 rm -rf "${OUTPUT_DIR}/venv" "${OUTPUT_DIR}/python" "${OUTPUT_DIR}/acestep-venv"
 
+# Copy Python framework first so venv interpreter links can be made relative to it.
+mkdir -p "${OUTPUT_DIR}/python"
+if [ -d "${BUILD_DIR}/python/Frameworks" ]; then
+    cp -R "${BUILD_DIR}/python/Frameworks" "${OUTPUT_DIR}/python/"
+fi
+
 # Copy venv
 cp -R "${BUILD_DIR}/venv" "${OUTPUT_DIR}/venv"
 
 echo "Creating isolated ACE-Step runtime..."
-"${VENV_PYTHON}" -m venv "${BUILD_DIR}/acestep-venv"
+"${VENV_PYTHON}" -m venv --copies "${BUILD_DIR}/acestep-venv"
 ACE_PIP="${BUILD_DIR}/acestep-venv/bin/pip"
 "${ACE_PIP}" install --upgrade pip
 "${ACE_PIP}" install "git+https://github.com/ace-step/ACE-Step-1.5.git"
 cp -R "${BUILD_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep-venv"
 
-# Copy Python framework (minimal)
-mkdir -p "${OUTPUT_DIR}/python"
-if [ -d "${BUILD_DIR}/python/Frameworks" ]; then
-    cp -R "${BUILD_DIR}/python/Frameworks" "${OUTPUT_DIR}/python/"
-fi
+relocate_venv() {
+    local venv_dir="$1"
+    local framework_python="${OUTPUT_DIR}/python/Frameworks/Versions/3.12/bin/python3.12"
+    local venv_python="${venv_dir}/bin/python3.12"
+    local original_lib="/Library/Frameworks/Python.framework/Versions/3.12/Python"
+    local bundled_lib="@executable_path/../../python/Frameworks/Versions/3.12/Python"
+
+    cat > "${venv_dir}/pyvenv.cfg" << CFG
+home = ../python/Frameworks/Versions/3.12/bin
+include-system-site-packages = false
+version = ${PYTHON_VERSION}
+executable = ../python/Frameworks/Versions/3.12/bin/python3.12
+command = bundled-python -m venv --copies ${venv_dir}
+CFG
+
+    cp -f "${framework_python}" "${venv_python}"
+    install_name_tool -change "${original_lib}" "${bundled_lib}" "${venv_python}"
+    install_name_tool -change "@executable_path/../Python" "${bundled_lib}" "${venv_python}"
+    codesign --force --sign - "${venv_python}"
+    ln -sfn "python3.12" "${venv_dir}/bin/python3"
+    ln -sfn "python3.12" "${venv_dir}/bin/python"
+    rm -f "${venv_dir}/bin/activate" "${venv_dir}/bin/activate.csh" "${venv_dir}/bin/activate.fish"
+
+    for script in "${venv_dir}/bin/"*; do
+        if [ ! -f "${script}" ] || [ "${script}" = "${venv_python}" ]; then
+            continue
+        fi
+
+        first_line="$(head -n 1 "${script}")"
+        if [[ "${first_line}" != '#!'*python* ]]; then
+            continue
+        fi
+
+        temp_script="${script}.relocated"
+        {
+            printf '%s\n' '#!/bin/sh'
+            printf '%s\n' "'''exec' \"\$(dirname \"\$0\")/python\" \"\$0\" \"\$@\""
+            printf '%s\n' "' '''"
+            tail -n +2 "${script}"
+        } > "${temp_script}"
+        chmod --reference="${script}" "${temp_script}" 2>/dev/null || chmod +x "${temp_script}"
+        mv "${temp_script}" "${script}"
+    done
+}
+
+relocate_python_framework() {
+    local framework_dir="${OUTPUT_DIR}/python/Frameworks/Versions/3.12"
+    local framework_lib_dir="${framework_dir}/lib"
+    local dynload_dir="${framework_lib_dir}/python3.12/lib-dynload"
+    local python_bin="${framework_dir}/bin/python3.12"
+    local python_bin_intel="${framework_dir}/bin/python3.12-intel64"
+    local python_lib="${framework_dir}/Python"
+    local python_app="${framework_dir}/Resources/Python.app/Contents/MacOS/Python"
+    local original_lib="/Library/Frameworks/Python.framework/Versions/3.12/Python"
+    local original_lib_dir="/Library/Frameworks/Python.framework/Versions/3.12/lib"
+
+    if [ ! -f "${python_bin}" ] || [ ! -f "${python_lib}" ] || [ ! -f "${python_app}" ]; then
+        echo "Bundled Python framework is incomplete; cannot relocate runtime."
+        exit 1
+    fi
+
+    install_name_tool -change "${original_lib}" "@executable_path/../Python" "${python_bin}"
+    if [ -f "${python_bin_intel}" ]; then
+        install_name_tool -change "${original_lib}" "@executable_path/../Python" "${python_bin_intel}"
+    fi
+    install_name_tool -id "@rpath/Python" -change "${original_lib}" "@rpath/Python" "${python_lib}"
+    install_name_tool -change "${original_lib}" "@executable_path/../../../../Python" "${python_app}"
+
+    for dylib in "${framework_lib_dir}"/*.dylib; do
+        if [ ! -f "${dylib}" ] || [ -L "${dylib}" ]; then
+            continue
+        fi
+
+        dep_name="$(basename "${dylib}")"
+        install_name_tool -id "@rpath/${dep_name}" "${dylib}" 2>/dev/null || true
+
+        for dep_path in "${framework_lib_dir}"/*.dylib; do
+            if [ ! -f "${dep_path}" ] || [ -L "${dep_path}" ]; then
+                continue
+            fi
+            dep_name="$(basename "${dep_path}")"
+            install_name_tool -change "${original_lib_dir}/${dep_name}" "@loader_path/${dep_name}" "${dylib}" 2>/dev/null || true
+        done
+    done
+
+    if [ -d "${dynload_dir}" ]; then
+        for extension in "${dynload_dir}"/*.so; do
+            if [ ! -f "${extension}" ]; then
+                continue
+            fi
+
+            for dep_path in "${framework_lib_dir}"/*.dylib; do
+                if [ ! -f "${dep_path}" ] || [ -L "${dep_path}" ]; then
+                    continue
+                fi
+                dep_name="$(basename "${dep_path}")"
+                install_name_tool -change "${original_lib_dir}/${dep_name}" "@loader_path/../../${dep_name}" "${extension}" 2>/dev/null || true
+            done
+        done
+    fi
+
+    codesign --force --sign - "${python_bin}" "${python_lib}" "${python_app}"
+    if [ -f "${python_bin_intel}" ]; then
+        codesign --force --sign - "${python_bin_intel}"
+    fi
+    codesign --force --sign - "${framework_lib_dir}"/*.dylib
+    if [ -d "${dynload_dir}" ]; then
+        codesign --force --sign - "${dynload_dir}"/*.so
+    fi
+}
+
+relocate_python_framework
+relocate_venv "${OUTPUT_DIR}/venv"
+relocate_venv "${OUTPUT_DIR}/acestep-venv"
 
 echo "Step 6: Creating runtime manifest..."
 cat > "${OUTPUT_DIR}/runtime-manifest.json" << EOF

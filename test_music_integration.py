@@ -49,6 +49,7 @@ class MusicGenerationIntegrationTest:
         # Set critical env vars for the bundled Python (matching Swift)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONHOME"] = str(APP_BUNDLE / "Contents/Resources/runtime/macos-arm64/python/Frameworks/Versions/3.12")
         env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
         env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
         env["ACESTEP_CHECKPOINTS_DIR"] = str(
@@ -168,7 +169,7 @@ class MusicGenerationIntegrationTest:
                 capture_output=True,
                 text=True,
                 env=self.get_env(),
-                timeout=120,
+                timeout=300,
             )
             elapsed = time.time() - start_time
 

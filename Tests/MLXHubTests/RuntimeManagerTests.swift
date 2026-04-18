@@ -127,8 +127,28 @@ final class RuntimeManagerTests: XCTestCase {
         let snapshotPath = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: snapshotPath) }
 
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("model_index.json"))
+
         let transformerPath = snapshotPath.appendingPathComponent("transformer")
         try FileManager.default.createDirectory(at: transformerPath, withIntermediateDirectories: true)
+        try Data([1]).write(to: transformerPath.appendingPathComponent("diffusion_pytorch_model.safetensors"))
+
+        XCTAssertTrue(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
+    func testSnapshotValidationFindsMetadataInSubdirectories() throws {
+        let snapshotPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: snapshotPath) }
+
+        // No metadata in root
+        
+        let transformerPath = snapshotPath.appendingPathComponent("transformer")
+        try FileManager.default.createDirectory(at: transformerPath, withIntermediateDirectories: true)
+        
+        // Metadata in subdirectory
+        try Data("{}".utf8).write(to: transformerPath.appendingPathComponent("config.json"))
+        
+        // Weights in same or other subdirectory
         try Data([1]).write(to: transformerPath.appendingPathComponent("diffusion_pytorch_model.safetensors"))
 
         XCTAssertTrue(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
@@ -145,6 +165,7 @@ final class RuntimeManagerTests: XCTestCase {
 
         let blobPath = blobsPath.appendingPathComponent("weight-blob")
         try Data([1]).write(to: blobPath)
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
 
         try FileManager.default.createSymbolicLink(
             atPath: snapshotPath.appendingPathComponent("model.safetensors").path,
@@ -158,10 +179,20 @@ final class RuntimeManagerTests: XCTestCase {
         let snapshotPath = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: snapshotPath) }
 
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
         FileManager.default.createFile(
             atPath: snapshotPath.appendingPathComponent("model.safetensors").path,
             contents: Data()
         )
+
+        XCTAssertFalse(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
+    func testSnapshotValidationRejectsWeightsWithoutMetadata() throws {
+        let snapshotPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: snapshotPath) }
+
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
 
         XCTAssertFalse(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
     }

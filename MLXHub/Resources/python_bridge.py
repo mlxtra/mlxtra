@@ -10,6 +10,8 @@ import json
 import os
 import gc
 import re
+import signal
+import selectors
 import subprocess
 import time
 import uuid
@@ -36,8 +38,8 @@ def send_json(obj: dict):
 
 def setup_environment():
     """Setup Python environment for bundled runtime"""
-    bundle_dir = Path(__file__).parent.parent
-    venv_path = bundle_dir / "runtime" / "macos-arm64" / "venv"
+    resources_dir = Path(__file__).resolve().parent
+    venv_path = resources_dir / "runtime" / "macos-arm64" / "venv"
 
     if venv_path.exists():
         for py_version in ["python3.13", "python3.12", "python3.11"]:
@@ -47,10 +49,42 @@ def setup_environment():
                 break
 
 
+def _clear_accelerator_cache():
+    try:
+        import mlx.core as mx
+
+        mx.clear_cache()
+    except Exception:
+        pass
+    gc.collect()
+
+
+def unload_models(keep_registry: Optional[Dict[str, Any]] = None, keep_key: Optional[str] = None):
+    """Drop cached model objects, optionally preserving one active model."""
+    removed = False
+    for registry in (
+        MODEL_REGISTRY,
+        IMAGE_MODEL_REGISTRY,
+        AUDIO_MODEL_REGISTRY,
+        MUSIC_MODEL_REGISTRY,
+    ):
+        for key in list(registry.keys()):
+            if registry is keep_registry and key == keep_key:
+                continue
+            model_obj = registry.pop(key, None)
+            if model_obj is not None:
+                del model_obj
+                removed = True
+
+    if removed:
+        _clear_accelerator_cache()
+
+
 def load_model_if_needed(model_id: str):
     """Lazy load model, cache in registry"""
     if model_id in MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Model {model_id} already loaded, using cache")
+        unload_models(keep_registry=MODEL_REGISTRY, keep_key=model_id)
         return MODEL_REGISTRY[model_id]
 
     from mlx_vlm import load
@@ -59,6 +93,7 @@ def load_model_if_needed(model_id: str):
     send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
 
     try:
+        unload_models()
         log_debug(f"[Python Bridge] Loading model: {model_id}")
         model, processor = load(model_id)
         config = load_config(model_id)
@@ -81,18 +116,22 @@ def load_image_model_if_needed(model_id: str, edit: bool = False):
         log_debug(
             f"[Python Bridge] Image model {cache_key} already loaded, using cache"
         )
+        unload_models(keep_registry=IMAGE_MODEL_REGISTRY, keep_key=cache_key)
         return IMAGE_MODEL_REGISTRY[cache_key]
 
     send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
 
     try:
+        unload_models()
         log_debug(f"[Python Bridge] Loading image model: {model_id}")
 
         from mflux.models.common.config import ModelConfig
         from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
 
         model_class = Flux2KleinEdit if edit else Flux2Klein
-        model = model_class(model_config=ModelConfig.flux2_klein_4b())
+        model = model_class(
+            model_path=model_id, model_config=ModelConfig.flux2_klein_4b()
+        )
 
         IMAGE_MODEL_REGISTRY[cache_key] = model
 
@@ -109,11 +148,13 @@ def load_audio_model_if_needed(model_id: str):
     """Lazy load mlx-audio TTS model, cache in registry"""
     if model_id in AUDIO_MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Audio model {model_id} already loaded, using cache")
+        unload_models(keep_registry=AUDIO_MODEL_REGISTRY, keep_key=model_id)
         return AUDIO_MODEL_REGISTRY[model_id]
 
     send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
 
     try:
+        unload_models()
         log_debug(f"[Python Bridge] Loading audio model: {model_id}")
         from mlx_audio.tts.utils import load_model
 
@@ -154,11 +195,13 @@ def load_music_model_if_needed(model_id: str):
 
     if model_id in MUSIC_MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Music model {model_id} already loaded, using cache")
+        unload_models(keep_registry=MUSIC_MODEL_REGISTRY, keep_key=model_id)
         return MUSIC_MODEL_REGISTRY[model_id]
 
     send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
 
     try:
+        unload_models()
         log_debug(
             f"[Python Bridge] Loading music model: {model_id} (normalized: {normalized_id})"
         )
@@ -649,6 +692,97 @@ def handle_audio_speech(request: dict) -> None:
         send_json({"type": "error", "message": f"{error_msg}\n{error_traceback}"})
 
 
+def _terminate_child(child: subprocess.Popen, timeout: float = 5.0):
+    if child.poll() is not None:
+        return
+    child.terminate()
+    try:
+        child.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait(timeout=1.0)
+
+
+def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dict) -> int:
+    child = subprocess.Popen(
+        [ace_python, str(helper_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        env=os.environ.copy(),
+    )
+
+    def handle_parent_signal(signum, _frame):
+        _terminate_child(child)
+        raise SystemExit(128 + signum)
+
+    previous_sigterm = signal.signal(signal.SIGTERM, handle_parent_signal)
+    previous_sigint = signal.signal(signal.SIGINT, handle_parent_signal)
+    saw_error = False
+
+    try:
+        assert child.stdin is not None
+        child.stdin.write(json.dumps(request) + "\n")
+        child.stdin.close()
+
+        selector = selectors.DefaultSelector()
+        if child.stdout is not None:
+            selector.register(child.stdout, selectors.EVENT_READ, "stdout")
+        if child.stderr is not None:
+            selector.register(child.stderr, selectors.EVENT_READ, "stderr")
+
+        while selector.get_map():
+            for key, _ in selector.select(timeout=0.1):
+                line = key.fileobj.readline()
+                if line == "":
+                    selector.unregister(key.fileobj)
+                    continue
+
+                if key.data == "stdout":
+                    stripped = line.strip()
+                    if stripped:
+                        try:
+                            saw_error = saw_error or json.loads(stripped).get("type") == "error"
+                        except json.JSONDecodeError:
+                            pass
+                    print(line, end="", flush=True)
+                else:
+                    log_debug(line.rstrip())
+
+            if child.poll() is not None:
+                for fileobj in list(selector.get_map().keys()):
+                    remaining = fileobj.read()
+                    if remaining:
+                        if selector.get_key(fileobj).data == "stdout":
+                            for line in remaining.splitlines():
+                                stripped = line.strip()
+                                if stripped:
+                                    try:
+                                        saw_error = saw_error or json.loads(stripped).get("type") == "error"
+                                    except json.JSONDecodeError:
+                                        pass
+                                    print(line, flush=True)
+                        else:
+                            log_debug(remaining.rstrip())
+                    selector.unregister(fileobj)
+
+        returncode = child.wait()
+        if returncode != 0 and not saw_error:
+            send_json(
+                {
+                    "type": "error",
+                    "message": f"ACE-Step helper exited with code {returncode}",
+                }
+            )
+        return returncode
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        signal.signal(signal.SIGINT, previous_sigint)
+        _terminate_child(child)
+
+
 def handle_music_generation(request: dict) -> None:
     """Handle text-to-music request via ACE-Step 1.5."""
     ace_python = os.environ.get("ACESTEP_PYTHON")
@@ -670,28 +804,7 @@ def handle_music_generation(request: dict) -> None:
         and Path(ace_python) != Path(sys.executable)
     ):
         helper_path = Path(__file__).with_name("acestep_bridge.py")
-        child = subprocess.Popen(
-            [ace_python, str(helper_path)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=os.environ.copy(),
-        )
-        payload = json.dumps(request) + "\n"
-        stdout, stderr = child.communicate(payload)
-        if stderr:
-            log_debug(stderr.rstrip())
-        for line in stdout.splitlines():
-            if line.strip():
-                print(line, flush=True)
-        if child.returncode != 0:
-            send_json(
-                {
-                    "type": "error",
-                    "message": f"ACE-Step helper exited with code {child.returncode}",
-                }
-            )
+        _forward_acestep_subprocess(ace_python, helper_path, request)
         return
 
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
@@ -808,31 +921,7 @@ def handle_ping() -> None:
 
 
 def handle_unload() -> None:
-    import mlx.core as mx
-
-    for key in list(MODEL_REGISTRY.keys()):
-        model_tuple = MODEL_REGISTRY.pop(key, None)
-        if model_tuple:
-            del model_tuple
-
-    for key in list(IMAGE_MODEL_REGISTRY.keys()):
-        model = IMAGE_MODEL_REGISTRY.pop(key, None)
-        if model:
-            del model
-
-    for key in list(AUDIO_MODEL_REGISTRY.keys()):
-        model = AUDIO_MODEL_REGISTRY.pop(key, None)
-        if model:
-            del model
-
-    for key in list(MUSIC_MODEL_REGISTRY.keys()):
-        handlers = MUSIC_MODEL_REGISTRY.pop(key, None)
-        if handlers:
-            del handlers
-
-    mx.clear_cache()
-    gc.collect()
-
+    unload_models()
     send_json({"type": "model.unloaded"})
 
 

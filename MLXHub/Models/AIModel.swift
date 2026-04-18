@@ -47,7 +47,7 @@ enum AIModel: String, CaseIterable, Identifiable {
     var defaultMaxTokens: Int {
         switch self {
         case .qwen35, .mini:
-            return 32768
+            return 4096
         case .gemma4:
             return 4096
         }

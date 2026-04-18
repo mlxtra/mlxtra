@@ -129,17 +129,29 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     func refreshStatuses() {
-        for model in DownloadableModel.embedded {
-            if states[model.id]?.isDownloading == true {
-                continue
+        let modelsToCheck = DownloadableModel.embedded.compactMap { model -> (id: String, modelId: String)? in
+            guard states[model.id]?.isDownloading != true else {
+                return nil
             }
+            return (model.id, model.modelId)
+        }
+        let checkpointsPath = runtimeManager.checkpointsPath
 
-            states[model.id] = runtimeManager.isModelDownloaded(modelId: model.modelId) ? .downloaded : .notDownloaded
+        Task { [modelsToCheck, checkpointsPath] in
+            let results = await Task.detached(priority: .utility) {
+                modelsToCheck.map { model in
+                    (model.id, RuntimeManager.isModelDownloaded(modelId: model.modelId, checkpointsPath: checkpointsPath))
+                }
+            }.value
+
+            for (modelId, isDownloaded) in results where states[modelId]?.isDownloading != true {
+                states[modelId] = isDownloaded ? .downloaded : .notDownloaded
+            }
         }
     }
 
     func state(for model: DownloadableModel) -> DownloadState {
-        states[model.id] ?? (runtimeManager.isModelDownloaded(modelId: model.modelId) ? .downloaded : .notDownloaded)
+        states[model.id] ?? .notDownloaded
     }
 
     func cachePath(for model: DownloadableModel) -> String {
@@ -161,7 +173,8 @@ final class ModelDownloadManager: ObservableObject {
                 } else {
                     try await runSnapshotDownload(modelId: model.modelId)
                 }
-                states[model.id] = runtimeManager.isModelDownloaded(modelId: model.modelId) ? .downloaded : .failed("Download finished, but model files were not found in cache.")
+                let isDownloaded = await isModelDownloadedOffMain(modelId: model.modelId)
+                states[model.id] = isDownloaded ? .downloaded : .failed("Download finished, but model files were not found in cache.")
 } catch {
 			if !errorTracker.errorWasReceived(for: model.id) {
 				states[model.id] = .failed(error.localizedDescription)
@@ -170,6 +183,13 @@ final class ModelDownloadManager: ObservableObject {
 
             tasks[model.id] = nil
         }
+    }
+
+    private func isModelDownloadedOffMain(modelId: String) async -> Bool {
+        let checkpointsPath = runtimeManager.checkpointsPath
+        return await Task.detached(priority: .utility) {
+            RuntimeManager.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
+        }.value
     }
 
     private func runAceStepDownload(modelId: String) async throws {
@@ -189,6 +209,8 @@ final class ModelDownloadManager: ObservableObject {
             process.executableURL = pythonPath
             process.arguments = [helperPath.path, modelId, localDir]
             process.environment = [
+                "PYTHONHOME": runtimeManager.pythonHomePath().path,
+                "PYTHONDONTWRITEBYTECODE": "1",
                 "ACESTEP_CHECKPOINTS_DIR": localDir,
                 "HF_HOME": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path,
                 "HF_HUB_CACHE": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path,
@@ -263,10 +285,17 @@ final class ModelDownloadManager: ObservableObject {
 
             process.executableURL = pythonPath
             process.arguments = [helperPath.path, modelId]
-            process.environment = ProcessInfo.processInfo.environment.merging([
-                "HF_HOME": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path,
-                "HF_HUB_CACHE": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path,
-            ]) { _, new in new }
+
+            var downloadEnv = ProcessInfo.processInfo.environment
+            // Strip env vars that could conflict with the bundled Python
+            for key in ["PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"] {
+                downloadEnv.removeValue(forKey: key)
+            }
+            downloadEnv["PYTHONHOME"] = runtimeManager.pythonHomePath().path
+            downloadEnv["PYTHONDONTWRITEBYTECODE"] = "1"
+            downloadEnv["HF_HOME"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path
+            downloadEnv["HF_HUB_CACHE"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path
+            process.environment = downloadEnv
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
