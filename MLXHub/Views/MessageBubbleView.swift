@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AVFoundation
 
 struct MessageBubble: View {
     let message: Message
@@ -207,86 +208,110 @@ struct GeneratedAudioAttachmentView: View {
     @State private var sound: NSSound?
     @State private var isPlaying = false
     @State private var downloadError: String?
+    @State private var player: AVAudioPlayer?
+    @State private var playbackProgress: Double = 0
+    @State private var isSeeking = false
+    @State private var duration: Double = 0
+    @State private var currentTime: Double = 0
+    @State private var playTimer: Timer?
 
     private var mediaTitle: String {
         let path = audioURL.path.lowercased()
         return path.contains("music") ? "Generated music" : "Generated speech"
     }
 
-    private var durationText: String? {
-        guard let duration = (sound ?? NSSound(contentsOf: audioURL, byReference: true))?.duration,
-              duration.isFinite,
-              duration > 0
-        else {
-            return nil
-        }
+    private var formattedCurrentTime: String {
+        formatTime(isSeeking ? playbackProgress * duration : currentTime)
+    }
 
-        let minutes = Int(duration) / 60
-        let seconds = Int(duration) % 60
-        return "\(minutes):\(String(format: "%02d", seconds))"
+    private var formattedDuration: String {
+        formatTime(duration)
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button(action: togglePlayback) {
-                Image(systemName: isPlaying ? "stop.fill" : "play.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(Color.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-            .help(isPlaying ? "Stop" : "Play")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Button(action: togglePlayback) {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Color.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help(isPlaying ? "Pause" : "Play")
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(mediaTitle)
                         .font(.system(size: 13, weight: .semibold))
 
-                    if let durationText {
-                        Text(durationText)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(audioURL.lastPathComponent)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
 
-                Text("Ready to play")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
 
-                Text(audioURL.lastPathComponent)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                Button(action: revealAudio) {
+                    Label("Reveal", systemImage: "folder")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help("Reveal in Finder")
+
+                Button(action: downloadAudio) {
+                    Label("Download", systemImage: "square.and.arrow.down")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .help("Download audio")
             }
 
-            Spacer(minLength: 8)
+            VStack(spacing: 4) {
+                Slider(
+                    value: Binding(
+                        get: { isSeeking ? playbackProgress : (duration > 0 ? currentTime / duration : 0) },
+                        set: { newValue in
+                            isSeeking = true
+                            playbackProgress = newValue
+                        }
+                    ),
+                    in: 0...1,
+                    onEditingChanged: { editing in
+                        if !editing {
+                            let seekTime = playbackProgress * duration
+                            player?.currentTime = seekTime
+                            currentTime = seekTime
+                            isSeeking = false
+                        }
+                    }
+                )
+                .tint(Color.accentColor)
+                .controlSize(.small)
 
-            Button(action: revealAudio) {
-                Label("Reveal", systemImage: "folder")
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack {
+                    Text(formattedCurrentTime)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(formattedDuration)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .buttonStyle(.plain)
-            .help("Reveal in Finder")
-
-            Button(action: downloadAudio) {
-                Label("Download", systemImage: "square.and.arrow.down")
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-            .help("Download audio")
         }
         .padding(12)
         .background(
@@ -306,11 +331,15 @@ struct GeneratedAudioAttachmentView: View {
         )
         .help(audioURL.lastPathComponent)
         .contextMenu {
-            Button(isPlaying ? "Stop Audio" : "Play Audio", action: togglePlayback)
+            Button(isPlaying ? "Pause Audio" : "Play Audio", action: togglePlayback)
             Button("Reveal in Finder", action: revealAudio)
             Button("Download Audio", action: downloadAudio)
         }
+        .onAppear {
+            loadPlayer()
+        }
         .onDisappear {
+            stopPlayback()
             sound?.stop()
             isPlaying = false
         }
@@ -324,17 +353,84 @@ struct GeneratedAudioAttachmentView: View {
         }
     }
 
+    private func loadPlayer() {
+        do {
+            player = try AVAudioPlayer(contentsOf: audioURL)
+            player?.prepareToPlay()
+            duration = player?.duration ?? 0
+        } catch {
+            sound = NSSound(contentsOf: audioURL, byReference: true)
+            duration = sound?.duration ?? 0
+        }
+    }
+
     private func togglePlayback() {
         if isPlaying {
-            sound?.stop()
-            isPlaying = false
-            return
+            pausePlayback()
+        } else {
+            startPlayback()
         }
+    }
 
-        let loadedSound = sound ?? NSSound(contentsOf: audioURL, byReference: true)
-        sound = loadedSound
-        loadedSound?.play()
-        isPlaying = loadedSound != nil
+    private func startPlayback() {
+        if let player {
+            player.play()
+            isPlaying = true
+            startTimer()
+        } else {
+            let loadedSound = sound ?? NSSound(contentsOf: audioURL, byReference: true)
+            sound = loadedSound
+            sound?.play()
+            isPlaying = loadedSound != nil
+        }
+    }
+
+    private func pausePlayback() {
+        player?.pause()
+        sound?.stop()
+        stopTimer()
+        isPlaying = false
+    }
+
+    private func stopPlayback() {
+        player?.stop()
+        player?.currentTime = 0
+        sound?.stop()
+        stopTimer()
+        isPlaying = false
+        currentTime = 0
+        playbackProgress = 0
+    }
+
+    private func startTimer() {
+        stopTimer()
+        playTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            guard let player, !isSeeking else { return }
+            currentTime = player.currentTime
+            if !player.isPlaying {
+                DispatchQueue.main.async {
+                    if isPlaying {
+                        isPlaying = false
+                        currentTime = 0
+                        player.currentTime = 0
+                        stopTimer()
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopTimer() {
+        playTimer?.invalidate()
+        playTimer = nil
+    }
+
+    private func formatTime(_ time: Double) -> String {
+        guard time.isFinite, time >= 0 else { return "0:00" }
+        let totalSeconds = Int(time)
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        return "\(minutes):\(String(format: "%02d", seconds))"
     }
 
     private func downloadAudio() {
@@ -457,6 +553,7 @@ struct GeneratedImageAttachmentView: View {
     let imageURL: URL
     @State private var downloadError: String?
     @State private var isHovered = false
+    @State private var showLightbox = false
 
     private var loadedImage: NSImage? {
         NSImage(contentsOf: imageURL)
@@ -504,6 +601,12 @@ struct GeneratedImageAttachmentView: View {
                 .buttonStyle(.plain)
                 .animation(.easeInOut(duration: 0.15), value: isHovered)
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if loadedImage != nil {
+                    showLightbox = true
+                }
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Generated image")
@@ -529,6 +632,7 @@ struct GeneratedImageAttachmentView: View {
             isHovered = hovering
         }
         .contextMenu {
+            Button("Open Image", action: { showLightbox = true })
             Button("Reveal in Finder", action: revealImage)
             Button("Download Image", action: downloadImage)
         }
@@ -539,6 +643,11 @@ struct GeneratedImageAttachmentView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(downloadError ?? "Unable to save the image.")
+        }
+        .onChange(of: showLightbox) { _, show in
+            if show {
+                ImageLightboxWindowController.show(imageURL: imageURL, onClose: { showLightbox = false })
+            }
         }
     }
 
@@ -563,6 +672,223 @@ struct GeneratedImageAttachmentView: View {
 
     private func revealImage() {
         NSWorkspace.shared.activateFileViewerSelecting([imageURL])
+    }
+}
+
+struct ImageLightboxView: View {
+    let imageURL: URL
+    let onClose: () -> Void
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    private var loadedImage: NSImage? {
+        NSImage(contentsOf: imageURL)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            if let loadedImage {
+                Image(nsImage: loadedImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .scaleEffect(scale)
+                    .offset(offset)
+                    .gesture(
+                        MagnifyGesture()
+                            .onChanged { value in
+                                let newScale = lastScale * value.magnification
+                                scale = min(max(newScale, 1), 5)
+                            }
+                            .onEnded { _ in
+                                lastScale = scale
+                                if scale <= 1.0 {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        offset = .zero
+                                        lastOffset = .zero
+                                    }
+                                }
+                            }
+                    )
+                    .simultaneousGesture(
+                        DragGesture()
+                            .onChanged { value in
+                                if scale > 1.0 {
+                                    offset = CGSize(
+                                        width: lastOffset.width + value.translation.width,
+                                        height: lastOffset.height + value.translation.height
+                                    )
+                                }
+                            }
+                            .onEnded { _ in
+                                lastOffset = offset
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            if scale > 1.0 {
+                                scale = 1.0
+                                lastScale = 1.0
+                                offset = .zero
+                                lastOffset = .zero
+                            } else {
+                                scale = 2.0
+                                lastScale = 2.0
+                            }
+                        }
+                    }
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary)
+                    Text("Image not available")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack {
+                HStack {
+                    Spacer()
+
+                    HStack(spacing: 12) {
+                        if scale > 1.0 {
+                            Button(action: resetZoom) {
+                                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                        }
+
+                        Button(action: revealImage) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+
+                        Button(action: downloadImage) {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .bold))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .padding(20)
+
+                Spacer()
+
+                HStack {
+                    Text(imageURL.lastPathComponent)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.7))
+                    if let loadedImage {
+                        Text("\(Int(loadedImage.size.width))×\(Int(loadedImage.size.height))")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                    Spacer()
+                    Text("Double-click to zoom · Pinch to scale")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
+            }
+        }
+        .keyboardShortcut(KeyEquivalent.escape, modifiers: [])
+    }
+
+    private func resetZoom() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            scale = 1.0
+            lastScale = 1.0
+            offset = .zero
+            lastOffset = .zero
+        }
+    }
+
+    private func downloadImage() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = imageURL.lastPathComponent
+        panel.begin { response in
+            guard response == .OK, let destinationURL = panel.url else { return }
+            try? FileManager.default.removeItem(at: destinationURL)
+            try? FileManager.default.copyItem(at: imageURL, to: destinationURL)
+        }
+    }
+
+    private func revealImage() {
+        NSWorkspace.shared.activateFileViewerSelecting([imageURL])
+    }
+}
+
+private final class LightboxWindow: NSWindow {
+    var onCancel: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            onCancel?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+}
+
+private final class ImageLightboxWindowController {
+    private static var activeWindow: LightboxWindow?
+
+    static func show(imageURL: URL, onClose: @escaping () -> Void) {
+        close()
+
+        let screen = NSScreen.main!
+        let window = LightboxWindow(
+            contentRect: screen.visibleFrame,
+            styleMask: [.fullSizeContentView],
+            backing: .buffered,
+            defer: false,
+            screen: screen
+        )
+        window.isOpaque = true
+        window.backgroundColor = .black
+        window.hasShadow = false
+        window.ignoresMouseEvents = false
+        window.level = .floating
+        window.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+        window.isReleasedWhenClosed = false
+        window.onCancel = {
+            close()
+            DispatchQueue.main.async { onClose() }
+        }
+
+        let hostingView = NSHostingView(
+            rootView: ImageLightboxView(imageURL: imageURL, onClose: {
+                close()
+                DispatchQueue.main.async { onClose() }
+            })
+        )
+        hostingView.frame = window.contentView?.bounds ?? screen.visibleFrame
+        hostingView.autoresizingMask = [.width, .height]
+        window.contentView = hostingView
+
+        window.makeKeyAndOrderFront(nil)
+        activeWindow = window
+    }
+
+    static func close() {
+        activeWindow?.close()
+        activeWindow = nil
     }
 }
 

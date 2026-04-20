@@ -657,10 +657,9 @@ class ChatViewModel: ObservableObject {
                 )
 
                 if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
-                    chats[index].messages.append(aiMessage)
-                    chats[index].timestamp = Date()
-                    streamingMessageId = aiMessage.id
-                    persistConversationHistory()
+        chats[index].messages.append(aiMessage)
+            chats[index].timestamp = Date()
+            streamingMessageId = aiMessage.id
                 }
             }
 
@@ -787,13 +786,12 @@ class ChatViewModel: ObservableObject {
                     ),
                     toMessage: messageId
                 )
-                chats[chatIndex].messages[messageIndex].content = ""
-                persistConversationHistory()
-            }
+            chats[chatIndex].messages[messageIndex].content = ""
         }
+    }
 
-        do {
-            guard let context = try await mcpWebSearchService.searchContext(for: searchQuery) else {
+    do {
+        guard let context = try await mcpWebSearchService.searchContext(for: searchQuery) else {
                 messages.append(ExecutionMessage(role: .tool, content: "No results found.", toolCallId: toolCall.id, name: "web_search"))
                 return
             }
@@ -843,14 +841,13 @@ class ChatViewModel: ObservableObject {
                     ),
                     toMessage: messageId
                 )
-                chats[chatIndex].messages[messageIndex].content = ""
-                persistConversationHistory()
-            }
+            chats[chatIndex].messages[messageIndex].content = ""
         }
+    }
 
-        do {
-            let request = ExecutionRequest(
-                backend: .image,
+    do {
+        let request = ExecutionRequest(
+            backend: .image,
                 modelId: imageGenerationModelId,
                 messages: [ExecutionMessage(role: .user, content: imagePrompt)],
                 images: images.isEmpty ? nil : images,
@@ -951,14 +948,13 @@ class ChatViewModel: ObservableObject {
             )
             if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
                let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
-                chats[chatIndex].messages[messageIndex].content = ""
-                persistConversationHistory()
-            }
+            chats[chatIndex].messages[messageIndex].content = ""
         }
+    }
 
-        do {
-            let request = ExecutionRequest(
-                backend: .audio,
+    do {
+        let request = ExecutionRequest(
+            backend: .audio,
                 modelId: speechGenerationModelId,
                 messages: [ExecutionMessage(role: .user, content: speechText)],
                 outputDirectory: generatedSpeechDirectory,
@@ -1081,14 +1077,13 @@ class ChatViewModel: ObservableObject {
             )
             if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
                let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
-                chats[chatIndex].messages[messageIndex].content = ""
-                persistConversationHistory()
-            }
+            chats[chatIndex].messages[messageIndex].content = ""
         }
+    }
 
-        do {
-            let request = ExecutionRequest(
-                backend: .music,
+    do {
+        let request = ExecutionRequest(
+            backend: .music,
                 modelId: musicGenerationModelId,
                 messages: [ExecutionMessage(role: .user, content: musicPrompt)],
                 outputDirectory: generatedMusicDirectory,
@@ -1428,7 +1423,6 @@ class ChatViewModel: ObservableObject {
                 updatedMessages[messageIndex].imageURLs.append(imageURL)
             }
             chats[chatIndex].messages = updatedMessages
-            persistConversationHistory()
         }
     }
 
@@ -1440,7 +1434,6 @@ class ChatViewModel: ObservableObject {
                 updatedMessages[messageIndex].audioURLs.append(audioURL)
             }
             chats[chatIndex].messages = updatedMessages
-            persistConversationHistory()
         }
     }
 
@@ -1450,7 +1443,6 @@ class ChatViewModel: ObservableObject {
             var updatedMessages = chats[chatIndex].messages
             updatedMessages[messageIndex].toolCalls.append(toolCall)
             chats[chatIndex].messages = updatedMessages
-            persistConversationHistory()
         }
     }
 
@@ -1482,7 +1474,6 @@ class ChatViewModel: ObservableObject {
            var toolCall = chats[chatIndex].messages[messageIndex].toolCalls.last {
             toolCall.status = status
             chats[chatIndex].messages[messageIndex].toolCalls[chats[chatIndex].messages[messageIndex].toolCalls.count - 1] = toolCall
-            persistConversationHistory()
         }
     }
 
