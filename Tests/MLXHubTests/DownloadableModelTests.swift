@@ -63,6 +63,22 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertEqual(visionModels.count, AIModel.allCases.count)
     }
 
+    func testEmbeddedVisionModelsMirrorBuiltInCatalog() {
+        let embeddedVisionModels = DownloadableModel.embedded.filter { $0.modality == .vision }
+        let expectedVisionModels = AIModel.allCases.map { model in
+            DownloadableModel(
+                id: model.modelId,
+                name: model.displayName,
+                subtitle: model.subtitle,
+                modelId: model.modelId,
+                modality: .vision,
+                downloadSizeGB: model.downloadSizeGB
+            )
+        }
+
+        XCTAssertEqual(embeddedVisionModels, expectedVisionModels)
+    }
+
     func testEmbeddedModelsContainsAllModalities() {
         let embedded = DownloadableModel.embedded
 

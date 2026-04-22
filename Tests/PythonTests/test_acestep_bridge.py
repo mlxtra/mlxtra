@@ -2,12 +2,9 @@
 """Unit tests for acestep_bridge.py"""
 
 import json
-import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
-from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "MLXHub" / "Resources"))
 
@@ -70,6 +67,20 @@ class TestSendJson(unittest.TestCase):
             acestep_bridge.send_json({"type": "model.loaded", "model": "test-model"})
         output = captured.getvalue()
         self.assertIn("model.loaded", output)
+
+    def test_send_json_inherits_request_id(self):
+        import io
+        from contextlib import redirect_stdout
+
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            acestep_bridge.send_json(
+                {"type": "model.loaded", "model": "test-model"},
+                request={"request_id": "req-123"},
+            )
+        output = captured.getvalue().strip()
+        parsed = json.loads(output)
+        self.assertEqual(parsed["request_id"], "req-123")
 
 
 if __name__ == "__main__":

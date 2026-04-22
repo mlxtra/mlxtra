@@ -1,6 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
-import AVFoundation
+@preconcurrency import AVFoundation
 
 struct MessageBubble: View {
     let message: Message
@@ -8,9 +8,9 @@ struct MessageBubble: View {
     @State private var isHovered = false
     @State private var cursorVisible = true
     @State private var showCopyFeedback = false
-    @State private var saveError: String?
     private let avatarSize: CGFloat = 28
     private let messageMaxWidth: CGFloat = 680
+    private let generatedMediaColumnWidth: CGFloat = 540
 
     init(message: Message, isStreaming: Bool = false) {
         self.message = message
@@ -34,13 +34,16 @@ struct MessageBubble: View {
                         isStreaming: isStreaming,
                         hasGeneratedMedia: !message.imageURLs.isEmpty || !message.audioURLs.isEmpty
                     )
-                    .frame(maxWidth: messageMaxWidth, alignment: message.isUser ? .trailing : .leading)
+                    .frame(
+                        maxWidth: (!message.imageURLs.isEmpty || !message.audioURLs.isEmpty) ? generatedMediaColumnWidth : messageMaxWidth,
+                        alignment: message.isUser ? .trailing : .leading
+                    )
                 }
 
                 if !message.isUser {
                     if !message.imageURLs.isEmpty {
                         LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 8)],
+                            columns: [GridItem(.adaptive(minimum: 220, maximum: generatedMediaColumnWidth), spacing: 8)],
                             alignment: .leading,
                             spacing: 8
                         ) {
@@ -48,7 +51,7 @@ struct MessageBubble: View {
                                 GeneratedImageAttachmentView(imageURL: imageURL)
                             }
                         }
-                        .frame(maxWidth: 540, alignment: .leading)
+                        .frame(maxWidth: generatedMediaColumnWidth, alignment: .leading)
                     }
 
                     if !message.audioURLs.isEmpty {
@@ -57,7 +60,7 @@ struct MessageBubble: View {
                                 GeneratedAudioAttachmentView(audioURL: audioURL)
                             }
                         }
-                        .frame(maxWidth: 360, alignment: .leading)
+                        .frame(maxWidth: generatedMediaColumnWidth, alignment: .leading)
                     }
 
                     if !message.content.isEmpty || isStreaming {
@@ -85,8 +88,7 @@ struct MessageBubble: View {
                 if !message.isUser && !message.content.isEmpty && !isStreaming {
                     ResponseActionsToolbar(
                         showCopyFeedback: showCopyFeedback,
-                        onCopy: copyToClipboard,
-                        onSave: saveResponseText
+                        onCopy: copyToClipboard
                     )
                     .opacity(isHovered || showCopyFeedback ? 1 : 0)
                     .animation(.easeInOut(duration: 0.15), value: isHovered || showCopyFeedback)
@@ -125,14 +127,6 @@ struct MessageBubble: View {
             if streaming {
                 startCursorAnimation()
             }
-        }
-        .alert("Save failed", isPresented: Binding(
-            get: { saveError != nil },
-            set: { if !$0 { saveError = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(saveError ?? "Unable to save the response.")
         }
     }
 
@@ -185,22 +179,6 @@ struct MessageBubble: View {
             cursorVisible = false
         }
     }
-
-    private func saveResponseText() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.plainText]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "MLXHub Response.txt"
-        panel.begin { response in
-            guard response == .OK, let destinationURL = panel.url else { return }
-
-            do {
-                try message.content.write(to: destinationURL, atomically: true, encoding: .utf8)
-            } catch {
-                saveError = error.localizedDescription
-            }
-        }
-    }
 }
 
 struct GeneratedAudioAttachmentView: View {
@@ -213,7 +191,9 @@ struct GeneratedAudioAttachmentView: View {
     @State private var isSeeking = false
     @State private var duration: Double = 0
     @State private var currentTime: Double = 0
-    @State private var playTimer: Timer?
+    @State private var playbackTask: Task<Void, Never>?
+    private let controlButtonSize: CGFloat = 38
+    private let playButtonSize: CGFloat = 42
 
     private var mediaTitle: String {
         let path = audioURL.path.lowercased()
@@ -233,11 +213,11 @@ struct GeneratedAudioAttachmentView: View {
             HStack(spacing: 12) {
                 Button(action: togglePlayback) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 30, height: 30)
+                        .frame(width: playButtonSize, height: playButtonSize)
                         .background(Color.accentColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
                 .help(isPlaying ? "Pause" : "Play")
@@ -258,11 +238,11 @@ struct GeneratedAudioAttachmentView: View {
                 Button(action: revealAudio) {
                     Label("Reveal", systemImage: "folder")
                         .labelStyle(.iconOnly)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
+                        .frame(width: controlButtonSize, height: controlButtonSize)
                         .background(Color(NSColor.controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
                 .help("Reveal in Finder")
@@ -270,11 +250,11 @@ struct GeneratedAudioAttachmentView: View {
                 Button(action: downloadAudio) {
                     Label("Download", systemImage: "square.and.arrow.down")
                         .labelStyle(.iconOnly)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
+                        .frame(width: controlButtonSize, height: controlButtonSize)
                         .background(Color(NSColor.controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
                 .help("Download audio")
@@ -329,6 +309,7 @@ struct GeneratedAudioAttachmentView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
         )
+        .frame(maxWidth: .infinity, alignment: .leading)
         .help(audioURL.lastPathComponent)
         .contextMenu {
             Button(isPlaying ? "Pause Audio" : "Play Audio", action: togglePlayback)
@@ -404,25 +385,32 @@ struct GeneratedAudioAttachmentView: View {
 
     private func startTimer() {
         stopTimer()
-        playTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            guard let player, !isSeeking else { return }
-            currentTime = player.currentTime
-            if !player.isPlaying {
-                DispatchQueue.main.async {
+        playbackTask = Task { @MainActor in
+            while !Task.isCancelled {
+                guard let player else { break }
+
+                if !isSeeking {
+                    currentTime = player.currentTime
+                }
+
+                if !player.isPlaying {
                     if isPlaying {
                         isPlaying = false
                         currentTime = 0
                         player.currentTime = 0
-                        stopTimer()
                     }
+                    playbackProgress = 0
+                    break
                 }
+
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
     }
 
     private func stopTimer() {
-        playTimer?.invalidate()
-        playTimer = nil
+        playbackTask?.cancel()
+        playbackTask = nil
     }
 
     private func formatTime(_ time: Double) -> String {
@@ -524,7 +512,6 @@ struct SentImageAttachmentView: View {
 struct ResponseActionsToolbar: View {
     let showCopyFeedback: Bool
     let onCopy: () -> Void
-    let onSave: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -532,11 +519,6 @@ struct ResponseActionsToolbar: View {
                 Label(showCopyFeedback ? "Copied" : "Copy", systemImage: showCopyFeedback ? "checkmark" : "doc.on.doc")
             }
             .help("Copy response")
-
-            Button(action: onSave) {
-                Label("Save", systemImage: "square.and.arrow.down")
-            }
-            .help("Save response")
 
             Spacer()
         }
@@ -552,8 +534,8 @@ struct ResponseActionsToolbar: View {
 struct GeneratedImageAttachmentView: View {
     let imageURL: URL
     @State private var downloadError: String?
-    @State private var isHovered = false
     @State private var showLightbox = false
+    private let controlButtonSize: CGFloat = 38
 
     private var loadedImage: NSImage? {
         NSImage(contentsOf: imageURL)
@@ -561,11 +543,16 @@ struct GeneratedImageAttachmentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .topTrailing) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.accentColor.opacity(0.045))
+
                 if let loadedImage {
                     Image(nsImage: loadedImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: 320)
+                        .padding(12)
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "photo")
@@ -575,32 +562,10 @@ struct GeneratedImageAttachmentView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: 260, maxHeight: 260)
+                    .frame(maxWidth: .infinity, minHeight: 240, maxHeight: 320)
                 }
-
-                HStack(spacing: 6) {
-                    Button(action: revealImage) {
-                        Label("Reveal", systemImage: "folder")
-                            .labelStyle(.iconOnly)
-                    }
-                    .help("Reveal in Finder")
-
-                    Button(action: downloadImage) {
-                        Label("Download", systemImage: "square.and.arrow.down")
-                            .labelStyle(.iconOnly)
-                    }
-                    .help("Download image")
-                }
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
-                .padding(8)
-                .background(Color.black.opacity(0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .padding(8)
-                .opacity(isHovered ? 1 : 0)
-                .buttonStyle(.plain)
-                .animation(.easeInOut(duration: 0.15), value: isHovered)
             }
+            .frame(maxWidth: .infinity, minHeight: 240, maxHeight: 320)
             .contentShape(Rectangle())
             .onTapGesture {
                 if loadedImage != nil {
@@ -608,29 +573,62 @@ struct GeneratedImageAttachmentView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Generated image")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(imageURL.lastPathComponent)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Generated image")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(imageURL.lastPathComponent)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 8)
+
+                Button(action: revealImage) {
+                    Label("Reveal", systemImage: "folder")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: controlButtonSize, height: controlButtonSize)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .help("Reveal in Finder")
+
+                Button(action: downloadImage) {
+                    Label("Download", systemImage: "square.and.arrow.down")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: controlButtonSize, height: controlButtonSize)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .help("Download image")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(12)
         }
-        .frame(maxWidth: 260, maxHeight: 260)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(NSColor.controlBackgroundColor),
+                    Color.accentColor.opacity(0.055)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
         )
         .help(imageURL.lastPathComponent)
-        .onHover { hovering in
-            isHovered = hovering
-        }
         .contextMenu {
             Button("Open Image", action: { showLightbox = true })
             Button("Reveal in Finder", action: revealImage)
@@ -846,6 +844,7 @@ private final class LightboxWindow: NSWindow {
     }
 }
 
+@MainActor
 private final class ImageLightboxWindowController {
     private static var activeWindow: LightboxWindow?
 

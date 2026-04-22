@@ -3,6 +3,8 @@ import SwiftUI
 struct SidebarView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var searchText: String = ""
+    @State private var renamingChat: Chat?
+    @State private var renameTitle: String = ""
     @Environment(\.openSettings) private var openSettings
 
     private var filteredChats: [Chat] {
@@ -60,7 +62,7 @@ struct SidebarView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 8)
 
-            List(selection: $viewModel.selectedChatId) {
+            List {
                 ForEach(filteredChats) { chat in
                     ChatHistoryItem(
                         chat: chat,
@@ -82,7 +84,8 @@ struct SidebarView: View {
                             }
                             Divider()
                             Button("Rename") {
-                                // Handle rename
+                                renamingChat = chat
+                                renameTitle = chat.title
                             }
                         }
                 }
@@ -148,6 +151,21 @@ struct SidebarView: View {
             )
             .frame(width: 1)
         }
+        .sheet(item: $renamingChat, onDismiss: clearRenameState) { chat in
+            RenameChatSheet(
+                title: $renameTitle,
+                onSave: {
+                    viewModel.renameChat(chat.id, to: renameTitle)
+                    clearRenameState()
+                },
+                onCancel: clearRenameState
+            )
+        }
+    }
+
+    private func clearRenameState() {
+        renamingChat = nil
+        renameTitle = ""
     }
 }
 
@@ -157,6 +175,7 @@ struct ChatHistoryItem: View {
     let onDelete: () -> Void
     @State private var isHovered = false
     @State private var isConfirmingDelete = false
+    private let actionButtonHeight: CGFloat = 28
 
     var body: some View {
         HStack(spacing: 9) {
@@ -175,28 +194,35 @@ struct ChatHistoryItem: View {
 
             if isHovered || isConfirmingDelete {
                 Button(action: handleDeleteTap) {
-                    Text(isConfirmingDelete ? "Confirm" : "")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(isConfirmingDelete ? Color.white : Color.secondary)
-                        .frame(minWidth: isConfirmingDelete ? 52 : 24, minHeight: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(isConfirmingDelete ? Color.red : Color.clear)
-                        )
-                        .overlay {
-                            if !isConfirmingDelete {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
+                    Group {
+                        if isConfirmingDelete {
+                            Text("Confirm")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 12)
+                                .frame(height: actionButtonHeight)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.red)
+                                )
+                        } else {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .frame(width: actionButtonHeight, height: actionButtonHeight)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.white.opacity(isSelected ? 0.12 : 0.08))
+                                )
                         }
+                    }
                 }
                 .buttonStyle(.plain)
                 .help(isConfirmingDelete ? "Confirm delete" : "Delete chat")
                 .transition(.opacity)
             }
         }
-        .frame(minHeight: 28)
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .background {
@@ -250,4 +276,39 @@ struct ChatHistoryItem: View {
 
 #Preview {
     SidebarView(viewModel: ChatViewModel())
+}
+
+private struct RenameChatSheet: View {
+    @Binding var title: String
+    let onSave: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Rename Chat")
+                .font(.system(size: 15, weight: .semibold))
+
+            TextField("Chat title", text: $title)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFocused)
+                .onSubmit(onSave)
+
+            HStack {
+                Spacer()
+
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.escape, modifiers: [])
+
+                Button("Save", action: onSave)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+        .onAppear {
+            isFocused = true
+        }
+    }
 }

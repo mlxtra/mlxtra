@@ -118,7 +118,31 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
         XCTAssertTrue(stdout.contains("waiting_for_models"), "Should show waiting status")
     }
 
-    private func runProcessBridge(path: String) -> String {
+    func test_pythonBridge_roundTripsRequestID() {
+        let mockScript = """
+        import json
+        import sys
+
+        def send_json(obj):
+            print(json.dumps(obj), flush=True)
+
+        request = json.loads(sys.stdin.readline())
+        request_id = request.get("request_id")
+        send_json({"type": "model.loading", "request_id": request_id, "status": "loading"})
+        send_json({"type": "model.loaded", "request_id": request_id, "model": request.get("model_id", "test-model")})
+        """
+
+        try? mockScript.write(to: mockBridgePath, atomically: true, encoding: .utf8)
+
+        let stdout = runProcessBridge(
+            path: mockBridgePath.path,
+            input: #"{"type":"init","model_id":"test-model","request_id":"req-456"}"#
+        )
+
+        XCTAssertTrue(stdout.contains(#""request_id": "req-456""#))
+    }
+
+    private func runProcessBridge(path: String, input: String = "done") -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [path]
@@ -137,7 +161,7 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
         }
 
         // Write input then close
-        let inputData = "done\n".data(using: .utf8)!
+        let inputData = "\(input)\n".data(using: .utf8)!
         inputPipe.fileHandleForWriting.write(inputData)
         inputPipe.fileHandleForWriting.closeFile()
 
@@ -145,10 +169,8 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
         let group = DispatchGroup()
         group.enter()
 
-        var exitCode: Int32 = 0
         DispatchQueue.global().async {
             process.waitUntilExit()
-            exitCode = process.terminationStatus
             group.leave()
         }
 

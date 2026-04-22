@@ -19,7 +19,12 @@ let package = Package(
             name: "MLXHub",
             dependencies: [],
             path: "MLXHub",
+            exclude: [
+                "Resources/Info.plist",
+                "Resources/__pycache__"
+            ],
             resources: [
+                .copy("Resources/bridge_utils.py"),
                 .copy("Resources/python_bridge.py"),
                 .copy("Resources/acestep_bridge.py"),
                 .copy("Resources/runtime")

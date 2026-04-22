@@ -19,6 +19,8 @@ import contextlib
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 
+from bridge_utils import log_exception, normalize_music_model_id
+
 # Model registry for hot-swapping
 MODEL_REGISTRY: Dict[str, Any] = {}
 IMAGE_MODEL_REGISTRY: Dict[str, Any] = {}
@@ -31,9 +33,29 @@ def log_debug(msg: str):
     print(msg, file=sys.stderr, flush=True)
 
 
-def send_json(obj: dict):
+def get_request_id(request: Optional[dict] = None) -> Optional[str]:
+    if not isinstance(request, dict):
+        return None
+
+    request_id = request.get("request_id")
+    if request_id is None:
+        return None
+
+    return str(request_id)
+
+
+def send_json(
+    obj: dict,
+    *,
+    request: Optional[dict] = None,
+    request_id: Optional[str] = None,
+):
     """Send JSON object to stdout (only valid JSON goes to stdout)"""
-    print(json.dumps(obj), flush=True)
+    payload = dict(obj)
+    inherited_request_id = request_id if request_id is not None else get_request_id(request)
+    if inherited_request_id:
+        payload.setdefault("request_id", inherited_request_id)
+    print(json.dumps(payload), flush=True)
 
 
 def setup_environment():
@@ -80,7 +102,7 @@ def unload_models(keep_registry: Optional[Dict[str, Any]] = None, keep_key: Opti
         _clear_accelerator_cache()
 
 
-def load_model_if_needed(model_id: str):
+def load_model_if_needed(model_id: str, request: Optional[dict] = None):
     """Lazy load model, cache in registry"""
     if model_id in MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Model {model_id} already loaded, using cache")
@@ -90,7 +112,10 @@ def load_model_if_needed(model_id: str):
     from mlx_vlm import load
     from mlx_vlm.utils import load_config
 
-    send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
+    send_json(
+        {"type": "model.loading", "model": model_id, "status": "downloading"},
+        request=request,
+    )
 
     try:
         unload_models()
@@ -100,7 +125,7 @@ def load_model_if_needed(model_id: str):
 
         MODEL_REGISTRY[model_id] = (model, processor, config)
 
-        send_json({"type": "model.loaded", "model": model_id})
+        send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Model {model_id} loaded successfully")
 
         return model, processor, config
@@ -109,7 +134,9 @@ def load_model_if_needed(model_id: str):
         raise
 
 
-def load_image_model_if_needed(model_id: str, edit: bool = False):
+def load_image_model_if_needed(
+    model_id: str, edit: bool = False, request: Optional[dict] = None
+):
     """Lazy load mflux image model, cache in registry"""
     cache_key = f"{model_id}:{'edit' if edit else 'txt2img'}"
     if cache_key in IMAGE_MODEL_REGISTRY:
@@ -119,7 +146,10 @@ def load_image_model_if_needed(model_id: str, edit: bool = False):
         unload_models(keep_registry=IMAGE_MODEL_REGISTRY, keep_key=cache_key)
         return IMAGE_MODEL_REGISTRY[cache_key]
 
-    send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
+    send_json(
+        {"type": "model.loading", "model": model_id, "status": "downloading"},
+        request=request,
+    )
 
     try:
         unload_models()
@@ -135,7 +165,7 @@ def load_image_model_if_needed(model_id: str, edit: bool = False):
 
         IMAGE_MODEL_REGISTRY[cache_key] = model
 
-        send_json({"type": "model.loaded", "model": model_id})
+        send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Image model {model_id} loaded successfully")
 
         return model
@@ -144,14 +174,17 @@ def load_image_model_if_needed(model_id: str, edit: bool = False):
         raise
 
 
-def load_audio_model_if_needed(model_id: str):
+def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
     """Lazy load mlx-audio TTS model, cache in registry"""
     if model_id in AUDIO_MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Audio model {model_id} already loaded, using cache")
         unload_models(keep_registry=AUDIO_MODEL_REGISTRY, keep_key=model_id)
         return AUDIO_MODEL_REGISTRY[model_id]
 
-    send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
+    send_json(
+        {"type": "model.loading", "model": model_id, "status": "downloading"},
+        request=request,
+    )
 
     try:
         unload_models()
@@ -161,7 +194,7 @@ def load_audio_model_if_needed(model_id: str):
         model = load_model(model_id)
         AUDIO_MODEL_REGISTRY[model_id] = model
 
-        send_json({"type": "model.loaded", "model": model_id})
+        send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Audio model {model_id} loaded successfully")
 
         return model
@@ -170,35 +203,20 @@ def load_audio_model_if_needed(model_id: str):
         raise
 
 
-def _normalize_music_model_id(model_id: str) -> str:
-    """Normalize HuggingFace repo ID to local ACE-Step directory name.
-
-    ACE-Step expects local directory names like 'acestep-v15-turbo',
-    not HuggingFace repo IDs like 'ACE-Step/acestep-v15-turbo-continuous'.
-    """
-    # Strip HuggingFace organization prefix
-    if model_id.startswith("ACE-Step/"):
-        model_id = model_id[len("ACE-Step/") :]
-
-    # Map variant suffixes to base model name
-    # The local directory is 'acestep-v15-turbo' for all turbo variants
-    if model_id.startswith("acestep-v15-turbo"):
-        return "acestep-v15-turbo"
-
-    return model_id
-
-
-def load_music_model_if_needed(model_id: str):
+def load_music_model_if_needed(model_id: str, request: Optional[dict] = None):
     """Lazy load ACE-Step music generation handlers."""
     # Normalize the model ID for ACE-Step lookup
-    normalized_id = _normalize_music_model_id(model_id)
+    normalized_id = normalize_music_model_id(model_id)
 
     if model_id in MUSIC_MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Music model {model_id} already loaded, using cache")
         unload_models(keep_registry=MUSIC_MODEL_REGISTRY, keep_key=model_id)
         return MUSIC_MODEL_REGISTRY[model_id]
 
-    send_json({"type": "model.loading", "model": model_id, "status": "downloading"})
+    send_json(
+        {"type": "model.loading", "model": model_id, "status": "downloading"},
+        request=request,
+    )
 
     try:
         unload_models()
@@ -234,7 +252,7 @@ def load_music_model_if_needed(model_id: str):
         llm_handler = LLMHandler()
         MUSIC_MODEL_REGISTRY[model_id] = (dit_handler, llm_handler)
 
-        send_json({"type": "model.loaded", "model": model_id})
+        send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Music model {model_id} loaded successfully")
 
         return dit_handler, llm_handler
@@ -352,7 +370,7 @@ def handle_chat_completion(request: dict) -> None:
     chat_template_kwargs = request.get("chat_template_kwargs", {})
 
     try:
-        model, processor, config = load_model_if_needed(model_id)
+        model, processor, config = load_model_if_needed(model_id, request=request)
 
         if tools:
             normalized_messages = _normalize_messages(messages)
@@ -385,7 +403,8 @@ def handle_chat_completion(request: dict) -> None:
                 {
                     "type": "chat.completion.chunk",
                     "choices": [{"delta": {"content": opening_tag}}],
-                }
+                },
+                request=request,
             )
             full_response = opening_tag
 
@@ -411,7 +430,8 @@ def handle_chat_completion(request: dict) -> None:
                 {
                     "type": "chat.completion.chunk",
                     "choices": [{"delta": {"content": token}}],
-                }
+                },
+                request=request,
             )
 
         parsed_tool_calls = parse_tool_calls(full_response)
@@ -426,7 +446,8 @@ def handle_chat_completion(request: dict) -> None:
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
                     },
-                }
+                },
+                request=request,
             )
         else:
             send_json(
@@ -437,19 +458,16 @@ def handle_chat_completion(request: dict) -> None:
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
                     },
-                }
+                },
+                request=request,
             )
 
         mx.clear_cache()
         gc.collect()
 
     except Exception as e:
-        import traceback
-
-        error_msg = str(e)
-        error_traceback = traceback.format_exc()
-        log_debug(f"[Python Bridge] Error: {error_msg}")
-        send_json({"type": "error", "message": f"{error_msg}\n{error_traceback}"})
+        error_msg = log_exception("[Python Bridge] Error", e, logger=log_debug)
+        send_json({"type": "error", "message": error_msg}, request=request)
 
 
 def _last_user_prompt(messages: List[Dict[str, str]]) -> str:
@@ -535,15 +553,21 @@ def handle_image_generation(request: dict) -> None:
 
     if not prompt:
         send_json(
-            {"type": "error", "message": "No prompt provided for image generation"}
+            {"type": "error", "message": "No prompt provided for image generation"},
+            request=request,
         )
         return
 
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        model = load_image_model_if_needed(model_id, edit=bool(image_paths))
+        model = load_image_model_if_needed(
+            model_id, edit=bool(image_paths), request=request
+        )
 
-        send_json({"type": "model.loading", "model": model_id, "status": "generating"})
+        send_json(
+            {"type": "model.loading", "model": model_id, "status": "generating"},
+            request=request,
+        )
 
         generation_kwargs = {
             "prompt": prompt,
@@ -575,7 +599,8 @@ def handle_image_generation(request: dict) -> None:
                 "seed": seed,
                 "width": width,
                 "height": height,
-            }
+            },
+            request=request,
         )
         send_json(
             {
@@ -588,19 +613,18 @@ def handle_image_generation(request: dict) -> None:
                     }
                 ],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-            }
+            },
+            request=request,
         )
 
         mx.clear_cache()
         gc.collect()
 
     except Exception as e:
-        import traceback
-
-        error_msg = str(e)
-        error_traceback = traceback.format_exc()
-        log_debug(f"[Python Bridge] Image generation error: {error_msg}")
-        send_json({"type": "error", "message": f"{error_msg}\n{error_traceback}"})
+        error_msg = log_exception(
+            "[Python Bridge] Image generation error", e, logger=log_debug
+        )
+        send_json({"type": "error", "message": error_msg}, request=request)
 
 
 def handle_audio_speech(request: dict) -> None:
@@ -619,15 +643,19 @@ def handle_audio_speech(request: dict) -> None:
 
     if not text:
         send_json(
-            {"type": "error", "message": "No text provided for speech generation"}
+            {"type": "error", "message": "No text provided for speech generation"},
+            request=request,
         )
         return
 
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        model = load_audio_model_if_needed(model_id)
+        model = load_audio_model_if_needed(model_id, request=request)
 
-        send_json({"type": "model.loading", "model": model_id, "status": "generating"})
+        send_json(
+            {"type": "model.loading", "model": model_id, "status": "generating"},
+            request=request,
+        )
 
         output_path = output_dir / f"kugelaudio-{uuid.uuid4().hex}.wav"
         audio_segments = []
@@ -650,7 +678,8 @@ def handle_audio_speech(request: dict) -> None:
 
         if not audio_segments:
             send_json(
-                {"type": "error", "message": "Speech generation finished without audio"}
+                {"type": "error", "message": "Speech generation finished without audio"},
+                request=request,
             )
             return
 
@@ -668,7 +697,8 @@ def handle_audio_speech(request: dict) -> None:
                 "model": model_id,
                 "sample_rate": sample_rate,
                 "samples": total_samples,
-            }
+            },
+            request=request,
         )
         send_json(
             {
@@ -677,19 +707,18 @@ def handle_audio_speech(request: dict) -> None:
                     {"message": {"content": "Generated speech with KugelAudio."}}
                 ],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-            }
+            },
+            request=request,
         )
 
         mx.clear_cache()
         gc.collect()
 
     except Exception as e:
-        import traceback
-
-        error_msg = str(e)
-        error_traceback = traceback.format_exc()
-        log_debug(f"[Python Bridge] Audio generation error: {error_msg}")
-        send_json({"type": "error", "message": f"{error_msg}\n{error_traceback}"})
+        error_msg = log_exception(
+            "[Python Bridge] Audio generation error", e, logger=log_debug
+        )
+        send_json({"type": "error", "message": error_msg}, request=request)
 
 
 def _terminate_child(child: subprocess.Popen, timeout: float = 5.0):
@@ -721,6 +750,7 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
     previous_sigterm = signal.signal(signal.SIGTERM, handle_parent_signal)
     previous_sigint = signal.signal(signal.SIGINT, handle_parent_signal)
     saw_error = False
+    selector = None
 
     try:
         assert child.stdin is not None
@@ -744,26 +774,29 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
                     stripped = line.strip()
                     if stripped:
                         try:
-                            saw_error = saw_error or json.loads(stripped).get("type") == "error"
+                            payload = json.loads(stripped)
+                            saw_error = saw_error or payload.get("type") == "error"
+                            print(line, end="", flush=True)
                         except json.JSONDecodeError:
-                            pass
-                    print(line, end="", flush=True)
+                            log_debug(f"[ACE-Step stdout ignored] {stripped}")
                 else:
                     log_debug(line.rstrip())
 
             if child.poll() is not None:
-                for fileobj in list(selector.get_map().keys()):
+                for key in list(selector.get_map().values()):
+                    fileobj = key.fileobj
                     remaining = fileobj.read()
                     if remaining:
-                        if selector.get_key(fileobj).data == "stdout":
+                        if key.data == "stdout":
                             for line in remaining.splitlines():
                                 stripped = line.strip()
                                 if stripped:
                                     try:
-                                        saw_error = saw_error or json.loads(stripped).get("type") == "error"
+                                        payload = json.loads(stripped)
+                                        saw_error = saw_error or payload.get("type") == "error"
+                                        print(line, flush=True)
                                     except json.JSONDecodeError:
-                                        pass
-                                    print(line, flush=True)
+                                        log_debug(f"[ACE-Step stdout ignored] {stripped}")
                         else:
                             log_debug(remaining.rstrip())
                     selector.unregister(fileobj)
@@ -774,10 +807,22 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
                 {
                     "type": "error",
                     "message": f"ACE-Step helper exited with code {returncode}",
-                }
+                },
+                request=request,
             )
         return returncode
     finally:
+        if child.stdin is not None:
+            child.stdin.close()
+        if child.stdout is not None:
+            child.stdout.close()
+        if child.stderr is not None:
+            child.stderr.close()
+        if selector is not None:
+            try:
+                selector.close()
+            except Exception:
+                pass
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGINT, previous_sigint)
         _terminate_child(child)
@@ -820,7 +865,8 @@ def handle_music_generation(request: dict) -> None:
 
     if not prompt:
         send_json(
-            {"type": "error", "message": "No prompt provided for music generation"}
+            {"type": "error", "message": "No prompt provided for music generation"},
+            request=request,
         )
         return
 
@@ -828,9 +874,12 @@ def handle_music_generation(request: dict) -> None:
         from acestep.inference import GenerationConfig, GenerationParams, generate_music
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        dit_handler, llm_handler = load_music_model_if_needed(model_id)
+        dit_handler, llm_handler = load_music_model_if_needed(model_id, request=request)
 
-        send_json({"type": "model.loading", "model": model_id, "status": "generating"})
+        send_json(
+            {"type": "model.loading", "model": model_id, "status": "generating"},
+            request=request,
+        )
 
         seed = int(parameters.get("seed") or (time.time_ns() % 2_147_483_647))
         duration = float(parameters.get("duration", 30))
@@ -877,7 +926,7 @@ def handle_music_generation(request: dict) -> None:
 
         if not result.success:
             message = result.error or result.status_message or "Music generation failed"
-            send_json({"type": "error", "message": message})
+            send_json({"type": "error", "message": message}, request=request)
             return
 
         for audio in result.audios:
@@ -889,7 +938,8 @@ def handle_music_generation(request: dict) -> None:
                         "path": str(path),
                         "model": model_id,
                         "sample_rate": int(audio.get("sample_rate", 48000)),
-                    }
+                    },
+                    request=request,
                 )
 
         send_json(
@@ -903,26 +953,25 @@ def handle_music_generation(request: dict) -> None:
                     }
                 ],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-            }
+            },
+            request=request,
         )
         gc.collect()
 
     except Exception as e:
-        import traceback
-
-        error_msg = str(e)
-        error_traceback = traceback.format_exc()
-        log_debug(f"[Python Bridge] Music generation error: {error_msg}")
-        send_json({"type": "error", "message": f"{error_msg}\n{error_traceback}"})
+        error_msg = log_exception(
+            "[Python Bridge] Music generation error", e, logger=log_debug
+        )
+        send_json({"type": "error", "message": error_msg}, request=request)
 
 
-def handle_ping() -> None:
-    send_json({"type": "pong"})
+def handle_ping(request: dict) -> None:
+    send_json({"type": "pong"}, request=request)
 
 
-def handle_unload() -> None:
+def handle_unload(request: dict) -> None:
     unload_models()
-    send_json({"type": "model.unloaded"})
+    send_json({"type": "model.unloaded"}, request=request)
 
 
 def handle_init(request: dict) -> None:
@@ -931,29 +980,30 @@ def handle_init(request: dict) -> None:
     if model_id:
         try:
             if backend == "image":
-                load_image_model_if_needed(model_id)
+                load_image_model_if_needed(model_id, request=request)
             elif backend == "audio":
-                load_audio_model_if_needed(model_id)
+                load_audio_model_if_needed(model_id, request=request)
             elif backend == "music":
                 # Music generation runs in an isolated ACE-Step process when available
                 # because ACE-Step and the main MLX stack require incompatible package
                 # versions. We don't load here eagerly - loading happens in the subprocess
                 # when music.generate is called, which properly waits for initialization.
-                send_json({"type": "model.initialized", "model": model_id})
+                send_json({"type": "model.initialized", "model": model_id}, request=request)
                 return
             else:
-                load_model_if_needed(model_id)
-                send_json({"type": "model.initialized", "model": model_id})
+                load_model_if_needed(model_id, request=request)
+                send_json({"type": "model.initialized", "model": model_id}, request=request)
         except Exception as e:
             send_json(
-                {"type": "error", "message": f"Failed to initialize model: {str(e)}"}
+                {"type": "error", "message": f"Failed to initialize model: {str(e)}"},
+                request=request,
             )
     else:
-        send_json({"type": "error", "message": "No model_id provided for init"})
+        send_json({"type": "error", "message": "No model_id provided for init"}, request=request)
 
 
-def handle_unknown(msg_type: str) -> None:
-    send_json({"type": "error", "message": f"Unknown message type: {msg_type}"})
+def handle_unknown(msg_type: str, request: Optional[dict] = None) -> None:
+    send_json({"type": "error", "message": f"Unknown message type: {msg_type}"}, request=request)
 
 
 def main():
@@ -966,6 +1016,7 @@ def main():
         if not line:
             continue
 
+        request = None
         try:
             request = json.loads(line)
             msg_type = request.get("type")
@@ -981,16 +1032,19 @@ def main():
             elif msg_type == "init":
                 handle_init(request)
             elif msg_type == "ping":
-                handle_ping()
+                handle_ping(request)
             elif msg_type == "unload":
-                handle_unload()
+                handle_unload(request)
             else:
-                handle_unknown(msg_type)
+                handle_unknown(msg_type, request=request)
 
         except json.JSONDecodeError as e:
             send_json({"type": "error", "message": f"Invalid JSON: {str(e)}"})
         except Exception as e:
-            send_json({"type": "error", "message": f"Unexpected error: {str(e)}"})
+            send_json(
+                {"type": "error", "message": f"Unexpected error: {str(e)}"},
+                request=request,
+            )
 
 
 if __name__ == "__main__":

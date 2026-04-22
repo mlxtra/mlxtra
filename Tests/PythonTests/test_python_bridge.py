@@ -2,9 +2,14 @@
 """Unit tests for python_bridge.py"""
 
 import json
+import os
+import subprocess
 import sys
+import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MLXHub" / "Resources"))
 import python_bridge
@@ -102,6 +107,42 @@ class TestSendJson(unittest.TestCase):
         assert parsed["type"] == "test"
         assert parsed["data"] == 123
 
+    def test_inherits_request_id_from_request(self):
+        import io
+        from contextlib import redirect_stdout
+
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            python_bridge.send_json(
+                {"type": "test"},
+                request={"request_id": "req-123"},
+            )
+        parsed = json.loads(captured.getvalue().strip())
+        assert parsed["request_id"] == "req-123"
+
+
+class TestRequestIDPropagation(unittest.TestCase):
+    def test_handle_init_includes_request_id(self):
+        import io
+        from contextlib import redirect_stdout
+
+        captured = io.StringIO()
+        with patch.object(python_bridge, "load_model_if_needed") as mock_load:
+            with redirect_stdout(captured):
+                python_bridge.handle_init(
+                    {
+                        "type": "init",
+                        "request_id": "req-789",
+                        "backend": "vlm",
+                        "model_id": "test-model",
+                    }
+                )
+
+        mock_load.assert_called_once()
+        parsed = json.loads(captured.getvalue().strip().splitlines()[-1])
+        assert parsed["type"] == "model.initialized"
+        assert parsed["request_id"] == "req-789"
+
 
 class TestLogDebug(unittest.TestCase):
     def test_uses_stderr(self):
@@ -132,18 +173,371 @@ class TestModelRegistries(unittest.TestCase):
         python_bridge.MUSIC_MODEL_REGISTRY.clear()
         assert python_bridge.MODEL_REGISTRY == {}
 
+    def test_unload_models_preserves_keep_key(self):
+        keep_value = object()
+        python_bridge.MODEL_REGISTRY["keep"] = keep_value
+        python_bridge.MODEL_REGISTRY["drop"] = object()
+        python_bridge.IMAGE_MODEL_REGISTRY["image"] = object()
+        python_bridge.AUDIO_MODEL_REGISTRY["audio"] = object()
+        python_bridge.MUSIC_MODEL_REGISTRY["music"] = object()
+
+        python_bridge.unload_models(
+            keep_registry=python_bridge.MODEL_REGISTRY,
+            keep_key="keep",
+        )
+
+        assert python_bridge.MODEL_REGISTRY == {"keep": keep_value}
+        assert python_bridge.IMAGE_MODEL_REGISTRY == {}
+        assert python_bridge.AUDIO_MODEL_REGISTRY == {}
+        assert python_bridge.MUSIC_MODEL_REGISTRY == {}
+
+    def test_music_init_remains_lazy(self):
+        python_bridge.MUSIC_MODEL_REGISTRY.clear()
+
+        with patch.object(python_bridge, "send_json") as mock_send_json:
+            python_bridge.handle_init(
+                {
+                    "type": "init",
+                    "backend": "music",
+                    "model_id": "ACE-Step/acestep-v15-turbo-continuous",
+                    "request_id": "req-music-init",
+                }
+            )
+
+        assert python_bridge.MUSIC_MODEL_REGISTRY == {}
+        mock_send_json.assert_called_once_with(
+            {
+                "type": "model.initialized",
+                "model": "ACE-Step/acestep-v15-turbo-continuous",
+            },
+            request={
+                "type": "init",
+                "backend": "music",
+                "model_id": "ACE-Step/acestep-v15-turbo-continuous",
+                "request_id": "req-music-init",
+            },
+        )
+
+
+class TestBridgeProtocolSequences(unittest.TestCase):
+    def test_image_then_music_then_chat_same_session(self):
+        launcher = self._make_launcher_script()
+        commands = [
+            {
+                "type": "init",
+                "backend": "image",
+                "model_id": "image-model",
+                "request_id": "req-image-init",
+            },
+            {
+                "type": "image.generate",
+                "model": "image-model",
+                "prompt": "image",
+                "request_id": "req-image",
+            },
+            {
+                "type": "init",
+                "backend": "music",
+                "model_id": "music-model",
+                "request_id": "req-music-init",
+            },
+            {
+                "type": "music.generate",
+                "model": "music-model",
+                "parameters": {"caption": "music"},
+                "request_id": "req-music",
+            },
+            {
+                "type": "init",
+                "backend": "vlm",
+                "model_id": "chat-model",
+                "request_id": "req-chat-init",
+            },
+            {
+                "type": "chat.completions",
+                "model": "chat-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "request_id": "req-chat",
+            },
+        ]
+
+        messages = self._run_launcher_session(launcher, commands)
+        messages_by_request = {}
+        for message in messages:
+            request_id = message.get("request_id")
+            if request_id:
+                messages_by_request.setdefault(request_id, []).append(message["type"])
+
+        self.assertEqual(messages_by_request["req-image-init"], ["model.loaded"])
+        self.assertEqual(messages_by_request["req-image"], ["image.generated", "chat.completion.complete"])
+        self.assertEqual(messages_by_request["req-music-init"], ["model.initialized"])
+        self.assertEqual(messages_by_request["req-music"], ["model.loaded", "audio.generated", "chat.completion.complete"])
+        self.assertEqual(messages_by_request["req-chat-init"], ["model.loaded", "model.initialized"])
+        self.assertEqual(messages_by_request["req-chat"], ["chat.completion.chunk", "chat.completion.complete"])
+
+    def test_tool_call_then_followup_completion_same_session(self):
+        launcher = self._make_launcher_script()
+        commands = [
+            {
+                "type": "init",
+                "backend": "vlm",
+                "model_id": "chat-model",
+                "request_id": "req-init",
+            },
+            {
+                "type": "chat.completions",
+                "model": "chat-model",
+                "messages": [{"role": "user", "content": "use a tool"}],
+                "tools": [{"type": "function", "function": {"name": "generate_music"}}],
+                "request_id": "req-tool",
+            },
+            {
+                "type": "chat.completions",
+                "model": "chat-model",
+                "messages": [
+                    {"role": "user", "content": "use a tool"},
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "tool-call-1",
+                                "function": {
+                                    "name": "generate_music",
+                                    "arguments": json.dumps({"caption": "music please"}),
+                                },
+                            }
+                        ],
+                    },
+                    {"role": "tool", "tool_call_id": "tool-call-1", "content": "done"},
+                ],
+                "request_id": "req-followup",
+            },
+        ]
+
+        messages = self._run_launcher_session(launcher, commands)
+        by_request = {}
+        for message in messages:
+            request_id = message.get("request_id")
+            if request_id:
+                by_request.setdefault(request_id, []).append(message)
+
+        self.assertEqual(by_request["req-tool"][0]["type"], "chat.completion.tool_calls")
+        self.assertEqual(by_request["req-followup"][0]["type"], "chat.completion.chunk")
+        self.assertEqual(
+            by_request["req-followup"][1]["choices"][0]["message"]["content"],
+            "follow-up complete",
+        )
+
+    def _make_launcher_script(self):
+        resources_dir = Path(__file__).resolve().parents[2] / "MLXHub" / "Resources"
+        launcher = Path(tempfile.mkdtemp()) / "bridge_launcher.py"
+        launcher.write_text(
+            f"""import json\nimport sys\nsys.path.insert(0, {str(resources_dir)!r})\nimport python_bridge\n\n"""
+            + """
+def fake_load_model_if_needed(model_id, request=None):
+    python_bridge.unload_models(keep_registry=python_bridge.MODEL_REGISTRY, keep_key=model_id)
+    python_bridge.MODEL_REGISTRY[model_id] = ("model", "processor", {})
+    python_bridge.send_json({"type": "model.loaded", "model": model_id}, request=request)
+    return python_bridge.MODEL_REGISTRY[model_id]
+
+def fake_load_image_model_if_needed(model_id, edit=False, request=None):
+    cache_key = f"{model_id}:{'edit' if edit else 'txt2img'}"
+    python_bridge.unload_models(keep_registry=python_bridge.IMAGE_MODEL_REGISTRY, keep_key=cache_key)
+    python_bridge.IMAGE_MODEL_REGISTRY[cache_key] = {"model": model_id}
+    python_bridge.send_json({"type": "model.loaded", "model": model_id}, request=request)
+    return python_bridge.IMAGE_MODEL_REGISTRY[cache_key]
+
+def fake_load_music_model_if_needed(model_id, request=None):
+    python_bridge.unload_models(keep_registry=python_bridge.MUSIC_MODEL_REGISTRY, keep_key=model_id)
+    python_bridge.MUSIC_MODEL_REGISTRY[model_id] = ("dit", "llm")
+    python_bridge.send_json({"type": "model.loaded", "model": model_id}, request=request)
+    return python_bridge.MUSIC_MODEL_REGISTRY[model_id]
+
+def fake_handle_chat_completion(request):
+    model_id = request.get("model")
+    if model_id not in python_bridge.MODEL_REGISTRY:
+        python_bridge.send_json({"type": "error", "message": "chat model not loaded"}, request=request)
+        return
+    if request.get("tools"):
+        python_bridge.send_json(
+            {
+                "type": "chat.completion.tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "tool-call-1",
+                        "function": {
+                            "name": "generate_music",
+                            "arguments": json.dumps({"caption": "music please"})
+                        }
+                    }
+                ]
+            },
+            request=request,
+        )
+        return
+    python_bridge.send_json({"type": "chat.completion.chunk", "choices": [{"delta": {"content": "ok"}}]}, request=request)
+    last_message = (request.get("messages") or [{}])[-1]
+    content = "follow-up complete" if last_message.get("role") == "tool" else "chat complete"
+    python_bridge.send_json(
+        {
+            "type": "chat.completion.complete",
+            "choices": [{"message": {"content": content}}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        },
+        request=request,
+    )
+
+def fake_handle_image_generation(request):
+    model_id = request.get("model")
+    cache_key = f"{model_id}:txt2img"
+    if cache_key not in python_bridge.IMAGE_MODEL_REGISTRY:
+        python_bridge.send_json({"type": "error", "message": "image model not loaded"}, request=request)
+        return
+    python_bridge.send_json({"type": "image.generated", "path": "/tmp/generated-image.png"}, request=request)
+    python_bridge.send_json(
+        {
+            "type": "chat.completion.complete",
+            "choices": [{"message": {"content": "image complete"}}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        },
+        request=request,
+    )
+
+def fake_handle_music_generation(request):
+    model_id = request.get("model")
+    if model_id not in python_bridge.MUSIC_MODEL_REGISTRY:
+        fake_load_music_model_if_needed(model_id, request=request)
+    python_bridge.send_json({"type": "audio.generated", "path": "/tmp/generated-music.wav"}, request=request)
+    python_bridge.send_json(
+        {
+            "type": "chat.completion.complete",
+            "choices": [{"message": {"content": "music complete"}}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        },
+        request=request,
+    )
+
+python_bridge.load_model_if_needed = fake_load_model_if_needed
+python_bridge.load_image_model_if_needed = fake_load_image_model_if_needed
+python_bridge.load_music_model_if_needed = fake_load_music_model_if_needed
+python_bridge.handle_chat_completion = fake_handle_chat_completion
+python_bridge.handle_image_generation = fake_handle_image_generation
+python_bridge.handle_music_generation = fake_handle_music_generation
+python_bridge.main()
+"""
+        )
+        self.addCleanup(lambda: launcher.parent.exists() and __import__("shutil").rmtree(launcher.parent, ignore_errors=True))
+        return launcher
+
+    def _run_launcher_session(self, launcher, commands):
+        process = subprocess.Popen(
+            [sys.executable, str(launcher)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(lambda: self._terminate_process(process))
+        assert process.stdin is not None
+        assert process.stdout is not None
+
+        messages = [json.loads(process.stdout.readline())]
+        for command in commands:
+            process.stdin.write(json.dumps(command) + "\n")
+            process.stdin.flush()
+
+        process.stdin.close()
+        stdout = process.stdout.read()
+        stderr = process.stderr.read()
+        return_code = process.wait(timeout=5)
+        self.assertEqual(return_code, 0, stderr)
+        messages.extend(
+            json.loads(line)
+            for line in stdout.splitlines()
+            if line.strip()
+        )
+        return messages
+
+    def _terminate_process(self, process):
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+        if process.stdout is not None and not process.stdout.closed:
+            process.stdout.close()
+        if process.stderr is not None and not process.stderr.closed:
+            process.stderr.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=1)
+
+
+class TestAceStepForwarding(unittest.TestCase):
+    def test_forward_acestep_subprocess_round_trips_request_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            helper = Path(temp_dir) / "helper.py"
+            helper.write_text(
+                "import json, sys\n"
+                "request = json.loads(sys.stdin.readline())\n"
+                "print(json.dumps({'type': 'audio.generated', 'request_id': request.get('request_id'), 'path': '/tmp/out.wav'}), flush=True)\n"
+            )
+
+            with patch("sys.stdout", new_callable=__import__("io").StringIO) as captured:
+                return_code = python_bridge._forward_acestep_subprocess(
+                    sys.executable,
+                    helper,
+                    {"request_id": "req-child", "type": "music.generate"},
+                )
+
+            assert return_code == 0
+            lines = [json.loads(line) for line in captured.getvalue().splitlines() if line.strip()]
+            assert lines[0]["request_id"] == "req-child"
+
+    def test_forward_acestep_subprocess_filters_non_json_stdout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            helper = Path(temp_dir) / "helper.py"
+            helper.write_text(
+                "import json, sys\n"
+                "print('debug noise', flush=True)\n"
+                "request = json.loads(sys.stdin.readline())\n"
+                "print(json.dumps({'type': 'audio.generated', 'request_id': request.get('request_id'), 'path': '/tmp/out.wav'}), flush=True)\n"
+            )
+
+            with patch("sys.stdout", new_callable=__import__("io").StringIO) as captured_stdout, patch.object(python_bridge, "log_debug") as log_debug:
+                return_code = python_bridge._forward_acestep_subprocess(
+                    sys.executable,
+                    helper,
+                    {"request_id": "req-child", "type": "music.generate"},
+                )
+
+            assert return_code == 0
+            lines = [json.loads(line) for line in captured_stdout.getvalue().splitlines() if line.strip()]
+            assert len(lines) == 1
+            assert lines[0]["type"] == "audio.generated"
+            log_debug.assert_any_call("[ACE-Step stdout ignored] debug noise")
+
 
 class TestImageModelLoading(unittest.TestCase):
     def test_passes_model_path_to_mflux(self):
-        from unittest.mock import MagicMock, patch
-
         model_id = "test-org/test-flux-model"
         mock_model_instance = MagicMock()
         mock_flux_class = MagicMock(return_value=mock_model_instance)
 
-        with patch("mflux.models.flux2.variants.Flux2Klein", mock_flux_class), \
-             patch("mflux.models.common.config.ModelConfig.flux2_klein_4b", MagicMock()):
-            
+        config_module = types.ModuleType("mflux.models.common.config")
+        config_module.ModelConfig = types.SimpleNamespace(flux2_klein_4b=MagicMock())
+
+        variants_module = types.ModuleType("mflux.models.flux2.variants")
+        variants_module.Flux2Klein = mock_flux_class
+        variants_module.Flux2KleinEdit = MagicMock()
+
+        stubbed_modules = {
+            "mflux": types.ModuleType("mflux"),
+            "mflux.models": types.ModuleType("mflux.models"),
+            "mflux.models.common": types.ModuleType("mflux.models.common"),
+            "mflux.models.common.config": config_module,
+            "mflux.models.flux2": types.ModuleType("mflux.models.flux2"),
+            "mflux.models.flux2.variants": variants_module,
+        }
+
+        with patch.dict(sys.modules, stubbed_modules):
             result = python_bridge.load_image_model_if_needed(model_id)
 
             # Check that Flux2Klein was called with model_path=model_id

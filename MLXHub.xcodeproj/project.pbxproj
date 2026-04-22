@@ -13,7 +13,6 @@
 		8A0100010000000000000004 /* MainContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001004 /* MainContentView.swift */; };
 		8A0100010000000000000005 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001005 /* WelcomeView.swift */; };
 		8A0100010000000000000006 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001006 /* ChatView.swift */; };
-		8A0100010000000000000007 /* ChatInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001007 /* ChatInputView.swift */; };
 		8A0100010000000000000008 /* MessageBubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001008 /* MessageBubbleView.swift */; };
 		8A0100010000000000000009 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001009 /* ChatViewModel.swift */; };
 		8A010001000000000000000A /* Chat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100A /* Chat.swift */; };
@@ -29,6 +28,7 @@
 		8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001017 /* ModelDownloadManager.swift */; };
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
+		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,7 +38,6 @@
 		8A0100010000000000001004 /* MainContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainContentView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001005 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001006 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
-		8A0100010000000000001007 /* ChatInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatInputView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001008 /* MessageBubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleView.swift; sourceTree = "<group>"; };
 		8A0100010000000000001009 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		8A010001000000000000100A /* Chat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Chat.swift; sourceTree = "<group>"; };
@@ -57,6 +56,7 @@
 		8A0100010000000000001017 /* ModelDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadManager.swift; sourceTree = "<group>"; };
 		8A0100010000000000001018 /* acestep_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = acestep_bridge.py; sourceTree = "<group>"; };
 		8A0100010000000000001019 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
+		8A010001000000000000101A /* bridge_utils.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = bridge_utils.py; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,7 +101,6 @@
 				8A0100010000000000001005 /* WelcomeView.swift */,
 				8A0100010000000000001006 /* ChatView.swift */,
 				8A0100010000000000001019 /* ComposerView.swift */,
-				8A0100010000000000001007 /* ChatInputView.swift */,
 				8A0100010000000000001008 /* MessageBubbleView.swift */,
 				8A0100010000000000001016 /* SettingsView.swift */,
 			);
@@ -151,6 +150,7 @@
 				8A0100010000000000001010 /* Info.plist */,
 				8A0100010000000000001011 /* python_bridge.py */,
 				8A0100010000000000001018 /* acestep_bridge.py */,
+				8A010001000000000000101A /* bridge_utils.py */,
 				8A0100010000000000001012 /* runtime */,
 			);
 			path = Resources;
@@ -257,6 +257,7 @@
 			files = (
 				8A0100010000000000000010 /* python_bridge.py in Resources */,
 				8A0100010000000000000018 /* acestep_bridge.py in Resources */,
+				8A010001000000000000001A /* bridge_utils.py in Resources */,
 				8A0100010000000000000011 /* runtime in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -275,7 +276,6 @@
 				8A0100010000000000000005 /* WelcomeView.swift in Sources */,
 				8A0100010000000000000006 /* ChatView.swift in Sources */,
 				8A0100010000000000000019 /* ComposerView.swift in Sources */,
-				8A0100010000000000000007 /* ChatInputView.swift in Sources */,
 				8A0100010000000000000008 /* MessageBubbleView.swift in Sources */,
 				8A0100010000000000000009 /* ChatViewModel.swift in Sources */,
 				8A0100010000000000000013 /* SettingsView.swift in Sources */,

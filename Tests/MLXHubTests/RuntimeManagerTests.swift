@@ -79,7 +79,6 @@ final class RuntimeManagerTests: XCTestCase {
 
     func testModelCachePathConstruction() {
         // Test the path construction logic
-        let modelId = "mlx-community/Qwen3.5-9B"
         let expectedSuffix = "models--mlx-community--Qwen3.5-9B"
 
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
@@ -208,7 +207,7 @@ final class RuntimeManagerTests: XCTestCase {
 
 // MARK: - RuntimeError Extension for Testing
 
-extension RuntimeError: @retroactive Equatable {
+extension RuntimeError: Equatable {
     public static func == (lhs: RuntimeError, rhs: RuntimeError) -> Bool {
         switch (lhs, rhs) {
         case (.bundleNotFound(let l), .bundleNotFound(let r)) where l == r:

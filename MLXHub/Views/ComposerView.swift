@@ -117,16 +117,6 @@ struct ComposerView: View {
                 .help("Stop generating")
             } else {
                 ModelSelectorInline(viewModel: viewModel)
-
-                Button(action: {}) {
-                    Image(systemName: "mic")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Voice input")
             }
         }
         .padding(.horizontal, 12)

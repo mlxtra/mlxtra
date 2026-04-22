@@ -12,6 +12,7 @@ protocol ModelExecutor: AnyObject {
 }
 
 struct ExecutionRequest {
+    let requestID: String
     let backend: RuntimeBackend
     let modelId: String
     let messages: [ExecutionMessage]
@@ -28,6 +29,7 @@ struct ExecutionRequest {
     let parameters: [String: Any]?
 
     init(
+        requestID: String = UUID().uuidString,
         backend: RuntimeBackend = .vlm,
         modelId: String,
         messages: [ExecutionMessage],
@@ -43,6 +45,7 @@ struct ExecutionRequest {
         tools: [[String: Any]]? = nil,
         parameters: [String: Any]? = nil
     ) {
+        self.requestID = requestID
         self.backend = backend
         self.modelId = modelId
         self.messages = messages

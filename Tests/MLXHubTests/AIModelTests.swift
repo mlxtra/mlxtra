@@ -2,15 +2,97 @@ import XCTest
 @testable import MLXHub
 
 final class AIModelTests: XCTestCase {
+    private struct ExpectedModelConfiguration {
+        let rawValue: String
+        let subtitle: String
+        let modelId: String
+        let maxContextWindow: Int
+        let defaultMaxTokens: Int
+        let memoryRequirementGB: Double
+        let downloadSizeGB: Double
+        let supportsVision: Bool
+        let temperatureRange: (min: Double, max: Double, default: Double)
+        let topP: Double
+        let topK: Int
+        let minP: Double
+        let repetitionPenalty: Double
+        let enableThinking: Bool
+        let backend: RuntimeBackend
+        let icon: String
+    }
+
+    private var expectedBuiltInModels: [(model: AIModel, configuration: ExpectedModelConfiguration)] {
+        [
+            (
+                model: .qwen35,
+                configuration: ExpectedModelConfiguration(
+                    rawValue: "Qwen 3.5",
+                    subtitle: "Vision language model (9B parameters)",
+                    modelId: "mlx-community/Qwen3.5-9B-MLX-4bit",
+                    maxContextWindow: 32768,
+                    defaultMaxTokens: 4096,
+                    memoryRequirementGB: 6.0,
+                    downloadSizeGB: 5.6,
+                    supportsVision: true,
+                    temperatureRange: (0.0, 2.0, 0.7),
+                    topP: 0.8,
+                    topK: 20,
+                    minP: 0.0,
+                    repetitionPenalty: 1.0,
+                    enableThinking: false,
+                    backend: .vlm,
+                    icon: "eye"
+                )
+            ),
+            (
+                model: .gemma4,
+                configuration: ExpectedModelConfiguration(
+                    rawValue: "Gemma 4",
+                    subtitle: "Google vision model (4B parameters)",
+                    modelId: "google/gemma-4-e4b-it",
+                    maxContextWindow: 8192,
+                    defaultMaxTokens: 4096,
+                    memoryRequirementGB: 3.0,
+                    downloadSizeGB: 2.5,
+                    supportsVision: true,
+                    temperatureRange: (0.0, 2.0, 0.7),
+                    topP: 1.0,
+                    topK: 0,
+                    minP: 0.0,
+                    repetitionPenalty: 1.0,
+                    enableThinking: false,
+                    backend: .vlm,
+                    icon: "sparkles"
+                )
+            ),
+            (
+                model: .mini,
+                configuration: ExpectedModelConfiguration(
+                    rawValue: "Qwen 3.5 Mini",
+                    subtitle: "Lightweight vision model (2B parameters)",
+                    modelId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+                    maxContextWindow: 32768,
+                    defaultMaxTokens: 4096,
+                    memoryRequirementGB: 3.0,
+                    downloadSizeGB: 1.5,
+                    supportsVision: true,
+                    temperatureRange: (0.0, 2.0, 0.7),
+                    topP: 0.8,
+                    topK: 20,
+                    minP: 0.0,
+                    repetitionPenalty: 1.0,
+                    enableThinking: false,
+                    backend: .vlm,
+                    icon: "bolt"
+                )
+            ),
+        ]
+    }
 
     // MARK: - AIModel Cases
 
     func testAIModelAllCases() {
-        let allCases = AIModel.allCases
-        XCTAssertEqual(allCases.count, 3)
-        XCTAssertTrue(allCases.contains(.qwen35))
-        XCTAssertTrue(allCases.contains(.gemma4))
-        XCTAssertTrue(allCases.contains(.mini))
+        XCTAssertEqual(AIModel.allCases, expectedBuiltInModels.map(\.model))
     }
 
     func testAIModelRawValues() {
@@ -31,6 +113,31 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.qwen35.displayName, "Qwen 3.5")
         XCTAssertEqual(AIModel.gemma4.displayName, "Gemma 4")
         XCTAssertEqual(AIModel.mini.displayName, "Qwen 3.5 Mini")
+    }
+
+    func testBuiltInModelConfigurationRemainsStable() {
+        for (model, configuration) in expectedBuiltInModels {
+            XCTAssertEqual(model.rawValue, configuration.rawValue)
+            XCTAssertEqual(model.id, configuration.rawValue)
+            XCTAssertEqual(model.displayName, configuration.rawValue)
+            XCTAssertEqual(model.subtitle, configuration.subtitle)
+            XCTAssertEqual(model.modelId, configuration.modelId)
+            XCTAssertEqual(model.maxContextWindow, configuration.maxContextWindow)
+            XCTAssertEqual(model.defaultMaxTokens, configuration.defaultMaxTokens)
+            XCTAssertEqual(model.memoryRequirementGB, configuration.memoryRequirementGB)
+            XCTAssertEqual(model.downloadSizeGB, configuration.downloadSizeGB)
+            XCTAssertEqual(model.supportsVision, configuration.supportsVision)
+            XCTAssertEqual(model.temperatureRange.min, configuration.temperatureRange.min)
+            XCTAssertEqual(model.temperatureRange.max, configuration.temperatureRange.max)
+            XCTAssertEqual(model.temperatureRange.default, configuration.temperatureRange.default)
+            XCTAssertEqual(model.topP, configuration.topP)
+            XCTAssertEqual(model.topK, configuration.topK)
+            XCTAssertEqual(model.minP, configuration.minP)
+            XCTAssertEqual(model.repetitionPenalty, configuration.repetitionPenalty)
+            XCTAssertEqual(model.enableThinking, configuration.enableThinking)
+            XCTAssertEqual(model.backend, configuration.backend)
+            XCTAssertEqual(model.icon, configuration.icon)
+        }
     }
 
     func testAIModelSubtitle() {
@@ -154,13 +261,15 @@ final class AIModelTests: XCTestCase {
     // MARK: - Model Info
 
     func testAIModelInfo() {
-        let info = AIModel.qwen35.info
-        XCTAssertEqual(info.name, "Qwen 3.5")
-        XCTAssertEqual(info.modelId, "mlx-community/Qwen3.5-9B-MLX-4bit")
-        XCTAssertEqual(info.contextWindow, 32768)
-        XCTAssertEqual(info.memoryRequired, 6.0)
-        XCTAssertEqual(info.downloadSize, 5.6)
-        XCTAssertTrue(info.supportsVision)
+        for (model, configuration) in expectedBuiltInModels {
+            let info = model.info
+            XCTAssertEqual(info.name, configuration.rawValue)
+            XCTAssertEqual(info.modelId, configuration.modelId)
+            XCTAssertEqual(info.contextWindow, configuration.maxContextWindow)
+            XCTAssertEqual(info.memoryRequired, configuration.memoryRequirementGB)
+            XCTAssertEqual(info.downloadSize, configuration.downloadSizeGB)
+            XCTAssertEqual(info.supportsVision, configuration.supportsVision)
+        }
     }
 
     // MARK: - Hardware Recommendations

@@ -34,10 +34,11 @@ class VLMExecutor: NSObject, ModelExecutor {
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
 
+    private let stdoutDispatcher = BridgeOutputDispatcher()
+    private let stdoutLineBuffer = BridgeLineBuffer()
     private var currentRequest: ExecutionRequest?
     private var retryCount: Int = 0
     private let maxRetries: Int = 1
-    private var activeStdoutHandlerID: UUID?
 
     weak var delegate: VLMExecutionDelegate?
 
@@ -89,7 +90,9 @@ class VLMExecutor: NSObject, ModelExecutor {
     }
 
     func terminate() async {
-        clearStdoutHandler()
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stdoutDispatcher.handleEOF()
+        stdoutDispatcher.removeAll()
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
 
         let processToTerminate = process
@@ -187,58 +190,49 @@ class VLMExecutor: NSObject, ModelExecutor {
             // Wait for ready signal with timeout
             try await waitForReady(readyWaiter, timeout: 30.0)
         } catch {
-            clearStdoutHandler(id: readyWaiter.handlerID)
+            stdoutDispatcher.unregister(readyWaiter.handlerID)
             throw error
         }
     }
 
-private func restartBridge() async throws {
-    await terminate()
-    do {
-        try await startBridge()
-    } catch {
-        isReady = false
-        isModelLoaded = false
-        currentModelId = nil
-        currentRequest = nil
-        retryCount = 0
-        throw error
+    private func restartBridge() async throws {
+        await terminate()
+        do {
+            try await startBridge()
+        } catch {
+            isReady = false
+            isModelLoaded = false
+            currentModelId = nil
+            currentRequest = nil
+            retryCount = 0
+            throw error
+        }
     }
-}
 
     private func installReadyHandler() -> ReadyWaiter {
         let readyState = ReadyState()
-        let lineBuffer = BridgeLineBuffer()
-        let handlerID = installStdoutHandler { [weak readyState] handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
-
-            for line in lineBuffer.append(output) {
-                print("[VLMExecutor] Bridge output: \(line)")
-
-                do {
-                    if let lineData = line.data(using: .utf8),
-                       let json = try JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                       let type = json["type"] as? String {
-                        if type == "system.ready" {
-                            print("[VLMExecutor] Bridge is ready")
-                            Task { await readyState?.setReady() }
-                        } else if type == "error" {
-                            let message = json["message"] as? String ?? "Unknown error"
-                            print("[VLMExecutor] Bridge initialization error: \(message)")
-                        }
-                    }
-                } catch {
-                    print("[VLMExecutor] Parse error: \(error)")
+        let handlerID = stdoutDispatcher.register(
+            shouldHandle: { json in
+                guard let type = json["type"] as? String else { return false }
+                return type == "system.ready" || type == "error"
+            },
+            handler: { [weak readyState] json in
+                guard let type = json["type"] as? String else { return }
+                if type == "system.ready" {
+                    print("[VLMExecutor] Bridge is ready")
+                    Task { await readyState?.setReady() }
+                } else if type == "error" {
+                    let message = json["message"] as? String ?? "Unknown error"
+                    print("[VLMExecutor] Bridge initialization error: \(message)")
                 }
             }
-        }
+        )
         return ReadyWaiter(state: readyState, handlerID: handlerID)
     }
 
     private func waitForReady(_ waiter: ReadyWaiter, timeout: TimeInterval) async throws {
         let startTime = Date()
-        defer { clearStdoutHandler(id: waiter.handlerID) }
+        defer { stdoutDispatcher.unregister(waiter.handlerID) }
 
         // Wait with timeout
         while !(await waiter.state.isReady) {
@@ -328,7 +322,7 @@ private final class StreamFinishState: @unchecked Sendable {
     }
 }
 
-	private func attemptExecute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
+    private func attemptExecute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
         currentRequest = request
 
         // Load model if needed
@@ -340,6 +334,7 @@ private final class StreamFinishState: @unchecked Sendable {
 
         let messages = request.messages.map { $0.toDictionary() }
         var payload: [String: Any] = [
+            "request_id": request.requestID,
             "type": messageType(for: request.backend),
             "model": request.modelId,
             "messages": messages,
@@ -377,165 +372,163 @@ private final class StreamFinishState: @unchecked Sendable {
             payload["parameters"] = parameters
         }
 
-        let responseStream = makeResponseStream()
+        let responseStream = makeResponseStream(requestID: request.requestID)
         do {
             try await sendRequest(payload)
         } catch {
-            clearStdoutHandler(id: responseStream.handlerID)
+            stdoutDispatcher.unregister(responseStream.handlerID)
             throw error
         }
 
         return responseStream.stream
     }
 
-private func loadModel(_ modelId: String, backend: RuntimeBackend) async throws {
-    delegate?.modelLoadingStarted(modelId: modelId)
+    private func loadModel(_ modelId: String, backend: RuntimeBackend) async throws {
+        delegate?.modelLoadingStarted(modelId: modelId)
 
-    let payload: [String: Any] = [
-        "type": "init",
-        "model_id": modelId,
-        "backend": backend.rawValue
-    ]
+        let requestID = UUID().uuidString
+        let payload: [String: Any] = [
+            "request_id": requestID,
+            "type": "init",
+            "model_id": modelId,
+            "backend": backend.rawValue
+        ]
 
-    let waiter = installModelLoadHandler()
+        let waiter = installModelLoadHandler(requestID: requestID)
 
-    do {
-        try await sendRequest(payload)
-        try await waitForModelLoaded(waiter)
-        isModelLoaded = true
-        delegate?.modelLoadingCompleted(modelId: modelId)
-    } catch {
-        clearStdoutHandler(id: waiter.handlerID)
-        delegate?.modelLoadingFailed(modelId: modelId, error: error)
-        throw error
+        do {
+            try await sendRequest(payload)
+            try await waitForModelLoaded(waiter)
+            isModelLoaded = true
+            delegate?.modelLoadingCompleted(modelId: modelId)
+        } catch {
+            stdoutDispatcher.unregister(waiter.handlerID)
+            delegate?.modelLoadingFailed(modelId: modelId, error: error)
+            throw error
+        }
     }
-}
 
-private func installModelLoadHandler() -> ModelLoadWaiter {
-    let loadedState = ModelLoadedState()
-    let lineBuffer = BridgeLineBuffer()
-
-    let handlerID = installStdoutHandler { [weak loadedState] handle in
-        let data = handle.availableData
-        guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
-
-        for line in lineBuffer.append(output) {
-            print("[VLMExecutor] Model load received: \(line.prefix(200))...")
-
-            do {
-                if let lineData = line.data(using: .utf8),
-                let json = try JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                let type = json["type"] as? String {
-                    if type == "model.loaded" || type == "model.initialized" {
-                        print("[VLMExecutor] Model load handler: setting loaded (type=\(type))")
-                        loadedState?.setLoaded()
-                    } else if type == "error" {
-                        let message = json["message"] as? String ?? "Unknown error"
-                        print("[VLMExecutor] Model loading error: \(message)")
-                        loadedState?.setError(message)
-                    } else if type == "model.loading", let status = json["status"] as? String {
+    private func installModelLoadHandler(requestID: String) -> ModelLoadWaiter {
+        let loadedState = ModelLoadedState()
+        let handlerID = stdoutDispatcher.register(
+            requestID: requestID,
+            shouldHandle: { json in
+                guard let type = json["type"] as? String else { return false }
+                return type == "model.loaded"
+                    || type == "model.initialized"
+                    || type == "model.loading"
+                    || type == "error"
+            },
+            handler: { [weak loadedState] json in
+                guard let type = json["type"] as? String else { return }
+                switch type {
+                case "model.loaded", "model.initialized":
+                    print("[VLMExecutor] Model load handler: setting loaded (type=\(type))")
+                    loadedState?.setLoaded()
+                case "model.loading":
+                    if let status = json["status"] as? String {
                         print("[VLMExecutor] Model loading status: \(status)")
                     }
+                case "error":
+                    let message = json["message"] as? String ?? "Unknown error"
+                    print("[VLMExecutor] Model loading error: \(message)")
+                    loadedState?.setError(message)
+                default:
+                    break
                 }
-            } catch {
-                print("[VLMExecutor] Parse error: \(error)")
             }
-        }
+        )
+
+        print("[VLMExecutor] waitForModelLoaded: handler installed for request \(requestID)")
+        return ModelLoadWaiter(state: loadedState, handlerID: handlerID)
     }
 
-    print("[VLMExecutor] waitForModelLoaded: handler installed")
-    return ModelLoadWaiter(state: loadedState, handlerID: handlerID)
-}
+    private func waitForModelLoaded(_ waiter: ModelLoadWaiter) async throws {
+        let startTime = Date()
+        let timeout: TimeInterval = 600.0 // 10 minutes timeout for model loading
 
-private func waitForModelLoaded(_ waiter: ModelLoadWaiter) async throws {
-    let startTime = Date()
-    let timeout: TimeInterval = 600.0 // 10 minutes timeout for model loading
+        defer { stdoutDispatcher.unregister(waiter.handlerID) }
 
-    defer { clearStdoutHandler(id: waiter.handlerID) }
-
-    while !waiter.state.isLoaded {
-        if Task.isCancelled {
-            print("[VLMExecutor] waitForModelLoaded detected Task.isCancelled")
-            throw CancellationError()
+        while !waiter.state.isLoaded {
+            if Task.isCancelled {
+                print("[VLMExecutor] waitForModelLoaded detected Task.isCancelled")
+                throw CancellationError()
+            }
+            if let error = waiter.state.errorMessage {
+                throw ExecutionError.pythonError("Model loading failed: \(error)")
+            }
+            if process?.isRunning == false {
+                throw ExecutionError.processNotRunning
+            }
+            if Date().timeIntervalSince(startTime) > timeout {
+                print("[VLMExecutor] Timeout waiting for model loaded signal")
+                throw ExecutionError.timeout
+            }
+            try await Task.sleep(nanoseconds: 100_000_000) // 100ms
         }
-        if let error = waiter.state.errorMessage {
-            throw ExecutionError.pythonError("Model loading failed: \(error)")
-        }
-        if process?.isRunning == false {
+        print("[VLMExecutor] Model load complete, isModelLoaded will be set to true")
+    }
+
+    private func sendRequest(_ payload: [String: Any]) async throws {
+        guard stdinPipe != nil else {
             throw ExecutionError.processNotRunning
         }
-        if Date().timeIntervalSince(startTime) > timeout {
-            print("[VLMExecutor] Timeout waiting for model loaded signal")
-            throw ExecutionError.timeout
+
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw ExecutionError.encodingFailed
         }
-        try await Task.sleep(nanoseconds: 100_000_000) // 100ms
-    }
-    print("[VLMExecutor] Model load complete, isModelLoaded will be set to true")
-}
 
-private func sendRequest(_ payload: [String: Any]) async throws {
-    guard stdinPipe != nil else {
-        throw ExecutionError.processNotRunning
-    }
-
-    let data = try JSONSerialization.data(withJSONObject: payload)
-    guard let json = String(data: data, encoding: .utf8) else {
-        throw ExecutionError.encodingFailed
-    }
-
-    let line = json + "\n"
-    guard let lineData = line.data(using: .utf8) else {
-        throw ExecutionError.encodingFailed
-    }
-
-    do {
-        try stdinPipe?.fileHandleForWriting.write(contentsOf: lineData)
-    } catch {
-        if process?.isRunning == false {
-            throw ExecutionError.processNotRunning
+        let line = json + "\n"
+        guard let lineData = line.data(using: .utf8) else {
+            throw ExecutionError.encodingFailed
         }
-        throw ExecutionError.encodingFailed
+
+        do {
+            try stdinPipe?.fileHandleForWriting.write(contentsOf: lineData)
+        } catch {
+            if process?.isRunning == false {
+                throw ExecutionError.processNotRunning
+            }
+            throw ExecutionError.encodingFailed
+        }
     }
-}
 
-private func makeResponseStream() -> ResponseStreamHandle {
-    let responseBuilder = ResponseBuilder()
-    let lineBuffer = BridgeLineBuffer()
-    let finishState = StreamFinishState()
-    let handlerID = UUID()
+    private func makeResponseStream(requestID: String) -> ResponseStreamHandle {
+        let responseBuilder = ResponseBuilder()
+        let finishState = StreamFinishState()
+        let handlerID = UUID()
+        let dispatcher = stdoutDispatcher
 
-    let stream = AsyncStream<ExecutionEvent> { continuation in
-        continuation.yield(.started)
+        let stream = AsyncStream<ExecutionEvent> { continuation in
+            continuation.yield(.started)
 
-        activeStdoutHandlerID = handlerID
-        stdoutPipe?.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else {
-                if finishState.finish() {
+            dispatcher.register(
+                id: handlerID,
+                requestID: requestID,
+                shouldHandle: { json in
+                    guard let type = json["type"] as? String else { return false }
+                    return type == "chat.completion.chunk"
+                        || type == "chat.completion.complete"
+                        || type == "chat.completion.tool_calls"
+                        || type == "image.generated"
+                        || type == "audio.generated"
+                        || type == "model.loading"
+                        || type == "model.loaded"
+                        || type == "error"
+                },
+                onEOF: {
+                    guard finishState.finish() else { return }
                     continuation.yield(.error(ExecutionError.processNotRunning))
                     continuation.finish()
-                    Task { @MainActor [weak self] in self?.clearStdoutHandler(id: handlerID) }
-                }
-                return
-            }
+                },
+                handler: { json in
+                    guard !finishState.isFinished,
+                          let type = json["type"] as? String else { return }
 
-            for line in lineBuffer.append(output) {
-                guard !finishState.isFinished else { continue }
-
-                // Debug: Log all received lines
 #if DEBUG
-                if VLMStreamDiagnostics.isEnabled {
-                    print("[VLMExecutor] Received: \(line.prefix(200))...")
-                }
+                    VLMStreamDiagnostics.log("dispatch.received requestID=\(requestID) type=\(type)")
 #endif
-
-                do {
-                    guard let lineData = line.data(using: .utf8),
-                        let json = try JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                        let type = json["type"] as? String else {
-                        print("[VLMExecutor] Could not parse JSON or missing type field")
-                        continue
-                    }
 
                     switch type {
                     case "chat.completion.chunk":
@@ -545,19 +538,19 @@ private func makeResponseStream() -> ResponseStreamHandle {
                            let content = delta["content"] as? String {
 #if DEBUG
                             let yieldStartedAt = VLMStreamDiagnostics.now()
-                            VLMStreamDiagnostics.log("chunk.received tokenChars=\(content.count)")
+                            VLMStreamDiagnostics.log("chunk.received requestID=\(requestID) tokenChars=\(content.count)")
 #endif
                             responseBuilder.append(content)
                             continuation.yield(.token(content))
 #if DEBUG
                             let yieldFinishedAt = VLMStreamDiagnostics.now()
-                            VLMStreamDiagnostics.log("chunk.yielded tokenChars=\(content.count) elapsedMs=\(String(format: "%.2f", (yieldFinishedAt - yieldStartedAt) * 1000))")
+                            VLMStreamDiagnostics.log("chunk.yielded requestID=\(requestID) tokenChars=\(content.count) elapsedMs=\(String(format: "%.2f", (yieldFinishedAt - yieldStartedAt) * 1000))")
 #endif
                         }
 
                     case "chat.completion.complete":
 #if DEBUG
-                        VLMStreamDiagnostics.log("complete.received")
+                        VLMStreamDiagnostics.log("complete.received requestID=\(requestID)")
 #endif
                         let completedContent: String
                         if responseBuilder.fullResponse.isEmpty,
@@ -577,7 +570,6 @@ private func makeResponseStream() -> ResponseStreamHandle {
                         continuation.yield(.complete(completedContent, usage: tokenUsage))
                         if finishState.finish() {
                             continuation.finish()
-                            Task { @MainActor [weak self] in self?.clearStdoutHandler(id: handlerID) }
                         }
 
                     case "chat.completion.tool_calls":
@@ -588,10 +580,12 @@ private func makeResponseStream() -> ResponseStreamHandle {
                                    let fnDict = tcDict["function"] as? [String: Any],
                                    let name = fnDict["name"] as? String,
                                    let arguments = fnDict["arguments"] as? String {
-                                    parsedToolCalls.append(ExecutionToolCall(
-                                        id: id,
-                                        function: ExecutionToolCallFunction(name: name, arguments: arguments)
-                                    ))
+                                    parsedToolCalls.append(
+                                        ExecutionToolCall(
+                                            id: id,
+                                            function: ExecutionToolCallFunction(name: name, arguments: arguments)
+                                        )
+                                    )
                                 }
                             }
                             if !parsedToolCalls.isEmpty {
@@ -599,7 +593,6 @@ private func makeResponseStream() -> ResponseStreamHandle {
                             }
                             if finishState.finish() {
                                 continuation.finish()
-                                Task { @MainActor [weak self] in self?.clearStdoutHandler(id: handlerID) }
                             }
                         }
 
@@ -627,28 +620,56 @@ private func makeResponseStream() -> ResponseStreamHandle {
                         continuation.yield(.error(ExecutionError.pythonError(errorMessage)))
                         if finishState.finish() {
                             continuation.finish()
-                            Task { @MainActor [weak self] in self?.clearStdoutHandler(id: handlerID) }
                         }
 
                     default:
                         break
                     }
+                }
+            )
+
+            continuation.onTermination = { _ in
+                _ = finishState.finish()
+                dispatcher.unregister(handlerID)
+            }
+        }
+
+        return ResponseStreamHandle(stream: stream, handlerID: handlerID)
+    }
+
+    private func setupOutputHandlers() {
+        let dispatcher = stdoutDispatcher
+        let lineBuffer = stdoutLineBuffer
+
+        stdoutPipe?.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                dispatcher.handleEOF()
+                return
+            }
+            guard let output = String(data: data, encoding: .utf8),
+                  !output.isEmpty else { return }
+
+            for line in lineBuffer.append(output) {
+#if DEBUG
+                if VLMStreamDiagnostics.isEnabled {
+                    print("[VLMExecutor] Received: \(line.prefix(200))...")
+                }
+#endif
+
+                do {
+                    guard let lineData = line.data(using: .utf8),
+                          let json = try JSONSerialization.jsonObject(with: lineData) as? BridgeJSONMessage else {
+                        print("[VLMExecutor] Could not parse JSON or missing type field")
+                        continue
+                    }
+                    dispatcher.dispatch(json)
                 } catch {
                     print("[VLMExecutor] Parse error: \(error)")
                 }
             }
         }
 
-        continuation.onTermination = { _ in
-            _ = finishState.finish()
-            Task { @MainActor [weak self] in self?.clearStdoutHandler(id: handlerID) }
-        }
-    }
-
-    return ResponseStreamHandle(stream: stream, handlerID: handlerID)
-}
-
-    private func setupOutputHandlers() {
         // Stderr handler for debugging - capture all Python output
         stderrPipe?.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -661,21 +682,6 @@ private func makeResponseStream() -> ResponseStreamHandle {
                 print("[Python STDERR] \(line)")
             }
         }
-    }
-
-    private func installStdoutHandler(_ handler: @escaping @Sendable (FileHandle) -> Void) -> UUID {
-        let handlerID = UUID()
-        activeStdoutHandlerID = handlerID
-        stdoutPipe?.fileHandleForReading.readabilityHandler = handler
-        return handlerID
-    }
-
-    private func clearStdoutHandler(id handlerID: UUID? = nil) {
-        if let handlerID, activeStdoutHandlerID != handlerID {
-            return
-        }
-        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
-        activeStdoutHandlerID = nil
     }
 
     private nonisolated func waitForProcessExit(_ process: Process, timeout: TimeInterval) async -> Bool {
@@ -713,6 +719,81 @@ private func makeResponseStream() -> ResponseStreamHandle {
         }
 
         return false
+    }
+}
+
+typealias BridgeJSONMessage = [String: Any]
+
+struct BridgeOutputRoute {
+    let requestID: String?
+    let shouldHandle: @Sendable (BridgeJSONMessage) -> Bool
+    let onEOF: @Sendable () -> Void
+    let handler: @Sendable (BridgeJSONMessage) -> Void
+}
+
+final class BridgeOutputDispatcher: @unchecked Sendable {
+    private let lock = NSLock()
+    private var routes: [UUID: BridgeOutputRoute] = [:]
+
+    @discardableResult
+    func register(
+        id: UUID = UUID(),
+        requestID: String? = nil,
+        shouldHandle: @escaping @Sendable (BridgeJSONMessage) -> Bool = { _ in true },
+        onEOF: @escaping @Sendable () -> Void = {},
+        handler: @escaping @Sendable (BridgeJSONMessage) -> Void
+    ) -> UUID {
+        lock.lock()
+        routes[id] = BridgeOutputRoute(
+            requestID: requestID,
+            shouldHandle: shouldHandle,
+            onEOF: onEOF,
+            handler: handler
+        )
+        lock.unlock()
+        return id
+    }
+
+    func unregister(_ id: UUID) {
+        lock.lock()
+        routes.removeValue(forKey: id)
+        lock.unlock()
+    }
+
+    func removeAll() {
+        lock.lock()
+        routes.removeAll()
+        lock.unlock()
+    }
+
+    func dispatch(_ json: BridgeJSONMessage) {
+        let requestID = json["request_id"] as? String
+        let routes = snapshotRoutes()
+
+        for route in routes {
+            if let routeRequestID = route.requestID {
+                guard routeRequestID == requestID else { continue }
+            } else if requestID != nil {
+                continue
+            }
+
+            if route.shouldHandle(json) {
+                route.handler(json)
+            }
+        }
+    }
+
+    func handleEOF() {
+        for route in snapshotRoutes() {
+            route.onEOF()
+        }
+    }
+
+    private func snapshotRoutes() -> [BridgeOutputRoute] {
+        lock.lock()
+        let routes = Array(routes.values)
+        lock.unlock()
+        return routes
     }
 }
 

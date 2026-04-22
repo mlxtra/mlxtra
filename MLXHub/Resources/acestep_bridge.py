@@ -8,28 +8,33 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Optional
+
+from bridge_utils import log_exception, normalize_music_model_id
 
 
-def send_json(obj: dict) -> None:
-    print(json.dumps(obj), flush=True)
+def get_request_id(request: Optional[dict] = None) -> Optional[str]:
+    if not isinstance(request, dict):
+        return None
+
+    request_id = request.get("request_id")
+    if request_id is None:
+        return None
+
+    return str(request_id)
 
 
-def _normalize_music_model_id(model_id: str) -> str:
-    """Normalize HuggingFace repo ID to local ACE-Step directory name.
-
-    ACE-Step expects local directory names like 'acestep-v15-turbo',
-    not HuggingFace repo IDs like 'ACE-Step/acestep-v15-turbo-continuous'.
-    """
-    # Strip HuggingFace organization prefix
-    if model_id.startswith("ACE-Step/"):
-        model_id = model_id[len("ACE-Step/") :]
-
-    # Map variant suffixes to base model name
-    # The local directory is 'acestep-v15-turbo' for all turbo variants
-    if model_id.startswith("acestep-v15-turbo"):
-        return "acestep-v15-turbo"
-
-    return model_id
+def send_json(
+    obj: dict,
+    *,
+    request: Optional[dict] = None,
+    request_id: Optional[str] = None,
+) -> None:
+    payload = dict(obj)
+    inherited_request_id = request_id if request_id is not None else get_request_id(request)
+    if inherited_request_id:
+        payload.setdefault("request_id", inherited_request_id)
+    print(json.dumps(payload), flush=True)
 
 
 def last_user_prompt(messages: list[dict]) -> str:
@@ -46,7 +51,7 @@ def generate_music_once(request: dict) -> None:
 
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
     # Normalize the model ID for ACE-Step lookup
-    normalized_id = _normalize_music_model_id(model_id)
+    normalized_id = normalize_music_model_id(model_id)
 
     messages = request.get("messages", [])
     parameters = request.get("parameters", {}) or {}
@@ -58,7 +63,8 @@ def generate_music_once(request: dict) -> None:
 
     if not prompt:
         send_json(
-            {"type": "error", "message": "No prompt provided for music generation"}
+            {"type": "error", "message": "No prompt provided for music generation"},
+            request=request,
         )
         return
 
@@ -70,7 +76,10 @@ def generate_music_once(request: dict) -> None:
     )
     config_path = os.environ.get("ACESTEP_CONFIG_PATH") or normalized_id
 
-    send_json({"type": "model.loading", "model": model_id, "status": "loading"})
+    send_json(
+        {"type": "model.loading", "model": model_id, "status": "loading"},
+        request=request,
+    )
     dit_handler = AceStepHandler()
     init_result = dit_handler.initialize_service(
         project_root=str(project_root),
@@ -81,11 +90,12 @@ def generate_music_once(request: dict) -> None:
     if not init_result or init_result[1] is False:
         error_msg = init_result[0] if init_result else "Unknown initialization error"
         send_json(
-            {"type": "error", "message": f"Model initialization failed: {error_msg}"}
+            {"type": "error", "message": f"Model initialization failed: {error_msg}"},
+            request=request,
         )
         return
     llm_handler = LLMHandler()
-    send_json({"type": "model.loaded", "model": model_id})
+    send_json({"type": "model.loaded", "model": model_id}, request=request)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     seed = int(parameters.get("seed") or (time.time_ns() % 2_147_483_647))
@@ -119,7 +129,10 @@ def generate_music_once(request: dict) -> None:
         seeds=[seed],
     )
 
-    send_json({"type": "model.loading", "model": model_id, "status": "generating"})
+    send_json(
+        {"type": "model.loading", "model": model_id, "status": "generating"},
+        request=request,
+    )
     with contextlib.redirect_stdout(sys.stderr):
         result = generate_music(
             dit_handler,
@@ -131,7 +144,7 @@ def generate_music_once(request: dict) -> None:
 
     if not result.success:
         message = result.error or result.status_message or "Music generation failed"
-        send_json({"type": "error", "message": message})
+        send_json({"type": "error", "message": message}, request=request)
         return
 
     for audio in result.audios:
@@ -143,7 +156,8 @@ def generate_music_once(request: dict) -> None:
                     "path": str(path),
                     "model": model_id,
                     "sample_rate": int(audio.get("sample_rate", 48000)),
-                }
+                },
+                request=request,
             )
 
     send_json(
@@ -153,18 +167,19 @@ def generate_music_once(request: dict) -> None:
                 {"message": {"content": f"Generated music with ACE-Step. Seed: {seed}"}}
             ],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-        }
+        },
+        request=request,
     )
 
 
 def main() -> None:
+    request = None
     try:
         request = json.loads(sys.stdin.readline())
         generate_music_once(request)
     except Exception as exc:
-        import traceback
-
-        send_json({"type": "error", "message": f"{exc}\n{traceback.format_exc()}"})
+        error_msg = log_exception("[ACE-Step Bridge] Unhandled error", exc)
+        send_json({"type": "error", "message": error_msg}, request=request)
 
 
 if __name__ == "__main__":

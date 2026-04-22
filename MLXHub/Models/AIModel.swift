@@ -5,148 +5,88 @@ enum AIModel: String, CaseIterable, Identifiable {
     case gemma4 = "Gemma 4"
     case mini = "Qwen 3.5 Mini"
 
+    static var allCases: [AIModel] {
+        builtInCatalog.map(\.model)
+    }
+
     var id: String { rawValue }
 
     var displayName: String { rawValue }
 
     var subtitle: String {
-        switch self {
-        case .qwen35: return "Vision language model (9B parameters)"
-        case .gemma4: return "Google vision model (4B parameters)"
-        case .mini: return "Lightweight vision model (2B parameters)"
-        }
+        builtInDefinition.subtitle
     }
 
     // MARK: - Model Configuration
 
     /// HuggingFace model ID for mlx-vlm
     var modelId: String {
-        switch self {
-        case .qwen35:
-            return "mlx-community/Qwen3.5-9B-MLX-4bit"
-        case .gemma4:
-            return "google/gemma-4-e4b-it"
-        case .mini:
-            return "mlx-community/Qwen3.5-2B-MLX-4bit"
-        }
+        builtInDefinition.modelId
     }
 
     /// Maximum context window size (in tokens)
     var maxContextWindow: Int {
-        switch self {
-        case .qwen35:
-            return 32768 // 32k context
-        case .gemma4:
-            return 8192  // 8k context
-        case .mini:
-            return 32768 // 32k context
-        }
+        builtInDefinition.maxContextWindow
     }
 
     /// Default max tokens for generation
     var defaultMaxTokens: Int {
-        switch self {
-        case .qwen35, .mini:
-            return 4096
-        case .gemma4:
-            return 4096
-        }
+        builtInDefinition.defaultMaxTokens
     }
 
     /// Estimated memory requirement in GB
     var memoryRequirementGB: Double {
-        switch self {
-        case .qwen35:
-            return 6.0 // ~5.6GB model + overhead
-        case .gemma4:
-            return 3.0 // ~2-3GB
-        case .mini:
-            return 3.0 // Smaller model
-        }
+        builtInDefinition.memoryRequirementGB
     }
 
     /// Model download size in GB
     var downloadSizeGB: Double {
-        switch self {
-        case .qwen35:
-            return 5.6
-        case .gemma4:
-            return 2.5
-        case .mini:
-            return 1.5
-        }
+        builtInDefinition.downloadSizeGB
     }
 
     /// Whether the model supports vision (images)
     var supportsVision: Bool {
-        return true // All current models support vision
+        builtInDefinition.supportsVision
     }
 
     /// Temperature range (min, max, default)
     var temperatureRange: (min: Double, max: Double, default: Double) {
-        switch self {
-        case .qwen35, .mini:
-            return (0.0, 2.0, 0.7)
-        case .gemma4:
-            return (0.0, 2.0, 0.7)
-        }
+        builtInDefinition.temperatureRange
     }
 
     /// Nucleus sampling value used by the runtime.
     var topP: Double {
-        switch self {
-        case .qwen35, .mini:
-            return 0.8
-        case .gemma4:
-            return 1.0
-        }
+        builtInDefinition.topP
     }
 
     /// Top-k sampling value used by the runtime.
     var topK: Int {
-        switch self {
-        case .qwen35, .mini:
-            return 20
-        case .gemma4:
-            return 0
-        }
+        builtInDefinition.topK
     }
 
     /// Minimum probability threshold used by the runtime.
     var minP: Double {
-        return 0.0
+        builtInDefinition.minP
     }
 
     /// Repetition penalty used by the runtime.
     var repetitionPenalty: Double {
-        return 1.0
+        builtInDefinition.repetitionPenalty
     }
 
     /// Whether to ask the model chat template for reasoning content.
     var enableThinking: Bool {
-        switch self {
-        case .qwen35, .mini:
-            return false
-        case .gemma4:
-            return false
-        }
+        builtInDefinition.enableThinking
     }
 
     /// Backend type
     var backend: RuntimeBackend {
-        return .vlm
+        builtInDefinition.backend
     }
 
     /// Icon for the model
     var icon: String {
-        switch self {
-        case .qwen35:
-            return "eye"
-        case .gemma4:
-            return "sparkles"
-        case .mini:
-            return "bolt"
-        }
+        builtInDefinition.icon
     }
 
     /// Get model info for display
@@ -179,13 +119,116 @@ enum AIModel: String, CaseIterable, Identifiable {
 
     static func bestModelsForHardware(memoryGB: Double) -> [AIModel] {
         let comfortableBudgetGB = memoryGB * 0.65
-        let preferredOrder: [AIModel] = [.qwen35, .gemma4, .mini]
-        let comfortableModels = preferredOrder.filter { $0.memoryRequirementGB <= comfortableBudgetGB }
+        let comfortableModels = allCases.filter { $0.memoryRequirementGB <= comfortableBudgetGB }
         return comfortableModels.isEmpty ? [.mini] : comfortableModels
     }
+
+    fileprivate var downloadableModel: DownloadableModel {
+        DownloadableModel(
+            id: modelId,
+            name: displayName,
+            subtitle: subtitle,
+            modelId: modelId,
+            modality: .vision,
+            downloadSizeGB: downloadSizeGB
+        )
+    }
+
+    private var builtInDefinition: BuiltInModelDefinition {
+        guard let definition = Self.builtInDefinitions[self] else {
+            preconditionFailure("Missing built-in definition for \(self.rawValue)")
+        }
+
+        return definition
+    }
+
+    private static let builtInCatalog: [(model: AIModel, definition: BuiltInModelDefinition)] = [
+        (
+            model: .qwen35,
+            definition: BuiltInModelDefinition(
+                subtitle: "Vision language model (9B parameters)",
+                modelId: "mlx-community/Qwen3.5-9B-MLX-4bit",
+                maxContextWindow: 32768,
+                defaultMaxTokens: 4096,
+                memoryRequirementGB: 6.0,
+                downloadSizeGB: 5.6,
+                supportsVision: true,
+                temperatureRange: (0.0, 2.0, 0.7),
+                topP: 0.8,
+                topK: 20,
+                minP: 0.0,
+                repetitionPenalty: 1.0,
+                enableThinking: false,
+                backend: .vlm,
+                icon: "eye"
+            )
+        ),
+        (
+            model: .gemma4,
+            definition: BuiltInModelDefinition(
+                subtitle: "Google vision model (4B parameters)",
+                modelId: "google/gemma-4-e4b-it",
+                maxContextWindow: 8192,
+                defaultMaxTokens: 4096,
+                memoryRequirementGB: 3.0,
+                downloadSizeGB: 2.5,
+                supportsVision: true,
+                temperatureRange: (0.0, 2.0, 0.7),
+                topP: 1.0,
+                topK: 0,
+                minP: 0.0,
+                repetitionPenalty: 1.0,
+                enableThinking: false,
+                backend: .vlm,
+                icon: "sparkles"
+            )
+        ),
+        (
+            model: .mini,
+            definition: BuiltInModelDefinition(
+                subtitle: "Lightweight vision model (2B parameters)",
+                modelId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+                maxContextWindow: 32768,
+                defaultMaxTokens: 4096,
+                memoryRequirementGB: 3.0,
+                downloadSizeGB: 1.5,
+                supportsVision: true,
+                temperatureRange: (0.0, 2.0, 0.7),
+                topP: 0.8,
+                topK: 20,
+                minP: 0.0,
+                repetitionPenalty: 1.0,
+                enableThinking: false,
+                backend: .vlm,
+                icon: "bolt"
+            )
+        ),
+    ]
+
+    private static let builtInDefinitions: [AIModel: BuiltInModelDefinition] = Dictionary(
+        uniqueKeysWithValues: builtInCatalog.map { ($0.model, $0.definition) }
+    )
 }
 
 // MARK: - Supporting Types
+
+private struct BuiltInModelDefinition {
+    let subtitle: String
+    let modelId: String
+    let maxContextWindow: Int
+    let defaultMaxTokens: Int
+    let memoryRequirementGB: Double
+    let downloadSizeGB: Double
+    let supportsVision: Bool
+    let temperatureRange: (min: Double, max: Double, default: Double)
+    let topP: Double
+    let topK: Int
+    let minP: Double
+    let repetitionPenalty: Double
+    let enableThinking: Bool
+    let backend: RuntimeBackend
+    let icon: String
+}
 
 struct ModelInfo {
     let name: String
@@ -227,16 +270,7 @@ struct DownloadableModel: Identifiable, Equatable {
     }
 
     static var embedded: [DownloadableModel] {
-        let visionModels = AIModel.allCases.map { model in
-            DownloadableModel(
-                id: model.modelId,
-                name: model.displayName,
-                subtitle: model.subtitle,
-                modelId: model.modelId,
-                modality: .vision,
-                downloadSizeGB: model.downloadSizeGB
-            )
-        }
+        let visionModels = AIModel.allCases.map(\.downloadableModel)
 
         return visionModels + [
             DownloadableModel(

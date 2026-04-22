@@ -93,6 +93,18 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         XCTAssertEqual(request.backend, .vlm)
         XCTAssertEqual(request.modelId, "test-model")
         XCTAssertEqual(request.messages.count, 1)
+        XCTAssertFalse(request.requestID.isEmpty)
+    }
+
+    func testExecutionRequestUsesProvidedRequestID() {
+        let request = ExecutionRequest(
+            requestID: "req-explicit",
+            backend: .llm,
+            modelId: "test-model",
+            messages: [ExecutionMessage(role: .user, content: "test")]
+        )
+
+        XCTAssertEqual(request.requestID, "req-explicit")
     }
 
     func testExecutionRequestWithAllParameters() {
@@ -186,69 +198,78 @@ final class VLMExecutorIntegrationTests: XCTestCase {
     // MARK: - JSON Message Parsing Tests
 
     func testParseModelLoadingMessage() {
-        let jsonString = "{\"type\": \"model.loading\", \"model\": \"test-model\", \"status\": \"loading\"}"
+        let jsonString = "{\"type\": \"model.loading\", \"request_id\": \"req-123\", \"model\": \"test-model\", \"status\": \"loading\"}"
 
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String,
-              let status = json["status"] as? String else {
+              let status = json["status"] as? String,
+              let requestID = json["request_id"] as? String else {
             XCTFail("Failed to parse JSON")
             return
         }
 
         XCTAssertEqual(type, "model.loading")
         XCTAssertEqual(status, "loading")
+        XCTAssertEqual(requestID, "req-123")
     }
 
     func testParseModelLoadedMessage() {
-        let jsonString = "{\"type\": \"model.loaded\", \"model\": \"test-model\"}"
+        let jsonString = "{\"type\": \"model.loaded\", \"request_id\": \"req-123\", \"model\": \"test-model\"}"
 
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String else {
+              let type = json["type"] as? String,
+              let requestID = json["request_id"] as? String else {
             XCTFail("Failed to parse JSON")
             return
         }
 
         XCTAssertEqual(type, "model.loaded")
+        XCTAssertEqual(requestID, "req-123")
     }
 
     func testParseModelInitializedMessage() {
-        let jsonString = "{\"type\": \"model.initialized\", \"model\": \"test-model\"}"
+        let jsonString = "{\"type\": \"model.initialized\", \"request_id\": \"req-123\", \"model\": \"test-model\"}"
 
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String else {
+              let type = json["type"] as? String,
+              let requestID = json["request_id"] as? String else {
             XCTFail("Failed to parse JSON")
             return
         }
 
         XCTAssertEqual(type, "model.initialized")
+        XCTAssertEqual(requestID, "req-123")
     }
 
     func testParseErrorMessage() {
-        let jsonString = "{\"type\": \"error\", \"message\": \"Something went wrong\"}"
+        let jsonString = "{\"type\": \"error\", \"request_id\": \"req-123\", \"message\": \"Something went wrong\"}"
 
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String,
-              let message = json["message"] as? String else {
+              let message = json["message"] as? String,
+              let requestID = json["request_id"] as? String else {
             XCTFail("Failed to parse JSON")
             return
         }
 
         XCTAssertEqual(type, "error")
         XCTAssertEqual(message, "Something went wrong")
+        XCTAssertEqual(requestID, "req-123")
     }
 
     func testParseAudioGeneratedMessage() {
-        let jsonString = "{\"type\": \"audio.generated\", \"path\": \"/path/to/audio.wav\", \"sample_rate\": 48000}"
+        let jsonString = "{\"type\": \"audio.generated\", \"request_id\": \"req-123\", \"path\": \"/path/to/audio.wav\", \"sample_rate\": 48000}"
 
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String,
               let path = json["path"] as? String,
-              let sampleRate = json["sample_rate"] as? Int else {
+              let sampleRate = json["sample_rate"] as? Int,
+              let requestID = json["request_id"] as? String else {
             XCTFail("Failed to parse JSON")
             return
         }
@@ -256,14 +277,16 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         XCTAssertEqual(type, "audio.generated")
         XCTAssertEqual(path, "/path/to/audio.wav")
         XCTAssertEqual(sampleRate, 48000)
+        XCTAssertEqual(requestID, "req-123")
     }
 
     func testParseChatCompletionChunk() {
-        let jsonString = "{\"type\": \"chat.completion.chunk\", \"choices\": [{\"delta\": {\"content\": \"Hello\"}}]}"
+        let jsonString = "{\"type\": \"chat.completion.chunk\", \"request_id\": \"req-123\", \"choices\": [{\"delta\": {\"content\": \"Hello\"}}]}"
 
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String,
+              let requestID = json["request_id"] as? String,
               let choices = json["choices"] as? [[String: Any]],
               let firstChoice = choices.first,
               let delta = firstChoice["delta"] as? [String: Any],
@@ -273,7 +296,7 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         }
 
         XCTAssertEqual(type, "chat.completion.chunk")
+        XCTAssertEqual(requestID, "req-123")
         XCTAssertEqual(content, "Hello")
     }
-
-    }
+}

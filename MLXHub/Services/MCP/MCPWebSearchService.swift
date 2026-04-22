@@ -4,6 +4,11 @@ struct MCPServerConfig {
     let url: URL
 }
 
+private enum MCPHTTPTimeout {
+    static let request: TimeInterval = 15
+    static let resource: TimeInterval = 30
+}
+
 struct MCPTool {
     let name: String
     let description: String
@@ -25,6 +30,16 @@ enum MCPError: LocalizedError {
             return message
         }
     }
+}
+
+private func stringifyJSON(_ value: Any) -> String {
+    guard JSONSerialization.isValidJSONObject(value),
+          let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+          let string = String(data: data, encoding: .utf8) else {
+        return String(describing: value)
+    }
+
+    return string
 }
 
 @MainActor
@@ -120,28 +135,24 @@ final class MCPWebSearchService {
 
         return stringifyJSON(result)
     }
-
-    private func stringifyJSON(_ value: Any) -> String {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
-              let string = String(data: data, encoding: .utf8) else {
-            return String(describing: value)
-        }
-
-        return string
-    }
 }
 
 @MainActor
 private final class MCPHTTPClient {
     private let serverName: String
     private let url: URL
+    private let session: URLSession
     private var sessionId: String?
     private var nextRequestId = 1
 
     init(serverName: String, url: URL) {
         self.serverName = serverName
         self.url = url
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = MCPHTTPTimeout.request
+        configuration.timeoutIntervalForResource = MCPHTTPTimeout.resource
+        self.session = URLSession(configuration: configuration)
     }
 
     func initialize() async throws {
@@ -228,6 +239,7 @@ private final class MCPHTTPClient {
     private func post(_ payload: [String: Any]) async throws -> [[String: Any]] {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = MCPHTTPTimeout.request
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
         if let sessionId {
@@ -235,7 +247,7 @@ private final class MCPHTTPClient {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw MCPError.invalidResponse
         }
@@ -294,15 +306,5 @@ private final class MCPHTTPClient {
         }
 
         return responses
-    }
-
-    private func stringifyJSON(_ value: Any) -> String {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
-              let string = String(data: data, encoding: .utf8) else {
-            return String(describing: value)
-        }
-
-        return string
     }
 }
