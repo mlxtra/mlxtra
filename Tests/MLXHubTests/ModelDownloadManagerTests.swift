@@ -25,6 +25,8 @@ final class ModelDownloadManagerTests: XCTestCase {
         let progress = ModelDownloadManager.DownloadProgress(
             status: "downloading",
             description: "Downloading",
+            unit: "B",
+            progressKind: "bytes",
             downloadedBytes: 1_048_576,
             totalBytes: 2_097_152,
             percent: 50.0
@@ -44,6 +46,13 @@ final class ModelDownloadManagerTests: XCTestCase {
 
         tracker.clearErrorReceived(for: modelId)
         XCTAssertFalse(tracker.errorWasReceived(for: modelId))
+    }
+
+    func testDownloadStateTerminalStatus() {
+        XCTAssertFalse(ModelDownloadManager.DownloadState.notDownloaded.isTerminal)
+        XCTAssertFalse(ModelDownloadManager.DownloadState.downloading(nil).isTerminal)
+        XCTAssertTrue(ModelDownloadManager.DownloadState.downloaded.isTerminal)
+        XCTAssertTrue(ModelDownloadManager.DownloadState.failed("error").isTerminal)
     }
 
     func testAceStepDownloadHelperUsageErrorUsesTypedEvent() throws {

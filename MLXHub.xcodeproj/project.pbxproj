@@ -204,6 +204,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 8A0100010000000000007003 /* Build configuration list for PBXNativeTarget "MLXHub" */;
 			buildPhases = (
+				8A0100010000000000002004 /* Validate Runtime Bundle */,
 				8A0100010000000000002003 /* Sources */,
 				8A0100010000000000002001 /* Frameworks */,
 				8A0100010000000000002002 /* Resources */,
@@ -263,6 +264,34 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		8A0100010000000000002004 /* Validate Runtime Bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Scripts/validate-runtime-bundle.sh",
+				"$(SRCROOT)/MLXHub/Resources/python_bridge.py",
+				"$(SRCROOT)/MLXHub/Resources/acestep_bridge.py",
+				"$(SRCROOT)/MLXHub/Resources/bridge_utils.py",
+				"$(SRCROOT)/MLXHub/Resources/runtime/macos-arm64",
+				"$(SRCROOT)/MLXHub/Resources/runtime/macos-arm64/runtime-manifest.json",
+			);
+			name = "Validate Runtime Bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$SRCROOT/Scripts/validate-runtime-bundle.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		8A0100010000000000002003 /* Sources */ = {

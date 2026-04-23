@@ -19,7 +19,14 @@ import contextlib
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 
-from bridge_utils import log_exception, normalize_music_model_id
+from bridge_utils import (
+    coerce_bool,
+    coerce_float,
+    coerce_int,
+    coerce_string,
+    log_exception,
+    normalize_music_model_id,
+)
 
 # Model registry for hot-swapping
 MODEL_REGISTRY: Dict[str, Any] = {}
@@ -72,12 +79,12 @@ def setup_environment():
 
 
 def _clear_accelerator_cache():
-    try:
-        import mlx.core as mx
-
-        mx.clear_cache()
-    except Exception:
-        pass
+    mx = sys.modules.get("mlx.core")
+    if mx is not None:
+        try:
+            mx.clear_cache()
+        except Exception:
+            pass
     gc.collect()
 
 
@@ -225,8 +232,9 @@ def load_music_model_if_needed(model_id: str, request: Optional[dict] = None):
         )
         import importlib.util
 
-        from acestep.handler import AceStepHandler
-        from acestep.llm_inference import LLMHandler
+        with contextlib.redirect_stdout(sys.stderr):
+            from acestep.handler import AceStepHandler
+            from acestep.llm_inference import LLMHandler
 
         package_spec = importlib.util.find_spec("acestep")
         project_root = (
@@ -237,19 +245,21 @@ def load_music_model_if_needed(model_id: str, request: Optional[dict] = None):
 
         config_path = os.environ.get("ACESTEP_CONFIG_PATH") or normalized_id
 
-        dit_handler = AceStepHandler()
-        init_result = dit_handler.initialize_service(
-            project_root=str(project_root),
-            config_path=str(config_path),
-            device=os.environ.get("ACESTEP_DEVICE", "mps"),
-        )
+        with contextlib.redirect_stdout(sys.stderr):
+            dit_handler = AceStepHandler()
+            init_result = dit_handler.initialize_service(
+                project_root=str(project_root),
+                config_path=str(config_path),
+                device=os.environ.get("ACESTEP_DEVICE", "mps"),
+            )
         if not init_result or init_result[1] is False:
             error_msg = (
                 init_result[0] if init_result else "Unknown initialization error"
             )
             raise RuntimeError(f"Failed to initialize ACE-Step model: {error_msg}")
 
-        llm_handler = LLMHandler()
+        with contextlib.redirect_stdout(sys.stderr):
+            llm_handler = LLMHandler()
         MUSIC_MODEL_REGISTRY[model_id] = (dit_handler, llm_handler)
 
         send_json({"type": "model.loaded", "model": model_id}, request=request)
@@ -337,8 +347,21 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
         fn_name = m.group(1).strip()
         args_str = m.group(2).strip()
         args = {}
-        for pair in re.finditer(r'(\w+):\s*"([^"]*)"', args_str):
-            args[pair.group(1)] = pair.group(2)
+        arg_pattern = re.compile(
+            r'(\w+):\s*(?:"((?:\\.|[^"\\])*)"|([^,)]*?))(?=,|\s*$)',
+            re.DOTALL,
+        )
+        for pair in arg_pattern.finditer(args_str):
+            key = pair.group(1)
+            quoted_value = pair.group(2)
+            raw_value = pair.group(3)
+            if quoted_value is not None:
+                try:
+                    args[key] = json.loads(f'"{quoted_value}"')
+                except json.JSONDecodeError:
+                    args[key] = quoted_value
+            elif raw_value is not None:
+                args[key] = coerce_parameter_value(raw_value)
         tool_calls.append(
             {
                 "id": f"call_{uuid.uuid4().hex[:8]}",
@@ -473,7 +496,7 @@ def handle_chat_completion(request: dict) -> None:
 def _last_user_prompt(messages: List[Dict[str, str]]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
-            return message.get("content", "").strip()
+            return coerce_string(message.get("content")).strip()
     return ""
 
 
@@ -855,12 +878,14 @@ def handle_music_generation(request: dict) -> None:
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
     messages = request.get("messages", [])
     parameters = request.get("parameters", {}) or {}
-    prompt = (
+    if not isinstance(parameters, dict):
+        parameters = {}
+    prompt = coerce_string(
         parameters.get("caption")
         or request.get("prompt")
         or _last_user_prompt(messages)
     ).strip()
-    lyrics = (parameters.get("lyrics") or "").strip()
+    lyrics = coerce_string(parameters.get("lyrics")).strip()
     output_dir = Path(request.get("output_dir") or Path.home() / "Music" / "MLXHub")
 
     if not prompt:
@@ -871,7 +896,8 @@ def handle_music_generation(request: dict) -> None:
         return
 
     try:
-        from acestep.inference import GenerationConfig, GenerationParams, generate_music
+        with contextlib.redirect_stdout(sys.stderr):
+            from acestep.inference import GenerationConfig, GenerationParams, generate_music
 
         output_dir.mkdir(parents=True, exist_ok=True)
         dit_handler, llm_handler = load_music_model_if_needed(model_id, request=request)
@@ -881,36 +907,40 @@ def handle_music_generation(request: dict) -> None:
             request=request,
         )
 
-        seed = int(parameters.get("seed") or (time.time_ns() % 2_147_483_647))
-        duration = float(parameters.get("duration", 30))
-        bpm = parameters.get("bpm")
+        seed = coerce_int(parameters.get("seed"), time.time_ns() % 2_147_483_647)
+        duration = coerce_float(parameters.get("duration"), 30.0)
+        thinking = coerce_bool(parameters.get("thinking"), False)
+        instrumental = coerce_bool(parameters.get("instrumental"), False)
 
         params_kwargs = {
             "task_type": "text2music",
             "caption": prompt,
             "lyrics": lyrics,
             "duration": duration,
-            "inference_steps": int(parameters.get("inference_steps", 8)),
+            "inference_steps": coerce_int(parameters.get("inference_steps"), 8),
             "seed": seed,
-            "shift": float(parameters.get("shift", 3.0)),
-            "infer_method": parameters.get("infer_method", "ode"),
-            "thinking": bool(parameters.get("thinking", False)),
-            "use_cot_metas": bool(parameters.get("thinking", False)),
-            "use_cot_caption": bool(parameters.get("thinking", False)),
+            "shift": coerce_float(parameters.get("shift"), 3.0),
+            "infer_method": coerce_string(parameters.get("infer_method"), "ode") or "ode",
+            "thinking": thinking,
+            "use_cot_metas": thinking,
+            "use_cot_caption": thinking,
             "use_cot_lyrics": False,
-            "use_cot_language": bool(parameters.get("thinking", False)),
-            "instrumental": bool(parameters.get("instrumental", False)),
+            "use_cot_language": thinking,
+            "instrumental": instrumental,
         }
+        bpm = coerce_int(parameters.get("bpm"), 0)
         if bpm:
-            params_kwargs["bpm"] = int(bpm)
-        if parameters.get("keyscale"):
-            params_kwargs["keyscale"] = parameters["keyscale"]
-        if parameters.get("vocal_language"):
-            params_kwargs["vocal_language"] = parameters["vocal_language"]
+            params_kwargs["bpm"] = bpm
+        keyscale = coerce_string(parameters.get("keyscale")).strip()
+        if keyscale:
+            params_kwargs["keyscale"] = keyscale
+        vocal_language = coerce_string(parameters.get("vocal_language")).strip()
+        if vocal_language:
+            params_kwargs["vocal_language"] = vocal_language
 
         config = GenerationConfig(
-            batch_size=int(parameters.get("batch_size", 1)),
-            audio_format=parameters.get("audio_format", "wav"),
+            batch_size=coerce_int(parameters.get("batch_size"), 1),
+            audio_format=coerce_string(parameters.get("audio_format"), "wav") or "wav",
             use_random_seed=False,
             seeds=[seed],
         )

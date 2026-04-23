@@ -27,11 +27,19 @@ private final class DownloadLineBuffer: @unchecked Sendable {
 private final class DownloadOutputLog: @unchecked Sendable {
 	private let lock = NSLock()
 	private var text = ""
+    private let maxCharacters: Int
+
+    init(maxCharacters: Int = 40_000) {
+        self.maxCharacters = maxCharacters
+    }
 
 	func append(_ newText: String) {
 		lock.lock()
 		defer { lock.unlock() }
 		text += newText
+        if text.count > maxCharacters {
+            text = String(text.suffix(maxCharacters))
+        }
 	}
 
 	func value() -> String {
@@ -69,6 +77,8 @@ final class ModelDownloadManager: ObservableObject {
     struct DownloadProgress: Equatable {
         let status: String
         let description: String?
+        let unit: String?
+        let progressKind: String?
         let downloadedBytes: Int64?
         let totalBytes: Int64?
         let percent: Double?
@@ -87,7 +97,17 @@ final class ModelDownloadManager: ObservableObject {
 
         var detailText: String? {
             if let downloadedBytes, let totalBytes, totalBytes > 0 {
-                return "\(Self.formatBytes(downloadedBytes)) of \(Self.formatBytes(totalBytes))"
+                if isByteProgress {
+                    return "\(Self.formatBytes(downloadedBytes)) of \(Self.formatBytes(totalBytes))"
+                }
+
+                if isFileProgress {
+                    return "\(downloadedBytes) of \(totalBytes) \(totalBytes == 1 ? "file" : "files")"
+                }
+
+                if let unit, !unit.isEmpty {
+                    return "\(downloadedBytes) of \(totalBytes) \(Self.displayUnit(unit, total: totalBytes))"
+                }
             }
 
             guard let description, !description.isEmpty else {
@@ -96,11 +116,26 @@ final class ModelDownloadManager: ObservableObject {
             return description
         }
 
+        private var isByteProgress: Bool {
+            progressKind == "bytes" || unit == "B"
+        }
+
+        private var isFileProgress: Bool {
+            progressKind == "files" || unit == "it" || unit == "file" || unit == "files"
+        }
+
         private static func formatBytes(_ bytes: Int64) -> String {
             let formatter = ByteCountFormatter()
             formatter.allowedUnits = [.useMB, .useGB]
             formatter.countStyle = .file
             return formatter.string(fromByteCount: bytes)
+        }
+
+        private static func displayUnit(_ unit: String, total: Int64) -> String {
+            if unit == "it" {
+                return total == 1 ? "item" : "items"
+            }
+            return unit
         }
     }
 
@@ -115,6 +150,15 @@ final class ModelDownloadManager: ObservableObject {
                 return true
             }
             return false
+        }
+
+        var isTerminal: Bool {
+            switch self {
+            case .downloaded, .failed:
+                return true
+            case .notDownloaded, .downloading:
+                return false
+            }
         }
     }
 
@@ -175,11 +219,11 @@ final class ModelDownloadManager: ObservableObject {
                 }
                 let isDownloaded = await isModelDownloadedOffMain(modelId: model.modelId)
                 states[model.id] = isDownloaded ? .downloaded : .failed("Download finished, but model files were not found in cache.")
-} catch {
-			if !errorTracker.errorWasReceived(for: model.id) {
-				states[model.id] = .failed(error.localizedDescription)
-			}
-		}
+            } catch {
+                if !errorTracker.errorWasReceived(for: model.id) {
+                    states[model.id] = .failed(error.localizedDescription)
+                }
+            }
 
             tasks[model.id] = nil
         }
@@ -205,16 +249,13 @@ final class ModelDownloadManager: ObservableObject {
             let errorPipe = Pipe()
             let lineBuffer = DownloadLineBuffer()
             let outputLog = DownloadOutputLog()
+            let errorLog = DownloadOutputLog()
 
             process.executableURL = pythonPath
             process.arguments = [helperPath.path, modelId, localDir]
-            process.environment = [
-                "PYTHONHOME": runtimeManager.pythonHomePath().path,
-                "PYTHONDONTWRITEBYTECODE": "1",
-                "ACESTEP_CHECKPOINTS_DIR": localDir,
-                "HF_HOME": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path,
-                "HF_HUB_CACHE": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path,
-            ]
+            var downloadEnv = bundledPythonEnvironment()
+            downloadEnv["ACESTEP_CHECKPOINTS_DIR"] = localDir
+            process.environment = downloadEnv
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
@@ -230,8 +271,16 @@ final class ModelDownloadManager: ObservableObject {
                 }
             }
 
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+
+                errorLog.append(output)
+            }
+
             process.terminationHandler = { process in
                 outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
 
                 let trailingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                 if !trailingData.isEmpty, let trailingOutput = String(data: trailingData, encoding: .utf8) {
@@ -249,19 +298,27 @@ final class ModelDownloadManager: ObservableObject {
                     }
                 }
 
+                let errorTrailingData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                if !errorTrailingData.isEmpty, let trailingErrorOutput = String(data: errorTrailingData, encoding: .utf8) {
+                    errorLog.append(trailingErrorOutput)
+                }
+
                 let output = outputLog.value()
-                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+                let errorOutput = errorLog.value()
 
                 print("[ModelDownloadManager] ACE-Step helper output: \(output.prefix(500))")
                 if !errorOutput.isEmpty {
                     print("[ModelDownloadManager] ACE-Step helper stderr: \(errorOutput.prefix(500))")
                 }
 
-                if process.terminationStatus == 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: ModelDownloadError.downloadFailed(output.isEmpty ? errorOutput : output))
+                Task { @MainActor [weak self] in
+                    self?.handleDownloadEventLines(output, modelId: modelId)
+
+                    if process.terminationStatus == 0 {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: ModelDownloadError.downloadFailed(output.isEmpty ? errorOutput : output))
+                    }
                 }
             }
 
@@ -282,20 +339,13 @@ final class ModelDownloadManager: ObservableObject {
             let outputPipe = Pipe()
             let errorPipe = Pipe()
             let lineBuffer = DownloadLineBuffer()
+            let outputLog = DownloadOutputLog()
+            let errorLog = DownloadOutputLog()
 
             process.executableURL = pythonPath
             process.arguments = [helperPath.path, modelId]
 
-            var downloadEnv = ProcessInfo.processInfo.environment
-            // Strip env vars that could conflict with the bundled Python
-            for key in ["PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"] {
-                downloadEnv.removeValue(forKey: key)
-            }
-            downloadEnv["PYTHONHOME"] = runtimeManager.pythonHomePath().path
-            downloadEnv["PYTHONDONTWRITEBYTECODE"] = "1"
-            downloadEnv["HF_HOME"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path
-            downloadEnv["HF_HUB_CACHE"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path
-            process.environment = downloadEnv
+            process.environment = bundledPythonEnvironment()
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
@@ -303,6 +353,7 @@ final class ModelDownloadManager: ObservableObject {
                 let data = handle.availableData
                 guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
 
+                outputLog.append(output)
                 for line in lineBuffer.append(output) {
                     Task { @MainActor [weak self] in
                         self?.handleDownloadEventLine(line, modelId: modelId)
@@ -310,11 +361,20 @@ final class ModelDownloadManager: ObservableObject {
                 }
             }
 
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+
+                errorLog.append(output)
+            }
+
             process.terminationHandler = { process in
                 outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
 
                 let trailingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                 if !trailingData.isEmpty, let trailingOutput = String(data: trailingData, encoding: .utf8) {
+                    outputLog.append(trailingOutput)
                     for line in lineBuffer.append(trailingOutput) {
                         Task { @MainActor [weak self] in
                             self?.handleDownloadEventLine(line, modelId: modelId)
@@ -328,14 +388,23 @@ final class ModelDownloadManager: ObservableObject {
                     }
                 }
 
-                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                let errorOutput = String(data: errorData, encoding: .utf8)?
+                let errorTrailingData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                if !errorTrailingData.isEmpty, let trailingErrorOutput = String(data: errorTrailingData, encoding: .utf8) {
+                    errorLog.append(trailingErrorOutput)
+                }
+
+                let output = outputLog.value()
+                let errorOutput = errorLog.value()
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
-                if process.terminationStatus == 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: ModelDownloadError.downloadFailed(errorOutput ?? "huggingface_hub exited with status \(process.terminationStatus)"))
+                Task { @MainActor [weak self] in
+                    self?.handleDownloadEventLines(output, modelId: modelId)
+
+                    if process.terminationStatus == 0 {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: ModelDownloadError.downloadFailed(errorOutput.isEmpty ? "huggingface_hub exited with status \(process.terminationStatus)" : errorOutput))
+                    }
                 }
             }
 
@@ -344,6 +413,14 @@ final class ModelDownloadManager: ObservableObject {
             } catch {
                 continuation.resume(throwing: error)
             }
+        }
+    }
+
+    private func handleDownloadEventLines(_ output: String, modelId: String) {
+        for line in output.components(separatedBy: .newlines) {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedLine.isEmpty else { continue }
+            handleDownloadEventLine(trimmedLine, modelId: modelId)
         }
     }
 
@@ -356,34 +433,44 @@ final class ModelDownloadManager: ObservableObject {
 
         switch type {
         case "download.started":
+            guard states[modelId]?.isTerminal != true else { return }
             states[modelId] = .downloading(DownloadProgress(
                 status: "Preparing",
                 description: nil,
+                unit: nil,
+                progressKind: nil,
                 downloadedBytes: nil,
                 totalBytes: nil,
                 percent: nil
             ))
         case "download.progress":
+            guard states[modelId]?.isTerminal != true else { return }
             states[modelId] = .downloading(DownloadProgress(
                 status: event["status"] as? String ?? "Downloading",
                 description: event["description"] as? String,
+                unit: event["unit"] as? String,
+                progressKind: event["progress_kind"] as? String,
                 downloadedBytes: Self.int64Value(event["downloaded"]),
                 totalBytes: Self.int64Value(event["total"]),
                 percent: event["percent"] as? Double
             ))
         case "download.complete":
+            guard states[modelId]?.isTerminal != true else { return }
             states[modelId] = .downloading(DownloadProgress(
                 status: "Verifying",
                 description: nil,
+                unit: nil,
+                progressKind: nil,
                 downloadedBytes: nil,
                 totalBytes: nil,
                 percent: nil
             ))
-case "download.error":
-			if let message = event["message"] as? String {
-				errorTracker.setErrorReceived(for: modelId)
-				states[modelId] = .failed(message)
-			}
+        case "download.error":
+            guard states[modelId] != .downloaded else { return }
+            if let message = event["message"] as? String {
+                errorTracker.setErrorReceived(for: modelId)
+                states[modelId] = .failed(message)
+            }
         default:
             break
         }
@@ -400,6 +487,18 @@ case "download.error":
             return Int64(value)
         }
         return nil
+    }
+
+    private func bundledPythonEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        for key in ["PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"] {
+            environment.removeValue(forKey: key)
+        }
+        environment["PYTHONHOME"] = runtimeManager.pythonHomePath().path
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["HF_HOME"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path
+        environment["HF_HUB_CACHE"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path
+        return environment
     }
 }
 

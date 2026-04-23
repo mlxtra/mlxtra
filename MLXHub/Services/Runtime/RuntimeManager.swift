@@ -49,44 +49,83 @@ class RuntimeManager: ObservableObject {
         appSupportURL.appendingPathComponent("checkpoints")
     }
     
-/// Initialize the Python runtime
-	func initialize() async throws {
-		switch state {
-		case .notInitialized, .error:
-			break
-		default:
-			return
-		}
+    /// Initialize the Python runtime
+    func initialize() async throws {
+        switch state {
+        case .notInitialized, .error:
+            break
+        default:
+            return
+        }
 
-		state = .checkingBundle
-		loadingMessage = "Checking Python runtime..."
+        state = .checkingBundle
+        loadingMessage = "Checking Python runtime..."
 
-		// Check if Python runtime exists in bundle
-		guard FileManager.default.fileExists(atPath: runtimeBundleURL.path) else {
-			let error = RuntimeError.bundleNotFound(runtimeBundleURL.path)
-			state = .error(error.localizedDescription)
-			throw error
-		}
+        do {
+            let bundlePath = runtimeBundleURL
+            try validateRequiredDirectory(bundlePath, error: .bundleNotFound(bundlePath.path))
 
-		// Check if Python executable exists
-		let pythonPath = pythonExecutablePath()
-		guard FileManager.default.fileExists(atPath: pythonPath.path) else {
-			let error = RuntimeError.pythonNotFound(pythonPath.path)
-			state = .error(error.localizedDescription)
-			throw error
-		}
+            let pythonHome = pythonHomePath()
+            try validateRequiredDirectory(
+                pythonHome,
+                error: .runtimeComponentNotFound("Bundled Python home", pythonHome.path)
+            )
 
-		// Check if bridge script exists
-		let bridgePath = bridgeScriptPath()
-		guard FileManager.default.fileExists(atPath: bridgePath.path) else {
-			let error = RuntimeError.bridgeScriptNotFound(bridgePath.path)
-			state = .error(error.localizedDescription)
-			throw error
-		}
+            let pythonPath = pythonExecutablePath()
+            try validateRequiredFile(pythonPath, error: .pythonNotFound(pythonPath.path), executable: true)
 
-		state = .ready
-		loadingMessage = ""
-	}
+            let bridgePath = bridgeScriptPath()
+            try validateRequiredFile(bridgePath, error: .bridgeScriptNotFound(bridgePath.path))
+
+            let huggingFaceHelper = huggingFaceDownloadHelperPath()
+            try validateRequiredFile(
+                huggingFaceHelper,
+                error: .runtimeComponentNotFound("Hugging Face download helper", huggingFaceHelper.path)
+            )
+
+            let aceStepPython = acestepPythonExecutablePath()
+            try validateRequiredFile(
+                aceStepPython,
+                error: .runtimeComponentNotFound("ACE-Step Python executable", aceStepPython.path),
+                executable: true
+            )
+
+            let aceStepHelper = acestepDownloadHelperPath()
+            try validateRequiredFile(
+                aceStepHelper,
+                error: .runtimeComponentNotFound("ACE-Step download helper", aceStepHelper.path)
+            )
+        } catch let runtimeError as RuntimeError {
+            state = .error(runtimeError.localizedDescription)
+            throw runtimeError
+        } catch {
+            state = .error(error.localizedDescription)
+            throw error
+        }
+
+        state = .ready
+        loadingMessage = ""
+    }
+
+    private func validateRequiredDirectory(_ url: URL, error: RuntimeError) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw error
+        }
+    }
+
+    private func validateRequiredFile(_ url: URL, error: RuntimeError, executable: Bool = false) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else {
+            throw error
+        }
+
+        if executable && !FileManager.default.isExecutableFile(atPath: url.path) {
+            throw error
+        }
+    }
     
     /// Get path to Python executable
     func pythonExecutablePath() -> URL {
@@ -118,7 +157,7 @@ class RuntimeManager: ObservableObject {
             }
         }
         // Default fallback
-        return runtimeBundleURL.appendingPathComponent("venv/lib/python3.13/site-packages")
+        return runtimeBundleURL.appendingPathComponent("venv/lib/python3.12/site-packages")
     }
     
     /// Get path to the bundled Python framework home.
@@ -401,6 +440,7 @@ enum RuntimeError: Error {
     case bundleNotFound(String)
     case pythonNotFound(String)
     case bridgeScriptNotFound(String)
+    case runtimeComponentNotFound(String, String)
     case initializationFailed(String)
     
     var localizedDescription: String {
@@ -411,6 +451,8 @@ enum RuntimeError: Error {
             return "Python executable not found at \(path)"
         case .bridgeScriptNotFound(let path):
             return "Python bridge script not found at \(path)"
+        case .runtimeComponentNotFound(let component, let path):
+            return "\(component) not found at \(path). Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
         case .initializationFailed(let message):
             return "Failed to initialize runtime: \(message)"
         }

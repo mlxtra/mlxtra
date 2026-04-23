@@ -10,7 +10,14 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from bridge_utils import log_exception, normalize_music_model_id
+from bridge_utils import (
+    coerce_bool,
+    coerce_float,
+    coerce_int,
+    coerce_string,
+    log_exception,
+    normalize_music_model_id,
+)
 
 
 def get_request_id(request: Optional[dict] = None) -> Optional[str]:
@@ -40,14 +47,15 @@ def send_json(
 def last_user_prompt(messages: list[dict]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
-            return message.get("content", "").strip()
+            return coerce_string(message.get("content")).strip()
     return ""
 
 
 def generate_music_once(request: dict) -> None:
-    from acestep.handler import AceStepHandler
-    from acestep.inference import GenerationConfig, GenerationParams, generate_music
-    from acestep.llm_inference import LLMHandler
+    with contextlib.redirect_stdout(sys.stderr):
+        from acestep.handler import AceStepHandler
+        from acestep.inference import GenerationConfig, GenerationParams, generate_music
+        from acestep.llm_inference import LLMHandler
 
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
     # Normalize the model ID for ACE-Step lookup
@@ -55,10 +63,12 @@ def generate_music_once(request: dict) -> None:
 
     messages = request.get("messages", [])
     parameters = request.get("parameters", {}) or {}
-    prompt = (
+    if not isinstance(parameters, dict):
+        parameters = {}
+    prompt = coerce_string(
         parameters.get("caption") or request.get("prompt") or last_user_prompt(messages)
     ).strip()
-    lyrics = (parameters.get("lyrics") or "").strip()
+    lyrics = coerce_string(parameters.get("lyrics")).strip()
     output_dir = Path(request.get("output_dir") or Path.home() / "Music" / "MLXHub")
 
     if not prompt:
@@ -80,12 +90,13 @@ def generate_music_once(request: dict) -> None:
         {"type": "model.loading", "model": model_id, "status": "loading"},
         request=request,
     )
-    dit_handler = AceStepHandler()
-    init_result = dit_handler.initialize_service(
-        project_root=str(project_root),
-        config_path=str(config_path),
-        device=os.environ.get("ACESTEP_DEVICE", "mps"),
-    )
+    with contextlib.redirect_stdout(sys.stderr):
+        dit_handler = AceStepHandler()
+        init_result = dit_handler.initialize_service(
+            project_root=str(project_root),
+            config_path=str(config_path),
+            device=os.environ.get("ACESTEP_DEVICE", "mps"),
+        )
     # Check if initialization succeeded
     if not init_result or init_result[1] is False:
         error_msg = init_result[0] if init_result else "Unknown initialization error"
@@ -94,37 +105,43 @@ def generate_music_once(request: dict) -> None:
             request=request,
         )
         return
-    llm_handler = LLMHandler()
+    with contextlib.redirect_stdout(sys.stderr):
+        llm_handler = LLMHandler()
     send_json({"type": "model.loaded", "model": model_id}, request=request)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    seed = int(parameters.get("seed") or (time.time_ns() % 2_147_483_647))
+    seed = coerce_int(parameters.get("seed"), time.time_ns() % 2_147_483_647)
+    thinking = coerce_bool(parameters.get("thinking"), False)
+    instrumental = coerce_bool(parameters.get("instrumental"), False)
     params_kwargs = {
         "task_type": "text2music",
         "caption": prompt,
         "lyrics": lyrics,
-        "duration": float(parameters.get("duration", 30)),
-        "inference_steps": int(parameters.get("inference_steps", 8)),
+        "duration": coerce_float(parameters.get("duration"), 30.0),
+        "inference_steps": coerce_int(parameters.get("inference_steps"), 8),
         "seed": seed,
-        "shift": float(parameters.get("shift", 3.0)),
-        "infer_method": parameters.get("infer_method", "ode"),
-        "thinking": bool(parameters.get("thinking", False)),
-        "use_cot_metas": bool(parameters.get("thinking", False)),
-        "use_cot_caption": bool(parameters.get("thinking", False)),
+        "shift": coerce_float(parameters.get("shift"), 3.0),
+        "infer_method": coerce_string(parameters.get("infer_method"), "ode") or "ode",
+        "thinking": thinking,
+        "use_cot_metas": thinking,
+        "use_cot_caption": thinking,
         "use_cot_lyrics": False,
-        "use_cot_language": bool(parameters.get("thinking", False)),
-        "instrumental": bool(parameters.get("instrumental", False)),
+        "use_cot_language": thinking,
+        "instrumental": instrumental,
     }
-    if parameters.get("bpm"):
-        params_kwargs["bpm"] = int(parameters["bpm"])
-    if parameters.get("keyscale"):
-        params_kwargs["keyscale"] = parameters["keyscale"]
-    if parameters.get("vocal_language"):
-        params_kwargs["vocal_language"] = parameters["vocal_language"]
+    bpm = coerce_int(parameters.get("bpm"), 0)
+    if bpm:
+        params_kwargs["bpm"] = bpm
+    keyscale = coerce_string(parameters.get("keyscale")).strip()
+    if keyscale:
+        params_kwargs["keyscale"] = keyscale
+    vocal_language = coerce_string(parameters.get("vocal_language")).strip()
+    if vocal_language:
+        params_kwargs["vocal_language"] = vocal_language
 
     config = GenerationConfig(
-        batch_size=int(parameters.get("batch_size", 1)),
-        audio_format=parameters.get("audio_format", "wav"),
+        batch_size=coerce_int(parameters.get("batch_size"), 1),
+        audio_format=coerce_string(parameters.get("audio_format"), "wav") or "wav",
         use_random_seed=False,
         seeds=[seed],
     )

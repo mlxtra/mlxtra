@@ -11,6 +11,39 @@ def emit(event):
     print(json.dumps(event), flush=True)
 
 
+def progress_kind(unit, description):
+    normalized_unit = str(unit or "").lower()
+    normalized_description = str(description or "").lower()
+
+    if normalized_unit == "b":
+        return "bytes"
+    if normalized_unit in {"it", "file", "files"} or normalized_description.startswith("fetching "):
+        return "files"
+    return "items"
+
+
+def progress_status(raw_status, kind):
+    if kind == "bytes":
+        return {
+            "started": "Preparing download",
+            "downloading": "Downloading",
+            "finished": "Download complete",
+        }.get(raw_status, raw_status)
+
+    if kind == "files":
+        return {
+            "started": "Preparing files",
+            "downloading": "Fetching files",
+            "finished": "Files fetched",
+        }.get(raw_status, raw_status)
+
+    return {
+        "started": "Preparing",
+        "downloading": "Working",
+        "finished": "Finishing",
+    }.get(raw_status, raw_status)
+
+
 class JsonTqdm(tqdm):
     def __init__(self, *args, **kwargs):
         self._last_emit = 0.0
@@ -33,13 +66,17 @@ class JsonTqdm(tqdm):
         total = int(self.total) if self.total else None
         downloaded = int(self.n or 0)
         percent = (downloaded / total * 100.0) if total else None
+        unit = str(self.unit or "")
+        description = str(self.desc or "")
+        kind = progress_kind(unit, description)
 
         emit(
             {
                 "type": "download.progress",
-                "status": status,
-                "description": str(self.desc or ""),
-                "unit": str(self.unit or ""),
+                "status": progress_status(status, kind),
+                "description": description,
+                "unit": unit,
+                "progress_kind": kind,
                 "downloaded": downloaded,
                 "total": total,
                 "percent": percent,

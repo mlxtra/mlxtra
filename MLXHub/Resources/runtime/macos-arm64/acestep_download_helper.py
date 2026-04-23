@@ -9,21 +9,57 @@ Usage: acestep_download_helper.py <repo_id> <local_dir>
 """
 
 import sys
+import contextlib
 import json
 import time
 from pathlib import Path
 
+JSON_OUTPUT = sys.stdout
+
 
 def log(msg):
-    print(f"[ACE-Step Download Helper] {msg}", flush=True)
+    print(f"[ACE-Step Download Helper] {msg}", file=sys.stderr, flush=True)
 
 
 def send_json(obj):
-    print(json.dumps(obj), flush=True)
+    print(json.dumps(obj), file=JSON_OUTPUT, flush=True)
 
 
 def emit(event):
-    print(json.dumps(event), flush=True)
+    print(json.dumps(event), file=JSON_OUTPUT, flush=True)
+
+
+def progress_kind(unit, description):
+    normalized_unit = str(unit or "").lower()
+    normalized_description = str(description or "").lower()
+
+    if normalized_unit == "b":
+        return "bytes"
+    if normalized_unit in {"it", "file", "files"} or normalized_description.startswith("fetching "):
+        return "files"
+    return "items"
+
+
+def progress_status(raw_status, kind):
+    if kind == "bytes":
+        return {
+            "started": "Preparing download",
+            "downloading": "Downloading",
+            "finished": "Download complete",
+        }.get(raw_status, raw_status)
+
+    if kind == "files":
+        return {
+            "started": "Preparing files",
+            "downloading": "Fetching files",
+            "finished": "Files fetched",
+        }.get(raw_status, raw_status)
+
+    return {
+        "started": "Preparing",
+        "downloading": "Working",
+        "finished": "Finishing",
+    }.get(raw_status, raw_status)
 
 
 def install_huggingface_progress_hook():
@@ -54,13 +90,17 @@ def install_huggingface_progress_hook():
             total = int(self.total) if self.total else None
             downloaded = int(self.n or 0)
             percent = (downloaded / total * 100.0) if total else None
+            unit = str(self.unit or "")
+            description = str(self.desc or "")
+            kind = progress_kind(unit, description)
 
             emit(
                 {
                     "type": "download.progress",
-                    "status": status,
-                    "description": str(self.desc or ""),
-                    "unit": str(self.unit or ""),
+                    "status": progress_status(status, kind),
+                    "description": description,
+                    "unit": unit,
+                    "progress_kind": kind,
                     "downloaded": downloaded,
                     "total": total,
                     "percent": percent,
@@ -88,16 +128,19 @@ def main():
     try:
         install_huggingface_progress_hook()
 
-        from acestep.model_downloader import (
-            check_main_model_exists,
-            ensure_main_model,
-            MAIN_MODEL_COMPONENTS,
-        )
+        with contextlib.redirect_stdout(sys.stderr):
+            from acestep.model_downloader import (
+                check_main_model_exists,
+                ensure_main_model,
+                MAIN_MODEL_COMPONENTS,
+            )
 
         # Check if already exists
-        if check_main_model_exists(local_dir):
+        with contextlib.redirect_stdout(sys.stderr):
+            already_downloaded = check_main_model_exists(local_dir)
+        if already_downloaded:
             emit({"type": "download.complete", "repo_id": repo_id, "path": str(local_dir)})
-            send_json({"status": "already_downloaded", "path": str(local_dir)})
+            send_json({"type": "download.status", "status": "already_downloaded", "path": str(local_dir)})
             log("Model already exists")
             sys.exit(0)
 
@@ -107,10 +150,12 @@ def main():
                 "type": "download.progress",
                 "status": "Downloading",
                 "description": "Downloading ACE-Step checkpoints",
+                "progress_kind": "activity",
             }
         )
         log("Model not found, triggering download...")
-        success, msg = ensure_main_model(local_dir)
+        with contextlib.redirect_stdout(sys.stderr):
+            success, msg = ensure_main_model(local_dir)
 
         if success:
             # Verify using ACE-Step's strict weight-file check
@@ -119,11 +164,15 @@ def main():
                     "type": "download.progress",
                     "status": "Verifying",
                     "description": "Checking ACE-Step checkpoint components",
+                    "progress_kind": "activity",
                 }
             )
-            if check_main_model_exists(local_dir):
+            with contextlib.redirect_stdout(sys.stderr):
+                verified = check_main_model_exists(local_dir)
+            if verified:
                 send_json(
                     {
+                        "type": "download.status",
                         "status": "downloaded",
                         "path": str(local_dir),
                         "components": MAIN_MODEL_COMPONENTS,

@@ -3,7 +3,7 @@
 
 import sys
 import traceback
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 
 def log_to_stderr(message: str) -> None:
@@ -19,6 +19,56 @@ def normalize_music_model_id(model_id: str) -> str:
         return "acestep-v15-turbo"
 
     return model_id
+
+
+def coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1", "on"}:
+            return True
+        if lowered in {"false", "no", "0", "off", ""}:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+    return default
+
+
+def coerce_float(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, str) and not value.strip():
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def coerce_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, str) and not value.strip():
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+
+def coerce_string(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    return str(value)
 
 
 def exception_message(exc: BaseException) -> str:

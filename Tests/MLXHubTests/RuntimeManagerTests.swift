@@ -41,6 +41,10 @@ final class RuntimeManagerTests: XCTestCase {
             "Python bridge script not found at /path/to/script"
         )
         XCTAssertEqual(
+            RuntimeError.runtimeComponentNotFound("ACE-Step Python executable", "/path/to/acestep-python").localizedDescription,
+            "ACE-Step Python executable not found at /path/to/acestep-python. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
+        )
+        XCTAssertEqual(
             RuntimeError.initializationFailed("test failure").localizedDescription,
             "Failed to initialize runtime: test failure"
         )
@@ -215,6 +219,8 @@ extension RuntimeError: Equatable {
         case (.pythonNotFound(let l), .pythonNotFound(let r)) where l == r:
             return true
         case (.bridgeScriptNotFound(let l), .bridgeScriptNotFound(let r)) where l == r:
+            return true
+        case (.runtimeComponentNotFound(let lName, let lPath), .runtimeComponentNotFound(let rName, let rPath)) where lName == rName && lPath == rPath:
             return true
         case (.initializationFailed(let l), .initializationFailed(let r)) where l == r:
             return true

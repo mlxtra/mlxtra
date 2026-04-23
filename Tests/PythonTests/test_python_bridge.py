@@ -71,6 +71,17 @@ class TestParseToolCalls(unittest.TestCase):
         assert args["duration"] == 60
         assert args["instrumental"] is True
 
+    def test_gemma_tool_call_coerces_music_parameters(self):
+        text = '<|tool_call|>call:generate_music(caption: "clockwork garden", duration: 60, instrumental: true)<|tool_call|>'
+
+        result = python_bridge.parse_tool_calls(text)
+        assert len(result) == 1
+
+        args = json.loads(result[0]["function"]["arguments"])
+        assert args["caption"] == "clockwork garden"
+        assert args["duration"] == 60
+        assert args["instrumental"] is True
+
 
 class TestLastUserPrompt(unittest.TestCase):
     def test_returns_last_user_content(self):
@@ -190,6 +201,23 @@ class TestModelRegistries(unittest.TestCase):
         assert python_bridge.IMAGE_MODEL_REGISTRY == {}
         assert python_bridge.AUDIO_MODEL_REGISTRY == {}
         assert python_bridge.MUSIC_MODEL_REGISTRY == {}
+
+    def test_unload_models_does_not_import_mlx_for_cache_clear(self):
+        python_bridge.MODEL_REGISTRY["drop"] = object()
+        sys.modules.pop("mlx.core", None)
+
+        python_bridge.unload_models()
+
+        assert "mlx.core" not in sys.modules
+        assert python_bridge.MODEL_REGISTRY == {}
+
+    def test_clear_accelerator_cache_uses_existing_mlx_module(self):
+        fake_mx = MagicMock()
+
+        with patch.dict(sys.modules, {"mlx.core": fake_mx}):
+            python_bridge._clear_accelerator_cache()
+
+        fake_mx.clear_cache.assert_called_once()
 
     def test_music_init_remains_lazy(self):
         python_bridge.MUSIC_MODEL_REGISTRY.clear()
