@@ -272,15 +272,24 @@ def load_music_model_if_needed(model_id: str, request: Optional[dict] = None):
 
 
 def _normalize_messages(messages: list) -> list:
-    """Ensure tool_call.function.arguments is a dict, not a JSON string.
+    """Normalize OpenAI-style messages for stricter chat templates.
 
     Some templates (e.g. Qwen3.5) call |items on arguments, which only
     works on mappings. The OpenAI spec allows arguments as a JSON string,
     so we convert it here.
+
+    Qwen templates also require system instructions to be a single leading
+    message. Merge any later system messages into that leading message.
     """
     normalized = []
+    system_contents = []
     for msg in messages:
         msg = dict(msg)
+        if msg.get("role") == "system":
+            content = msg.get("content")
+            if content:
+                system_contents.append(str(content))
+            continue
         if "tool_calls" in msg and isinstance(msg["tool_calls"], list):
             tc_list = []
             for tc in msg["tool_calls"]:
@@ -296,6 +305,14 @@ def _normalize_messages(messages: list) -> list:
                 tc_list.append(tc)
             msg["tool_calls"] = tc_list
         normalized.append(msg)
+    if system_contents:
+        normalized.insert(
+            0,
+            {
+                "role": "system",
+                "content": "\n\n".join(system_contents),
+            },
+        )
     return normalized
 
 
@@ -394,9 +411,9 @@ def handle_chat_completion(request: dict) -> None:
 
     try:
         model, processor, config = load_model_if_needed(model_id, request=request)
+        normalized_messages = _normalize_messages(messages)
 
         if tools:
-            normalized_messages = _normalize_messages(messages)
             prompt = processor.apply_chat_template(
                 normalized_messages,
                 tools=tools,
@@ -408,7 +425,7 @@ def handle_chat_completion(request: dict) -> None:
             prompt = apply_chat_template(
                 processor,
                 config,
-                messages,
+                normalized_messages,
                 num_images=len(images),
                 **chat_template_kwargs,
             )

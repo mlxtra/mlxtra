@@ -50,6 +50,28 @@ class TestNormalizeMessages(unittest.TestCase):
     def test_empty_messages(self):
         assert python_bridge._normalize_messages([]) == []
 
+    def test_system_messages_are_merged_at_beginning(self):
+        messages = [
+            {"role": "system", "content": "Base instructions"},
+            {"role": "user", "content": "Create music"},
+            {"role": "assistant", "content": "Do you want vocals?"},
+            {"role": "system", "content": "Music is ready"},
+            {"role": "user", "content": "Instrumental"},
+        ]
+
+        result = python_bridge._normalize_messages(messages)
+
+        assert result[0] == {
+            "role": "system",
+            "content": "Base instructions\n\nMusic is ready",
+        }
+        assert [message["role"] for message in result] == [
+            "system",
+            "user",
+            "assistant",
+            "user",
+        ]
+
 
 class TestParseToolCalls(unittest.TestCase):
     def test_qwen_tool_call_coerces_music_parameters(self):

@@ -192,12 +192,19 @@ struct GeneratedAudioAttachmentView: View {
     @State private var duration: Double = 0
     @State private var currentTime: Double = 0
     @State private var playbackTask: Task<Void, Never>?
-    private let controlButtonSize: CGFloat = 38
-    private let playButtonSize: CGFloat = 42
+    private let controlButtonSize: CGFloat = 34
+    private let playButtonSize: CGFloat = 44
+
+    private var isMusic: Bool {
+        audioURL.path.localizedCaseInsensitiveContains("music")
+    }
 
     private var mediaTitle: String {
-        let path = audioURL.path.lowercased()
-        return path.contains("music") ? "Generated music" : "Generated speech"
+        isMusic ? "Generated music" : "Generated speech"
+    }
+
+    private var displayedProgress: Double {
+        isSeeking ? playbackProgress : (duration > 0 ? currentTime / duration : 0)
     }
 
     private var formattedCurrentTime: String {
@@ -209,86 +216,74 @@ struct GeneratedAudioAttachmentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
                 Button(action: togglePlayback) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: playButtonSize, height: playButtonSize)
-                        .background(Color.accentColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .background(
+                            LinearGradient(
+                                colors: [
+                                    Color.accentColor,
+                                    Color(red: 0.08, green: 0.46, blue: 0.94)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .shadow(color: Color.accentColor.opacity(0.16), radius: 7, x: 0, y: 3)
                 }
                 .buttonStyle(.plain)
                 .help(isPlaying ? "Pause" : "Play")
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(mediaTitle)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
 
                     Text(audioURL.lastPathComponent)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                .padding(.top, 2)
 
                 Spacer(minLength: 8)
 
-                Button(action: revealAudio) {
-                    Label("Reveal", systemImage: "folder")
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: controlButtonSize, height: controlButtonSize)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                HStack(spacing: 8) {
+                    audioActionButton(systemImage: "folder", help: "Reveal in Finder", action: revealAudio)
+                    audioActionButton(systemImage: "square.and.arrow.down", help: "Download audio", action: downloadAudio)
                 }
-                .buttonStyle(.plain)
-                .help("Reveal in Finder")
-
-                Button(action: downloadAudio) {
-                    Label("Download", systemImage: "square.and.arrow.down")
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: controlButtonSize, height: controlButtonSize)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-                .help("Download audio")
             }
 
-            VStack(spacing: 4) {
-                Slider(
-                    value: Binding(
-                        get: { isSeeking ? playbackProgress : (duration > 0 ? currentTime / duration : 0) },
-                        set: { newValue in
-                            isSeeking = true
-                            playbackProgress = newValue
-                        }
-                    ),
-                    in: 0...1,
-                    onEditingChanged: { editing in
-                        if !editing {
-                            let seekTime = playbackProgress * duration
+            VStack(spacing: 5) {
+                AudioWaveformScrubber(
+                    progress: displayedProgress,
+                    seed: audioURL.lastPathComponent,
+                    onSeek: { newProgress, isFinal in
+                        let clampedProgress = min(max(newProgress, 0), 1)
+                        isSeeking = !isFinal
+                        playbackProgress = clampedProgress
+                        let seekTime = clampedProgress * duration
+                        currentTime = seekTime
+                        if isFinal {
                             player?.currentTime = seekTime
-                            currentTime = seekTime
-                            isSeeking = false
                         }
                     }
                 )
-                .tint(Color.accentColor)
-                .controlSize(.small)
+                .frame(height: 20)
 
                 HStack {
                     Text(formattedCurrentTime)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(formattedDuration)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -297,18 +292,20 @@ struct GeneratedAudioAttachmentView: View {
         .background(
             LinearGradient(
                 colors: [
-                    Color(NSColor.controlBackgroundColor),
-                    Color.accentColor.opacity(0.055)
+                    Color(NSColor.controlBackgroundColor).opacity(0.92),
+                    Color.accentColor.opacity(0.08),
+                    Color(NSColor.windowBackgroundColor).opacity(0.9)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.12), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.035), radius: 12, x: 0, y: 5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(audioURL.lastPathComponent)
         .contextMenu {
@@ -332,6 +329,23 @@ struct GeneratedAudioAttachmentView: View {
         } message: {
             Text(downloadError ?? "Unable to save the audio.")
         }
+    }
+
+    private func audioActionButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: controlButtonSize, height: controlButtonSize)
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color(NSColor.separatorColor).opacity(0.28), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func loadPlayer() {
@@ -442,6 +456,78 @@ struct GeneratedAudioAttachmentView: View {
 
     private func revealAudio() {
         NSWorkspace.shared.activateFileViewerSelecting([audioURL])
+    }
+}
+
+private struct AudioWaveformScrubber: View {
+    let progress: Double
+    let seed: String
+    let onSeek: (Double, Bool) -> Void
+
+    private let barCount = 42
+    private let barSpacing: CGFloat = 3
+
+    var body: some View {
+        GeometryReader { geometry in
+            let clampedProgress = min(max(progress, 0), 1)
+            let activeWidth = geometry.size.width * clampedProgress
+
+            ZStack(alignment: .leading) {
+                waveformBars(
+                    size: geometry.size,
+                    color: Color(NSColor.separatorColor).opacity(0.42)
+                )
+
+                waveformBars(
+                    size: geometry.size,
+                    color: Color.accentColor
+                )
+                .mask(alignment: .leading) {
+                    Rectangle()
+                        .frame(width: activeWidth)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        onSeek(value.location.x / max(geometry.size.width, 1), false)
+                    }
+                    .onEnded { value in
+                        onSeek(value.location.x / max(geometry.size.width, 1), true)
+                    }
+            )
+        }
+        .accessibilityLabel("Audio progress")
+        .accessibilityValue("\(Int(progress * 100)) percent")
+    }
+
+    private func waveformBars(size: CGSize, color: Color) -> some View {
+        let availableWidth = max(size.width - CGFloat(barCount - 1) * barSpacing, 1)
+        let barWidth = max(availableWidth / CGFloat(barCount), 2)
+
+        return HStack(alignment: .center, spacing: barSpacing) {
+            ForEach(0..<barCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: barWidth / 2, style: .continuous)
+                    .fill(color)
+                    .frame(width: barWidth, height: barHeight(index: index, maxHeight: size.height))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func barHeight(index: Int, maxHeight: CGFloat) -> CGFloat {
+        let base = stableSeed + index * 37
+        let wave = abs(sin(Double(base) * 0.41))
+        let accent = abs(cos(Double(base) * 0.17))
+        let ratio = 0.28 + (wave * 0.47) + (accent * 0.2)
+        return max(7, min(maxHeight, maxHeight * ratio))
+    }
+
+    private var stableSeed: Int {
+        seed.unicodeScalars.reduce(17) { partialResult, scalar in
+            (partialResult &* 31) &+ Int(scalar.value)
+        }
     }
 }
 

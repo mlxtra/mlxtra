@@ -981,18 +981,20 @@ class ChatViewModel: ObservableObject {
                 messages = toolMessages
             } else {
                 messages = []
-                messages.append(ExecutionMessage(role: .system, content: systemPrompt))
+                var systemContent = systemPrompt
+
+                if isMusicGeneration {
+                    musicIntentState = MusicIntentState.forPrompt(prompt)
+                    systemContent += "\n\n\(musicIntentState.systemInstruction)"
+                }
+
+                messages.append(ExecutionMessage(role: .system, content: systemContent))
 
                 if let chat = selectedChat {
                     for message in contextMessages(from: chat, excluding: aiMessage.id) {
                         let role: MessageRole = message.isUser ? .user : .assistant
                         messages.append(ExecutionMessage(role: role, content: message.content))
                     }
-                }
-
-                if isMusicGeneration {
-                    musicIntentState = MusicIntentState.forPrompt(prompt)
-                    messages.append(ExecutionMessage(role: .system, content: musicIntentState.systemInstruction))
                 }
             }
 
