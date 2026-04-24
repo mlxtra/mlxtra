@@ -107,6 +107,95 @@ class RuntimeManager: ObservableObject {
         loadingMessage = ""
     }
 
+    /// Validate only the runtime pieces needed to download this model.
+    /// Downloading should not require unrelated model runtimes to be present.
+    func validateDownloadSupport(for modelId: String) throws {
+        let bundlePath = runtimeBundleURL
+        try validateRequiredDirectory(bundlePath, error: .bundleNotFound(bundlePath.path))
+
+        let pythonHome = pythonHomePath()
+        try validateRequiredDirectory(
+            pythonHome,
+            error: .runtimeComponentNotFound("Bundled Python home", pythonHome.path)
+        )
+
+        if modelId.hasPrefix("ACE-Step/") {
+            let aceStepPython = acestepPythonExecutablePath()
+            try validateRequiredFile(
+                aceStepPython,
+                error: .runtimeComponentNotFound("ACE-Step Python executable", aceStepPython.path),
+                executable: true
+            )
+
+            let aceStepHelper = acestepDownloadHelperPath()
+            try validateRequiredFile(
+                aceStepHelper,
+                error: .runtimeComponentNotFound("ACE-Step download helper", aceStepHelper.path)
+            )
+
+            try validatePythonImports(
+                pythonPath: aceStepPython,
+                packages: ["huggingface_hub", "tqdm", "acestep"],
+                context: "ACE-Step download runtime"
+            )
+        } else {
+            let pythonPath = pythonExecutablePath()
+            try validateRequiredFile(pythonPath, error: .pythonNotFound(pythonPath.path), executable: true)
+
+            let huggingFaceHelper = huggingFaceDownloadHelperPath()
+            try validateRequiredFile(
+                huggingFaceHelper,
+                error: .runtimeComponentNotFound("Hugging Face download helper", huggingFaceHelper.path)
+            )
+
+            try validatePythonImports(
+                pythonPath: pythonPath,
+                packages: ["huggingface_hub", "tqdm"],
+                context: "Hugging Face download runtime"
+            )
+        }
+    }
+
+    private func validatePythonImports(pythonPath: URL, packages: [String], context: String) throws {
+        let process = Process()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+
+        process.executableURL = pythonPath
+        process.arguments = [
+            "-c",
+            "import importlib, sys; [importlib.import_module(package) for package in sys.argv[1:]]",
+        ] + packages
+        process.environment = bundledPythonEnvironment()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw RuntimeError.pythonValidationFailed(context, error.localizedDescription)
+        }
+
+        guard process.terminationStatus == 0 else {
+            let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let stdout = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let details = (stderr.isEmpty ? stdout : stderr)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw RuntimeError.pythonValidationFailed(context, details.isEmpty ? "Python exited with status \(process.terminationStatus)" : details)
+        }
+    }
+
+    private func bundledPythonEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        for key in ["PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"] {
+            environment.removeValue(forKey: key)
+        }
+        environment["PYTHONHOME"] = pythonHomePath().path
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        return environment
+    }
+
     private func validateRequiredDirectory(_ url: URL, error: RuntimeError) throws {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
@@ -436,14 +525,15 @@ class RuntimeManager: ObservableObject {
 
 // MARK: - Errors
 
-enum RuntimeError: Error {
+enum RuntimeError: LocalizedError {
     case bundleNotFound(String)
     case pythonNotFound(String)
     case bridgeScriptNotFound(String)
     case runtimeComponentNotFound(String, String)
+    case pythonValidationFailed(String, String)
     case initializationFailed(String)
     
-    var localizedDescription: String {
+    var errorDescription: String? {
         switch self {
         case .bundleNotFound(let path):
             return "Python runtime bundle not found at \(path)"
@@ -453,6 +543,8 @@ enum RuntimeError: Error {
             return "Python bridge script not found at \(path)"
         case .runtimeComponentNotFound(let component, let path):
             return "\(component) not found at \(path). Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
+        case .pythonValidationFailed(let context, let details):
+            return "\(context) is incomplete or broken. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh. \(details)"
         case .initializationFailed(let message):
             return "Failed to initialize runtime: \(message)"
         }

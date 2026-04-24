@@ -12,6 +12,8 @@ RUNTIME_DIR="${PROJECT_DIR}/MLXHub/Resources/runtime/macos-arm64"
 PYTHON_HOME="${RUNTIME_DIR}/python/Frameworks/Versions/3.12"
 MAIN_PYTHON="${RUNTIME_DIR}/venv/bin/python"
 ACE_PYTHON="${RUNTIME_DIR}/acestep-venv/bin/python"
+MAIN_SITE_PACKAGES="${RUNTIME_DIR}/venv/lib/python3.12/site-packages"
+ACE_SITE_PACKAGES="${RUNTIME_DIR}/acestep-venv/lib/python3.12/site-packages"
 MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
 
 fail() {
@@ -127,13 +129,40 @@ metadata.version("ace-step")
 PY
 }
 
+validate_download_helpers() {
+    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${MAIN_PYTHON}" - <<'PY'
+import importlib
+
+for package in ("huggingface_hub", "tqdm"):
+    importlib.import_module(package)
+PY
+
+    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${ACE_PYTHON}" - <<'PY'
+import importlib
+
+for package in ("huggingface_hub", "tqdm", "acestep"):
+    importlib.import_module(package)
+PY
+}
+
+validate_download_helper_structure() {
+    require_directory "${MAIN_SITE_PACKAGES}/huggingface_hub" "Main runtime huggingface_hub package"
+    require_directory "${MAIN_SITE_PACKAGES}/tqdm" "Main runtime tqdm package"
+    require_directory "${ACE_SITE_PACKAGES}/huggingface_hub" "ACE-Step runtime huggingface_hub package"
+    require_directory "${ACE_SITE_PACKAGES}/tqdm" "ACE-Step runtime tqdm package"
+    require_directory "${ACE_SITE_PACKAGES}/acestep" "ACE-Step runtime acestep package"
+}
+
 validate_manifest
 
 if [ -n "${SCRIPT_INPUT_FILE_COUNT:-}" ]; then
-    echo "MLXHub runtime bundle structural validation passed"
+    validate_download_helper_structure
+    echo "MLXHub runtime bundle structural and download-helper package validation passed"
     exit 0
 fi
 
+validate_download_helper_structure
+validate_download_helpers
 validate_runtime_python
 
 echo "MLXHub runtime bundle validation passed"

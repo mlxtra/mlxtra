@@ -45,8 +45,21 @@ final class RuntimeManagerTests: XCTestCase {
             "ACE-Step Python executable not found at /path/to/acestep-python. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
         )
         XCTAssertEqual(
+            RuntimeError.pythonValidationFailed("Hugging Face download runtime", "No module named 'huggingface_hub'").localizedDescription,
+            "Hugging Face download runtime is incomplete or broken. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh. No module named 'huggingface_hub'"
+        )
+        XCTAssertEqual(
             RuntimeError.initializationFailed("test failure").localizedDescription,
             "Failed to initialize runtime: test failure"
+        )
+    }
+
+    func testRuntimeErrorBridgesLocalizedDescriptionThroughError() {
+        let error: Error = RuntimeError.runtimeComponentNotFound("Hugging Face download helper", "/path/to/helper")
+
+        XCTAssertEqual(
+            error.localizedDescription,
+            "Hugging Face download helper not found at /path/to/helper. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
         )
     }
 
@@ -221,6 +234,8 @@ extension RuntimeError: Equatable {
         case (.bridgeScriptNotFound(let l), .bridgeScriptNotFound(let r)) where l == r:
             return true
         case (.runtimeComponentNotFound(let lName, let lPath), .runtimeComponentNotFound(let rName, let rPath)) where lName == rName && lPath == rPath:
+            return true
+        case (.pythonValidationFailed(let lContext, let lDetails), .pythonValidationFailed(let rContext, let rDetails)) where lContext == rContext && lDetails == rDetails:
             return true
         case (.initializationFailed(let l), .initializationFailed(let r)) where l == r:
             return true

@@ -211,7 +211,7 @@ final class ModelDownloadManager: ObservableObject {
             guard let self else { return }
 
             do {
-                try await runtimeManager.initialize()
+                try runtimeManager.validateDownloadSupport(for: model.modelId)
                 if model.modelId.hasPrefix("ACE-Step/") {
                     try await runAceStepDownload(modelId: model.modelId)
                 } else {
