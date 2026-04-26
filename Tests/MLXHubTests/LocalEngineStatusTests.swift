@@ -14,6 +14,7 @@ final class LocalEngineStatusTests: XCTestCase {
             selectedModelName: "Qwen 3.5",
             activeModelName: "Qwen 3.5",
             activeModelRole: .chat,
+            pendingDownloadModelId: nil,
             pendingDownloadModelName: nil,
             freedModelName: nil,
             lastErrorMessage: nil
@@ -38,6 +39,7 @@ final class LocalEngineStatusTests: XCTestCase {
             selectedModelName: "Qwen 3.5",
             activeModelName: "FLUX.2-klein-4B",
             activeModelRole: .image,
+            pendingDownloadModelId: nil,
             pendingDownloadModelName: nil,
             freedModelName: nil,
             lastErrorMessage: nil
@@ -62,6 +64,7 @@ final class LocalEngineStatusTests: XCTestCase {
             selectedModelName: "Qwen 3.5",
             activeModelName: "ACE-Step 1.5 Turbo",
             activeModelRole: .music,
+            pendingDownloadModelId: nil,
             pendingDownloadModelName: nil,
             freedModelName: nil,
             lastErrorMessage: nil
@@ -84,6 +87,7 @@ final class LocalEngineStatusTests: XCTestCase {
             selectedModelName: "Qwen 3.5",
             activeModelName: nil,
             activeModelRole: .chat,
+            pendingDownloadModelId: nil,
             pendingDownloadModelName: nil,
             freedModelName: nil,
             lastErrorMessage: nil
@@ -106,6 +110,7 @@ final class LocalEngineStatusTests: XCTestCase {
             selectedModelName: "Qwen 3.5",
             activeModelName: nil,
             activeModelRole: .chat,
+            pendingDownloadModelId: nil,
             pendingDownloadModelName: nil,
             freedModelName: "Qwen 3.5",
             lastErrorMessage: nil
@@ -129,6 +134,7 @@ final class LocalEngineStatusTests: XCTestCase {
             selectedModelName: "Qwen 3.5",
             activeModelName: nil,
             activeModelRole: .chat,
+            pendingDownloadModelId: "ACE-Step/acestep-v15-turbo-continuous",
             pendingDownloadModelName: "ACE-Step 1.5 Turbo",
             freedModelName: nil,
             lastErrorMessage: nil
@@ -137,6 +143,7 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertEqual(status.state, .needsDownload)
         XCTAssertEqual(status.title, "Needs download")
         XCTAssertEqual(status.primaryAction, .openModels)
+        XCTAssertEqual(status.primaryActionModelId, "ACE-Step/acestep-v15-turbo-continuous")
         XCTAssertTrue(status.isVisibleInComposer)
     }
 
@@ -152,6 +159,7 @@ final class LocalEngineStatusTests: XCTestCase {
             selectedModelName: "Qwen 3.5",
             activeModelName: nil,
             activeModelRole: .chat,
+            pendingDownloadModelId: nil,
             pendingDownloadModelName: nil,
             freedModelName: nil,
             lastErrorMessage: nil

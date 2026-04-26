@@ -2,6 +2,9 @@ import SwiftUI
 
 struct WelcomeView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(PromptConfiguration.hasSeenFirstRunGuideKey) private var hasSeenFirstRunGuide = false
+    @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
     @State private var welcomeMessage: String = ""
 
     private let welcomeMessages = [
@@ -28,6 +31,26 @@ struct WelcomeView: View {
             Spacer()
 
             greeting
+
+            if !hasSeenFirstRunGuide {
+                FirstRunGuideView(
+                    modelName: viewModel.selectedModel.displayName,
+                    onOpenModels: {
+                        pendingDownloadModelId = viewModel.selectedModel.modelId
+                        openSettings()
+                    },
+                    onDeepResearch: {
+                        viewModel.selectTool(.research)
+                        hasSeenFirstRunGuide = true
+                    },
+                    onDismiss: {
+                        hasSeenFirstRunGuide = true
+                    }
+                )
+                .frame(maxWidth: 720)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+            }
 
             ComposerView(viewModel: viewModel)
                 .frame(maxWidth: 720)
@@ -68,6 +91,65 @@ struct WelcomeView: View {
         }
 
         welcomeMessage = newMessage
+    }
+}
+
+private struct FirstRunGuideView: View {
+    let modelName: String
+    let onOpenModels: () -> Void
+    let onDeepResearch: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30, height: 30)
+                .background(Color.accentColor.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Start with \(modelName)")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Download once, then chat locally. Deep Research can use live web results when selected.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                onOpenModels()
+            } label: {
+                Label("Open Models", systemImage: "square.grid.2x2")
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button {
+                onDeepResearch()
+            } label: {
+                Label("Deep Research", systemImage: "magnifyingglass")
+            }
+            .buttonStyle(.bordered)
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .help("Dismiss")
+        }
+        .padding(12)
+        .background(.thinMaterial.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
     }
 }
 

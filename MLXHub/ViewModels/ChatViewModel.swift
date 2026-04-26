@@ -216,6 +216,11 @@ enum ChatToolExecutionOutcome: Equatable {
     case downloadRequired(DownloadableModel)
 }
 
+private enum PendingEngineDownloadReason {
+    case generation
+    case preflight
+}
+
 @MainActor
 protocol ChatToolExecutionServicing: AnyObject {
     func executeWebSearch(query: String) async -> String
@@ -485,6 +490,7 @@ class ChatViewModel: ObservableObject {
     private let musicGenerationModelName = "ACE-Step 1.5 Turbo"
     private let maxAutoToolDepth = 4
     private var pendingDownloadMonitorTask: Task<Void, Never>?
+    private var pendingEngineDownloadReason: PendingEngineDownloadReason?
 
     // MARK: - Computed Properties
     var hasSelectedImages: Bool {
@@ -515,6 +521,7 @@ class ChatViewModel: ObservableObject {
             selectedModelName: selectedModel.displayName,
             activeModelName: loadedEngineModelName ?? activeEngineModelName,
             activeModelRole: loadedEngineModelRole ?? activeEngineModelRole,
+            pendingDownloadModelId: pendingEngineDownloadModel?.modelId,
             pendingDownloadModelName: pendingEngineDownloadModel?.name,
             freedModelName: freedEngineModelName,
             lastErrorMessage: localEngineErrorMessage
@@ -784,104 +791,103 @@ class ChatViewModel: ObservableObject {
     }
 
     func refreshLocalEngineDownloadStatus() {
-        guard let pendingEngineDownloadModel else { return }
+        let currentPendingModel = pendingEngineDownloadModel
+        let selectionRequirement = downloadRequirementForCurrentSelection()
 
         Task {
-            if await isModelDownloadedOffMain(modelId: pendingEngineDownloadModel.modelId),
-               self.pendingEngineDownloadModel?.modelId == pendingEngineDownloadModel.modelId {
-                self.clearPendingEngineDownloadModel(matching: pendingEngineDownloadModel.modelId)
+            if let currentPendingModel,
+               await isModelDownloadedOffMain(modelId: currentPendingModel.modelId),
+               self.pendingEngineDownloadModel?.modelId == currentPendingModel.modelId {
+                self.clearPendingEngineDownloadModel(matching: currentPendingModel.modelId)
             }
+
+            await refreshSelectedDownloadRequirement(selectionRequirement)
         }
+    }
+
+    private func refreshSelectedDownloadRequirement(_ requirement: DownloadableModel?) async {
+        guard let requirement else {
+            if pendingEngineDownloadReason == .preflight {
+                clearPendingEngineDownloadModel()
+            }
+            return
+        }
+
+        if await isModelDownloadedOffMain(modelId: requirement.modelId) {
+            if pendingEngineDownloadReason == .preflight {
+                clearPendingEngineDownloadModel()
+            }
+            return
+        }
+
+        if pendingEngineDownloadReason == .generation,
+           pendingEngineDownloadModel?.modelId != requirement.modelId,
+           selectedTool == .auto || selectedTool == .research {
+            return
+        }
+
+        if pendingEngineDownloadModel?.modelId != requirement.modelId || pendingEngineDownloadReason != .preflight {
+            pendingEngineDownloadModel = requirement
+            pendingEngineDownloadReason = .preflight
+            startPendingDownloadMonitor(for: requirement)
+        }
+    }
+
+    private func downloadRequirementForCurrentSelection() -> DownloadableModel? {
+        switch selectedTool {
+        case .auto, .research:
+            return downloadableModel(
+                modelId: selectedModel.modelId,
+                name: selectedModel.displayName,
+                modality: .vision,
+                downloadSizeGB: selectedModel.info.downloadSize
+            )
+        case .image:
+            return downloadableModel(
+                modelId: imageGenerationModelId,
+                name: imageGenerationModelName,
+                modality: .image,
+                downloadSizeGB: runtimeManager.estimatedModelSize(modelId: imageGenerationModelId)
+            )
+        case .tts:
+            return downloadableModel(
+                modelId: speechGenerationModelId,
+                name: speechGenerationModelName,
+                modality: .audio,
+                downloadSizeGB: runtimeManager.estimatedModelSize(modelId: speechGenerationModelId)
+            )
+        case .music:
+            return downloadableModel(
+                modelId: musicGenerationModelId,
+                name: musicGenerationModelName,
+                modality: .music,
+                downloadSizeGB: runtimeManager.estimatedModelSize(modelId: musicGenerationModelId)
+            )
+        }
+    }
+
+    private func clearPendingEngineDownloadModel() {
+        pendingEngineDownloadModel = nil
+        pendingEngineDownloadReason = nil
+        pendingDownloadMonitorTask?.cancel()
+        pendingDownloadMonitorTask = nil
     }
 
     // MARK: - Private Methods
     private var webSearchTool: [String: Any] {
-        [
-            "type": "function",
-            "function": [
-                "name": "web_search",
-                "description": "Search the web for current information, news, facts, or any topic that requires up-to-date data.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "query": ["type": "string", "description": "The search query"]
-                    ],
-                    "required": ["query"]
-                ]
-            ]
-        ]
+        PromptConfiguration.toolDefinition(named: "web_search") ?? PromptConfiguration.webSearchTool
     }
 
     private var imageGenerationTool: [String: Any] {
-        [
-            "type": "function",
-            "function": [
-                "name": "generate_image",
-                "description": "Generate or edit an image when the user explicitly asks for a new visual, image, illustration, photo, mockup, sprite, texture, or image edit. Do not use this tool for describing or analyzing attached images.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "prompt": [
-                            "type": "string",
-                            "description": "A detailed image generation or image editing prompt."
-                        ]
-                    ],
-                    "required": ["prompt"]
-                ]
-            ]
-        ]
+        PromptConfiguration.toolDefinition(named: "generate_image") ?? PromptConfiguration.imageGenerationTool
     }
 
     private var speechGenerationTool: [String: Any] {
-        [
-            "type": "function",
-            "function": [
-                "name": "create_speech",
-                "description": "Create spoken audio from text when the user asks for text-to-speech, narration, voiceover, or speech audio.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "text": [
-                            "type": "string",
-                            "description": "The exact text to turn into spoken audio."
-                        ]
-                    ],
-                    "required": ["text"]
-                ]
-            ]
-        ]
+        PromptConfiguration.toolDefinition(named: "create_speech") ?? PromptConfiguration.speechGenerationTool
     }
 
     private var musicGenerationTool: [String: Any] {
-        [
-            "type": "function",
-            "function": [
-                "name": "generate_music",
-                "description": "Create a song, instrumental track, beat, loop, background music, or music sample only after the user has specified instrumental music or approved lyrics for vocals.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "caption": [
-                            "type": "string",
-                            "description": "A concise music prompt describing genre, mood, instruments, tempo, vocals, and use case."
-                        ],
-                        "lyrics": [
-                            "type": "string",
-                            "description": "Optional lyrics with section labels like [verse] and [chorus]."
-                        ],
-                        "duration": [
-                            "type": "number",
-                            "description": "Optional duration in seconds. Use 30 unless the user asks otherwise."
-                        ],
-                        "instrumental": [
-                            "type": "boolean",
-                            "description": "True when the user asks for instrumental, beat, backing track, or no vocals."
-                        ]
-                    ],
-                    "required": ["caption"]
-                ]
-            ]
-        ]
+        PromptConfiguration.toolDefinition(named: "generate_music") ?? PromptConfiguration.musicGenerationTool
     }
 
     private var shouldIncludeAutoTools: Bool {
@@ -889,32 +895,29 @@ class ChatViewModel: ObservableObject {
     }
 
     private var systemPrompt: String {
-        """
-        You are a helpful assistant.
+        PromptConfiguration.systemPrompt()
+    }
 
-        When the user asks you to create, generate, draw, edit, or make an image, use the generate_image tool. If the image needs current information, use web_search first, then use generate_image with the current information from the search result. Do not generate markdown image tags, image URLs, data URLs, or links to external image services. After the generate_image tool runs, the app displays the image automatically; respond with concise text only.
-
-        When the user asks you to create speech, narration, voiceover, or text-to-speech audio, use the create_speech tool with the exact text that should be spoken. After the create_speech tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
-
-        When the user asks you to create music, a song, beat, loop, soundtrack, instrumental, or background music, do not call generate_music until the request is ready.
-
-        Music readiness rules:
-        - If the user clearly asks for instrumental music, a beat, background music, a backing track, or no vocals, call generate_music with instrumental=true.
-        - If the user does not say whether they want instrumental music or vocals, ask: "Would you like instrumental music, or should I include vocals with lyrics? If you'd like lyrics, you can provide your own or I can write them for you."
-        - If the user wants vocals and provides lyrics, call generate_music with those lyrics.
-        - If the user wants vocals but does not provide lyrics, write lyrics with section labels like [verse], [chorus], and [bridge], then ask: "Here are the lyrics I wrote for your song:\n\n<lyrics>\n\nDo these look good, or would you like me to change anything before I generate the music?"
-        - If you wrote or revised lyrics, wait for explicit user approval before calling generate_music.
-        - After generate_music runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
-        """
+    private var deepResearchSystemPrompt: String {
+        PromptConfiguration.deepResearchSystemPrompt()
     }
 
     private var autoTools: [[String: Any]] {
-        [webSearchTool, imageGenerationTool, speechGenerationTool, musicGenerationTool]
+        PromptConfiguration.toolDefinitions()
+    }
+
+    private var deepResearchTools: [[String: Any]] {
+        [webSearchTool]
     }
 
     private func availableTools(toolDepth: Int) -> [[String: Any]]? {
-        guard shouldIncludeAutoTools else { return nil }
         guard toolDepth < maxAutoToolDepth else { return nil }
+
+        if selectedTool == .research {
+            return deepResearchTools
+        }
+
+        guard shouldIncludeAutoTools else { return nil }
         return autoTools
     }
 
@@ -932,6 +935,7 @@ class ChatViewModel: ObservableObject {
     private func requestDownloadBeforeUse(model: DownloadableModel) {
         modelDownloadRequest = model
         pendingEngineDownloadModel = model
+        pendingEngineDownloadReason = .generation
         startPendingDownloadMonitor(for: model)
         loadingMessage = ""
     }
@@ -977,11 +981,27 @@ class ChatViewModel: ObservableObject {
         return false
     }
 
+    private func operationNameForCurrentSelection() -> String {
+        switch selectedTool {
+        case .auto:
+            return "Chat"
+        case .image:
+            return "Image generation"
+        case .tts:
+            return "Speech generation"
+        case .music:
+            return "Music generation"
+        case .research:
+            return "Deep Research"
+        }
+    }
+
     private func generateResponse(for prompt: String, images: [URL], toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
         do {
             let isImageGeneration = selectedTool == .image
             let isSpeechGeneration = selectedTool == .tts
             let isMusicGeneration = selectedTool == .music
+            let isDeepResearch = selectedTool == .research
 
             let activeModelId = isImageGeneration ? imageGenerationModelId : selectedModel.modelId
             let resolvedModelId = isSpeechGeneration ? speechGenerationModelId : activeModelId
@@ -1000,6 +1020,16 @@ class ChatViewModel: ObservableObject {
                 modality: activeModality,
                 downloadSizeGB: downloadSize
             )
+
+            if let selectionRequirement = downloadRequirementForCurrentSelection(),
+               selectionRequirement.modelId != requiredModel.modelId {
+                guard await requireDownloadedModel(
+                    model: selectionRequirement,
+                    operation: operationNameForCurrentSelection()
+                ) else {
+                    return
+                }
+            }
 
             guard await requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
                 return
@@ -1074,7 +1104,7 @@ class ChatViewModel: ObservableObject {
                 messages = toolMessages
             } else {
                 messages = []
-                var systemContent = systemPrompt
+                var systemContent = isDeepResearch ? deepResearchSystemPrompt : systemPrompt
 
                 if isMusicGeneration {
                     musicIntentState = MusicIntentState.forPrompt(prompt)
@@ -1088,6 +1118,11 @@ class ChatViewModel: ObservableObject {
                         let role: MessageRole = message.isUser ? .user : .assistant
                         messages.append(ExecutionMessage(role: role, content: message.content))
                     }
+                }
+
+                if isDeepResearch {
+                    let researchContext = await seedDeepResearchContext(prompt: prompt)
+                    messages.append(contentsOf: researchContext)
                 }
             }
 
@@ -1157,6 +1192,44 @@ class ChatViewModel: ObservableObject {
                 name: toolCall.function.name
             ))
         }
+    }
+
+    private func seedDeepResearchContext(prompt: String) async -> [ExecutionMessage] {
+        let toolCall = ExecutionToolCall(
+            id: "deep-research-initial-search",
+            function: ExecutionToolCallFunction(
+                name: "web_search",
+                arguments: jsonArguments(["query": prompt])
+            )
+        )
+
+        loadingMessage = "Researching..."
+        beginToolCallProgress(
+            toolName: "Web search",
+            status: prompt,
+            icon: "magnifyingglass"
+        )
+
+        let result = await toolExecutor.executeWebSearch(query: prompt)
+        return [
+            ExecutionMessage(role: .assistant, toolCalls: [toolCall]),
+            ExecutionMessage(
+                role: .tool,
+                content: result,
+                toolCallId: toolCall.id,
+                name: "web_search"
+            )
+        ]
+    }
+
+    private func jsonArguments(_ arguments: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(arguments),
+              let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+
+        return string
     }
 
     private func defaultMusicParameters(caption: String) -> [String: Any] {
@@ -1926,9 +1999,7 @@ class ChatViewModel: ObservableObject {
 
     private func clearPendingEngineDownloadModel(matching modelId: String) {
         guard pendingEngineDownloadModel?.modelId == modelId else { return }
-        pendingEngineDownloadModel = nil
-        pendingDownloadMonitorTask?.cancel()
-        pendingDownloadMonitorTask = nil
+        clearPendingEngineDownloadModel()
     }
 
     func selectTool(_ tool: Tool) {
@@ -1937,11 +2008,13 @@ class ChatViewModel: ObservableObject {
             musicIntentState = .needsInstrumentalOrVocals
         }
         isToolMenuOpen = false
+        refreshLocalEngineDownloadStatus()
     }
 
     func selectModel(_ model: AIModel) {
         selectedModel = model
         isModelMenuOpen = false
+        refreshLocalEngineDownloadStatus()
     }
 
     func toggleToolMenu() {

@@ -243,6 +243,125 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertNil(viewModel.pendingEngineDownloadModel)
     }
 
+    func testSelectedImageModeShowsNeedsDownloadBeforeSend() async {
+        let executor = MockChatModelExecutor()
+        let imageModelId = "black-forest-labs/FLUX.2-klein-4B"
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+
+        viewModel.selectTool(.image)
+        viewModel.refreshLocalEngineDownloadStatus()
+        await waitUntil { viewModel.localEngineStatus.state == .needsDownload }
+
+        XCTAssertNil(viewModel.modelDownloadRequest)
+        XCTAssertEqual(viewModel.pendingEngineDownloadModel?.modelId, imageModelId)
+        XCTAssertEqual(viewModel.localEngineStatus.primaryActionModelId, imageModelId)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+        XCTAssertEqual(viewModel.chats.first?.messages.count, 0)
+    }
+
+    func testPreflightDownloadStatusClearsAfterDownload() async {
+        let executor = MockChatModelExecutor()
+        let imageModelId = "black-forest-labs/FLUX.2-klein-4B"
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+
+        viewModel.selectTool(.image)
+        await waitUntil { viewModel.localEngineStatus.state == .needsDownload }
+
+        runtimeManager.downloadedModelIds.insert(imageModelId)
+        viewModel.refreshLocalEngineDownloadStatus()
+        await waitUntil { viewModel.pendingEngineDownloadModel == nil }
+
+        XCTAssertNotEqual(viewModel.localEngineStatus.state, .needsDownload)
+    }
+
+    func testAutoModeDoesNotKeepNonTextPreflightRequirement() async {
+        let executor = MockChatModelExecutor()
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+
+        viewModel.selectTool(.music)
+        await waitUntil { viewModel.localEngineStatus.state == .needsDownload }
+
+        viewModel.selectTool(.auto)
+        await waitUntil { viewModel.pendingEngineDownloadModel == nil }
+
+        XCTAssertNotEqual(viewModel.localEngineStatus.state, .needsDownload)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+    }
+
+    func testMissingMusicModelBlocksExplicitMusicGenerationBeforeChatLoad() async {
+        let executor = MockChatModelExecutor()
+        let musicModelId = "ACE-Step/acestep-v15-turbo-continuous"
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.music)
+        viewModel.inputText = "Make an instrumental synthwave loop"
+
+        viewModel.sendMessage()
+        await waitUntil { viewModel.modelDownloadRequest?.modelId == musicModelId }
+
+        XCTAssertEqual(viewModel.pendingEngineDownloadModel?.modelId, musicModelId)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+        XCTAssertEqual(viewModel.chats.first?.messages.count, 2)
+    }
+
+    func testDeepResearchSeedsWebSearchAndLimitsToolsToSearch() async {
+        resetPromptConfigurationDefaults()
+        let executor = MockChatModelExecutor(events: [
+            .complete("Research answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 1))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService(webSearchResult: "Source context")
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.research)
+        viewModel.inputText = "What changed in Swift concurrency recently?"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+
+        let request = executor.receivedRequests[0]
+        XCTAssertEqual(toolExecutor.webSearchQueries, ["What changed in Swift concurrency recently?"])
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("Deep Research mode") == true })
+        XCTAssertTrue(request.messages.contains { $0.role == .tool && $0.content == "Source context" })
+
+        let toolNames = request.tools?.compactMap { tool -> String? in
+            (tool["function"] as? [String: Any])?["name"] as? String
+        }
+        XCTAssertEqual(toolNames, ["web_search"])
+    }
+
     func testReadyStatusUsesExecutorLoadedModelInsteadOfSelectedModel() {
         let executor = MockChatModelExecutor()
         executor.isReady = true
@@ -308,6 +427,12 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         XCTFail("Timed out waiting for condition")
+    }
+
+    private func resetPromptConfigurationDefaults() {
+        UserDefaults.standard.removeObject(forKey: PromptConfiguration.systemPromptKey)
+        UserDefaults.standard.removeObject(forKey: PromptConfiguration.deepResearchSystemPromptKey)
+        UserDefaults.standard.removeObject(forKey: PromptConfiguration.toolDefinitionsKey)
     }
 }
 
@@ -423,14 +548,29 @@ private final class MockChatPersistenceService: ChatPersistenceServicing {
 
 @MainActor
 private final class MockChatToolExecutionService: ChatToolExecutionServicing {
+    private let webSearchResult: String
+    private let mediaOutcome: ChatToolExecutionOutcome
+    private(set) var webSearchQueries: [String] = []
+    private(set) var mediaPlans: [ChatMediaToolExecutionPlan] = []
+
+    init(
+        webSearchResult: String = "unused",
+        mediaOutcome: ChatToolExecutionOutcome = .toolMessage("unused")
+    ) {
+        self.webSearchResult = webSearchResult
+        self.mediaOutcome = mediaOutcome
+    }
+
     func executeWebSearch(query: String) async -> String {
-        "unused"
+        webSearchQueries.append(query)
+        return webSearchResult
     }
 
     func executeMediaTool(
         plan: ChatMediaToolExecutionPlan,
         onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
     ) async -> ChatToolExecutionOutcome {
-        .toolMessage("unused")
+        mediaPlans.append(plan)
+        return mediaOutcome
     }
 }

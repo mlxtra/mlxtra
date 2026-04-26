@@ -30,6 +30,7 @@
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
 		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
 		8A010001000000000000001B /* LocalEngineStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101B /* LocalEngineStatus.swift */; };
+		8A010001000000000000001C /* PromptConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101C /* PromptConfiguration.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -59,6 +60,7 @@
 		8A0100010000000000001019 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
 		8A010001000000000000101A /* bridge_utils.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = bridge_utils.py; sourceTree = "<group>"; };
 		8A010001000000000000101B /* LocalEngineStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalEngineStatus.swift; sourceTree = "<group>"; };
+		8A010001000000000000101C /* PromptConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptConfiguration.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -124,6 +126,7 @@
 				8A010001000000000000100A /* Chat.swift */,
 				8A010001000000000000100B /* Tool.swift */,
 				8A010001000000000000100C /* AIModel.swift */,
+				8A010001000000000000101C /* PromptConfiguration.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -315,6 +318,7 @@
 				8A010001000000000000000A /* Chat.swift in Sources */,
 				8A010001000000000000000B /* Tool.swift in Sources */,
 				8A010001000000000000000C /* AIModel.swift in Sources */,
+				8A010001000000000000001C /* PromptConfiguration.swift in Sources */,
 				8A010001000000000000000D /* ModelExecutor.swift in Sources */,
 				8A010001000000000000000E /* VLMExecutor.swift in Sources */,
 				8A010001000000000000000F /* RuntimeManager.swift in Sources */,

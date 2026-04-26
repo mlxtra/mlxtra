@@ -85,6 +85,7 @@ struct LocalEngineStatus: Equatable {
     let systemImage: String
     let tone: Tone
     let primaryAction: Action?
+    let primaryActionModelId: String?
     let canFreeMemory: Bool
     let isVisibleInComposer: Bool
 
@@ -99,25 +100,13 @@ struct LocalEngineStatus: Equatable {
         selectedModelName: String,
         activeModelName: String?,
         activeModelRole: LocalEngineModelRole,
+        pendingDownloadModelId: String?,
         pendingDownloadModelName: String?,
         freedModelName: String?,
         lastErrorMessage: String?
     ) -> LocalEngineStatus {
         let modelName = activeModelName ?? selectedModelName
         let trimmedLoadingMessage = loadingMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let pendingDownloadModelName {
-            return LocalEngineStatus(
-                state: .needsDownload,
-                title: "Needs download",
-                detail: "\(pendingDownloadModelName) needs to be downloaded before use.",
-                systemImage: "arrow.down.circle",
-                tone: .warning,
-                primaryAction: .openModels,
-                canFreeMemory: false,
-                isVisibleInComposer: true
-            )
-        }
 
         if let errorMessage = resolvedErrorMessage(runtimeState: runtimeState, lastErrorMessage: lastErrorMessage) {
             return LocalEngineStatus(
@@ -127,6 +116,7 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "exclamationmark.triangle",
                 tone: .danger,
                 primaryAction: .restart,
+                primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true
             )
@@ -140,6 +130,7 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "bolt.horizontal.circle",
                 tone: .accent,
                 primaryAction: nil,
+                primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true
             )
@@ -153,6 +144,7 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "clock",
                 tone: .accent,
                 primaryAction: nil,
+                primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true
             )
@@ -166,6 +158,21 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "sparkles",
                 tone: .accent,
                 primaryAction: nil,
+                primaryActionModelId: nil,
+                canFreeMemory: false,
+                isVisibleInComposer: true
+            )
+        }
+
+        if let pendingDownloadModelName {
+            return LocalEngineStatus(
+                state: .needsDownload,
+                title: "Needs download",
+                detail: "\(pendingDownloadModelName) needs to be downloaded before use.",
+                systemImage: "arrow.down.circle",
+                tone: .warning,
+                primaryAction: .openModels,
+                primaryActionModelId: pendingDownloadModelId,
                 canFreeMemory: false,
                 isVisibleInComposer: true
             )
@@ -179,6 +186,7 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "memorychip",
                 tone: .neutral,
                 primaryAction: nil,
+                primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true
             )
@@ -192,6 +200,7 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "checkmark.circle",
                 tone: .success,
                 primaryAction: nil,
+                primaryActionModelId: nil,
                 canFreeMemory: true,
                 isVisibleInComposer: true
             )
@@ -205,6 +214,7 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "circle",
                 tone: .neutral,
                 primaryAction: nil,
+                primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: false
             )
@@ -217,6 +227,7 @@ struct LocalEngineStatus: Equatable {
             systemImage: "circle",
             tone: .neutral,
             primaryAction: nil,
+            primaryActionModelId: nil,
             canFreeMemory: false,
             isVisibleInComposer: false
         )

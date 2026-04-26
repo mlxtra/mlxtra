@@ -242,6 +242,7 @@ private struct LocalEngineStatusPill: View {
     let onRestart: () -> Void
     let onFreeMemory: () -> Void
 
+    @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
     @State private var isPresented = false
 
     var body: some View {
@@ -275,6 +276,9 @@ private struct LocalEngineStatusPill: View {
                 canFreeMemory: canFreeMemory,
                 onOpenModels: {
                     isPresented = false
+                    if let modelId = status.primaryActionModelId {
+                        pendingDownloadModelId = modelId
+                    }
                     onOpenModels()
                 },
                 onRestart: {

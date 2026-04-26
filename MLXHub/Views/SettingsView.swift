@@ -3,8 +3,12 @@ import SwiftUI
 struct SettingsView: View {
     @StateObject private var downloadManager = ModelDownloadManager()
     @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
+    @AppStorage(PromptConfiguration.systemPromptKey) private var systemPrompt = PromptConfiguration.defaultSystemPrompt
+    @AppStorage(PromptConfiguration.deepResearchSystemPromptKey) private var deepResearchSystemPrompt = PromptConfiguration.defaultDeepResearchSystemPrompt
+    @AppStorage(PromptConfiguration.toolDefinitionsKey) private var toolDefinitionsJSON = PromptConfiguration.defaultToolDefinitionsJSON
     @State private var searchText = ""
     @State private var selectedFilter: ModelDownloadFilter = .all
+    @State private var selectedPane: SettingsPane = .models
 
     private var allModels: [DownloadableModel] {
         DownloadableModel.embedded
@@ -20,7 +24,83 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
+            panePicker
 
+            switch selectedPane {
+            case .models:
+                modelsPane
+            case .prompts:
+                promptsPane
+            }
+        }
+        .padding(24)
+        .frame(width: 720, height: 560)
+        .onAppear {
+            downloadManager.refreshStatuses()
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(selectedPane.title)
+                    .font(.largeTitle.weight(.semibold))
+
+                Text(selectedPane.subtitle)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if selectedPane == .models {
+                HStack(spacing: 8) {
+                    ModelSummaryBadge(
+                        title: "Ready",
+                        value: "\(readyCount)/\(allModels.count)",
+                        systemImage: "checkmark.circle.fill",
+                        tint: .green
+                    )
+
+                    ModelSummaryBadge(
+                        title: "Active",
+                        value: "\(activeCount)",
+                        systemImage: "arrow.down.circle.fill",
+                        tint: .accentColor
+                    )
+
+                    ModelSummaryBadge(
+                        title: "Size",
+                        value: formatSize(totalDownloadSizeGB),
+                        systemImage: "externaldrive.fill",
+                        tint: .secondary
+                    )
+
+                    Button {
+                        downloadManager.refreshStatuses()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 26, height: 26)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Refresh model status")
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    private var panePicker: some View {
+        Picker("Settings", selection: $selectedPane) {
+            ForEach(SettingsPane.allCases) { pane in
+                Text(pane.title).tag(pane)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 260)
+    }
+
+    private var modelsPane: some View {
+        VStack(alignment: .leading, spacing: 18) {
             if let pendingModel {
                 RequiredDownloadCallout(
                     model: pendingModel,
@@ -59,57 +139,32 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(24)
-        .frame(width: 720, height: 560)
-        .onAppear {
-            downloadManager.refreshStatuses()
-        }
     }
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Models")
-                    .font(.largeTitle.weight(.semibold))
+    private var promptsPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PromptEditorSection(
+                    title: "System Prompt",
+                    text: $systemPrompt,
+                    defaultValue: PromptConfiguration.defaultSystemPrompt
+                )
 
-                Text("Download local models before first use.")
-                    .foregroundStyle(.secondary)
+                PromptEditorSection(
+                    title: "Deep Research Prompt",
+                    text: $deepResearchSystemPrompt,
+                    defaultValue: PromptConfiguration.defaultDeepResearchSystemPrompt
+                )
+
+                PromptEditorSection(
+                    title: "Tool Definitions",
+                    text: $toolDefinitionsJSON,
+                    defaultValue: PromptConfiguration.defaultToolDefinitionsJSON,
+                    validationMessage: PromptConfiguration.toolDefinitionsValidationMessage(toolDefinitionsJSON),
+                    monospaced: true
+                )
             }
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                ModelSummaryBadge(
-                    title: "Ready",
-                    value: "\(readyCount)/\(allModels.count)",
-                    systemImage: "checkmark.circle.fill",
-                    tint: .green
-                )
-
-                ModelSummaryBadge(
-                    title: "Active",
-                    value: "\(activeCount)",
-                    systemImage: "arrow.down.circle.fill",
-                    tint: .accentColor
-                )
-
-                ModelSummaryBadge(
-                    title: "Size",
-                    value: formatSize(totalDownloadSizeGB),
-                    systemImage: "externaldrive.fill",
-                    tint: .secondary
-                )
-
-                Button {
-                    downloadManager.refreshStatuses()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.borderless)
-                .help("Refresh model status")
-            }
-            .padding(.top, 2)
+            .padding(.bottom, 12)
         }
     }
 
@@ -216,6 +271,76 @@ struct SettingsView: View {
 
     private var totalDownloadSizeGB: Double {
         allModels.reduce(0) { $0 + $1.downloadSizeGB }
+    }
+}
+
+private enum SettingsPane: String, CaseIterable, Identifiable {
+    case models
+    case prompts
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .models: return "Models"
+        case .prompts: return "Prompts"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .models:
+            return "Download local models before first use."
+        case .prompts:
+            return "Tune chat, research, and tool behavior."
+        }
+    }
+}
+
+private struct PromptEditorSection: View {
+    let title: String
+    @Binding var text: String
+    let defaultValue: String
+    var validationMessage: String?
+    var monospaced: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+
+                Spacer()
+
+                Button("Reset") {
+                    text = defaultValue
+                }
+                .buttonStyle(.borderless)
+                .disabled(text == defaultValue)
+            }
+
+            TextEditor(text: $text)
+                .font(monospaced ? .system(.callout, design: .monospaced) : .callout)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(minHeight: title == "Tool Definitions" ? 180 : 120)
+                .background(.thinMaterial.opacity(0.65))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(borderColor, lineWidth: 1)
+                }
+
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var borderColor: Color {
+        validationMessage == nil ? Color.primary.opacity(0.07) : Color.orange.opacity(0.45)
     }
 }
 
