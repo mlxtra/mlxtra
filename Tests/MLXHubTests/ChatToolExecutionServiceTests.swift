@@ -113,6 +113,61 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertTrue(executor.delegate === viewModel)
     }
 
+    func testSendMessageBuildsImageGenerationRequestThroughInjectedExecutor() async {
+        let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
+        let executor = MockChatModelExecutor(events: [
+            .image(assetURL),
+            .complete("Generated image.", usage: TokenUsage(promptTokens: 0, completionTokens: 0))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["black-forest-labs/FLUX.2-klein-4B"])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.image)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(executor.receivedRequests[0].backend, .image)
+        XCTAssertEqual(executor.receivedRequests[0].modelId, "black-forest-labs/FLUX.2-klein-4B")
+        XCTAssertEqual(executor.receivedRequests[0].messages.first?.content, "Draw a quiet studio desk")
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.imageURLs, [assetURL])
+        XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
+    }
+
+    func testStreamErrorReplacesStreamingAssistantMessage() async {
+        let executor = MockChatModelExecutor(events: [
+            .error(ExecutionError.pythonError("bridge failed"))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.inputText = "Hello"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { (viewModel.chats.first?.messages ?? []).count == 2 }
+
+        let messages = viewModel.chats.first?.messages ?? []
+        XCTAssertEqual(messages.count, 2)
+        XCTAssertTrue(messages[0].isUser)
+        XCTAssertFalse(messages[1].isUser)
+        XCTAssertFalse(messages[1].isStreaming)
+        XCTAssertTrue(messages[1].content.contains("bridge failed"))
+    }
+
     private func makePlan(model: DownloadableModel? = nil) -> ChatMediaToolExecutionPlan {
         let resolvedModel = model ?? DownloadableModel(
             id: "image-model",
@@ -145,6 +200,20 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             completionHint: "The generated image is already displayed in the app UI.",
             attachmentKind: .image
         )
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2.0,
+        condition: @escaping @MainActor () -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for condition")
     }
 }
 
@@ -215,6 +284,8 @@ private final class MockChatWebSearchService: ChatWebSearching {
 private final class MockChatPersistenceService: ChatPersistenceServicing {
     private let chatsToLoad: [Chat]
     private let selectedChatIdToLoad: UUID?
+    private(set) var savedChats: [Chat] = []
+    private(set) var savedSelectedChatId: UUID?
 
     init(chatsToLoad: [Chat], selectedChatIdToLoad: UUID?) {
         self.chatsToLoad = chatsToLoad
@@ -225,13 +296,17 @@ private final class MockChatPersistenceService: ChatPersistenceServicing {
         chatsToLoad
     }
 
-    func saveChats(_ chats: [Chat]) {}
+    func saveChats(_ chats: [Chat]) {
+        savedChats = chats
+    }
 
     func loadSelectedChatId() -> UUID? {
         selectedChatIdToLoad
     }
 
-    func saveSelectedChatId(_ selectedChatId: UUID?) {}
+    func saveSelectedChatId(_ selectedChatId: UUID?) {
+        savedSelectedChatId = selectedChatId
+    }
 
     func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL] {
         urls

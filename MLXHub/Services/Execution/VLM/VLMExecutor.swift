@@ -199,6 +199,7 @@ class VLMExecutor: NSObject, ModelExecutor {
         await terminate()
         do {
             try await startBridge()
+            isReady = true
         } catch {
             isReady = false
             isModelLoaded = false

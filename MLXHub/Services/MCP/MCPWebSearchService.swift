@@ -91,7 +91,7 @@ final class MCPWebSearchService {
             let name = tool.name.lowercased()
             let description = tool.description.lowercased()
             return name.contains("search") || description.contains("web search")
-        } ?? tools.first
+        }
     }
 
     private func searchArguments(for tool: MCPTool, query: String) -> [String: Any] {

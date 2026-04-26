@@ -1476,7 +1476,7 @@ class ChatViewModel: ObservableObject {
                 return
 
             case .error(let error):
-                handleGenerationError(error)
+                handleGenerationError(error, replacingMessageId: messageId)
                 isGenerating = false
                 streamingMessageId = nil
                 generationTask = nil
@@ -1667,7 +1667,7 @@ class ChatViewModel: ObservableObject {
     }
 
     @MainActor
-    private func handleGenerationError(_ error: Error) {
+    private func handleGenerationError(_ error: Error, replacingMessageId messageId: UUID? = nil) {
         let errorDesc = String(describing: error)
         if error is CancellationError || errorDesc.contains("CancellationError") || (error as NSError).code == NSUserCancelledError {
             print("[ChatVM] Ignoring cancellation error: \(errorDesc)")
@@ -1704,15 +1704,19 @@ class ChatViewModel: ObservableObject {
             errorContent = "Sorry, I encountered an error: \(error.localizedDescription)"
         }
 
-        // Add error message to chat
-        let errorMessage = Message(
-            content: errorContent,
-            isUser: false,
-            timestamp: Date()
-        )
-
         if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
-            chats[index].messages.append(errorMessage)
+            if let messageId,
+               let messageIndex = chats[index].messages.firstIndex(where: { $0.id == messageId }) {
+                chats[index].messages[messageIndex].content = errorContent
+                chats[index].messages[messageIndex].isStreaming = false
+            } else {
+                let errorMessage = Message(
+                    content: errorContent,
+                    isUser: false,
+                    timestamp: Date()
+                )
+                chats[index].messages.append(errorMessage)
+            }
             chats[index].timestamp = Date()
             persistConversationHistory()
         }
