@@ -167,6 +167,8 @@ protocol ChatPersistenceServicing: AnyObject {
 @MainActor
 protocol ChatModelExecuting: ModelExecutor {
     var isModelLoaded: Bool { get }
+    var currentModelId: String? { get }
+    var currentModelBackend: RuntimeBackend? { get }
     var delegate: VLMExecutionDelegate? { get set }
 }
 
@@ -462,6 +464,7 @@ class ChatViewModel: ObservableObject {
     @Published var loadingMessage: String = ""
     @Published var streamingMessageId: UUID?
     @Published private(set) var modelDownloadRequest: DownloadableModel?
+    @Published private(set) var pendingEngineDownloadModel: DownloadableModel?
     @Published private(set) var musicIntentState: MusicIntentState = .needsInstrumentalOrVocals
     @Published private(set) var activeEngineModelName: String?
     @Published private(set) var activeEngineModelRole: LocalEngineModelRole = .chat
@@ -481,6 +484,7 @@ class ChatViewModel: ObservableObject {
     private let musicGenerationModelId = "ACE-Step/acestep-v15-turbo-continuous"
     private let musicGenerationModelName = "ACE-Step 1.5 Turbo"
     private let maxAutoToolDepth = 4
+    private var pendingDownloadMonitorTask: Task<Void, Never>?
 
     // MARK: - Computed Properties
     var hasSelectedImages: Bool {
@@ -509,9 +513,9 @@ class ChatViewModel: ObservableObject {
             isExecutorReady: vlmExecutor.isReady,
             isModelLoaded: vlmExecutor.isModelLoaded,
             selectedModelName: selectedModel.displayName,
-            activeModelName: activeEngineModelName,
-            activeModelRole: activeEngineModelRole,
-            pendingDownloadModelName: modelDownloadRequest?.name,
+            activeModelName: loadedEngineModelName ?? activeEngineModelName,
+            activeModelRole: loadedEngineModelRole ?? activeEngineModelRole,
+            pendingDownloadModelName: pendingEngineDownloadModel?.name,
             freedModelName: freedEngineModelName,
             lastErrorMessage: localEngineErrorMessage
         )
@@ -738,7 +742,7 @@ class ChatViewModel: ObservableObject {
     func freeLocalEngineMemory() {
         guard canFreeLocalEngineMemory else { return }
 
-        let freedModelName = activeEngineModelName ?? selectedModel.displayName
+        let freedModelName = loadedEngineModelName ?? activeEngineModelName ?? selectedModel.displayName
         isPythonLoading = false
         isModelLoading = false
         isGenerating = false
@@ -775,6 +779,17 @@ class ChatViewModel: ObservableObject {
                 isPythonLoading = false
                 loadingMessage = ""
                 localEngineErrorMessage = "The local engine stopped. Restart to continue."
+            }
+        }
+    }
+
+    func refreshLocalEngineDownloadStatus() {
+        guard let pendingEngineDownloadModel else { return }
+
+        Task {
+            if await isModelDownloadedOffMain(modelId: pendingEngineDownloadModel.modelId),
+               self.pendingEngineDownloadModel?.modelId == pendingEngineDownloadModel.modelId {
+                self.clearPendingEngineDownloadModel(matching: pendingEngineDownloadModel.modelId)
             }
         }
     }
@@ -916,6 +931,8 @@ class ChatViewModel: ObservableObject {
 
     private func requestDownloadBeforeUse(model: DownloadableModel) {
         modelDownloadRequest = model
+        pendingEngineDownloadModel = model
+        startPendingDownloadMonitor(for: model)
         loadingMessage = ""
     }
 
@@ -947,6 +964,7 @@ class ChatViewModel: ObservableObject {
 
     private func requireDownloadedModel(model: DownloadableModel, operation: String) async -> Bool {
         guard !(await isModelDownloadedOffMain(modelId: model.modelId)) else {
+            clearPendingEngineDownloadModel(matching: model.modelId)
             return true
         }
 
@@ -971,6 +989,7 @@ class ChatViewModel: ObservableObject {
             let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vlm)
             let activeModality: ModelModality = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vision)
             let downloadSize = (isImageGeneration || isSpeechGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
+            let modelWillLoad = !isLoadedEngineModel(modelId: resolvedModelId, backend: activeBackend)
             setActiveEngineModel(
                 name: activeModelName,
                 role: isImageGeneration ? .image : (isSpeechGeneration ? .speech : .chat)
@@ -998,7 +1017,7 @@ class ChatViewModel: ObservableObject {
                 try await vlmExecutor.initialize()
             }
 
-            if !vlmExecutor.isModelLoaded {
+            if modelWillLoad {
                 isModelLoading = true
                 loadingMessage = "Loading \(activeModelName)..."
 
@@ -1841,6 +1860,75 @@ class ChatViewModel: ObservableObject {
         default:
             return plan.attachmentKind == .image ? .image : .speech
         }
+    }
+
+    private var loadedEngineModelName: String? {
+        guard vlmExecutor.isModelLoaded,
+              let modelId = vlmExecutor.currentModelId else {
+            return nil
+        }
+
+        return downloadableModelName(modelId: modelId)
+    }
+
+    private var loadedEngineModelRole: LocalEngineModelRole? {
+        guard vlmExecutor.isModelLoaded,
+              let backend = vlmExecutor.currentModelBackend else {
+            return nil
+        }
+
+        return localEngineModelRole(for: backend)
+    }
+
+    private func isLoadedEngineModel(modelId: String, backend: RuntimeBackend) -> Bool {
+        vlmExecutor.isModelLoaded
+            && vlmExecutor.currentModelId == modelId
+            && vlmExecutor.currentModelBackend == backend
+    }
+
+    private func downloadableModelName(modelId: String) -> String {
+        DownloadableModel.embeddedModel(modelId: modelId)?.name
+            ?? AIModel.allCases.first { $0.modelId == modelId }?.displayName
+            ?? modelId
+    }
+
+    private func localEngineModelRole(for backend: RuntimeBackend) -> LocalEngineModelRole {
+        switch backend {
+        case .image:
+            return .image
+        case .audio:
+            return .speech
+        case .music:
+            return .music
+        case .vlm, .llm:
+            return .chat
+        }
+    }
+
+    private func startPendingDownloadMonitor(for model: DownloadableModel) {
+        pendingDownloadMonitorTask?.cancel()
+        pendingDownloadMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self,
+                      self.pendingEngineDownloadModel?.modelId == model.modelId else {
+                    return
+                }
+
+                if await self.isModelDownloadedOffMain(modelId: model.modelId) {
+                    self.clearPendingEngineDownloadModel(matching: model.modelId)
+                    return
+                }
+
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    private func clearPendingEngineDownloadModel(matching modelId: String) {
+        guard pendingEngineDownloadModel?.modelId == modelId else { return }
+        pendingEngineDownloadModel = nil
+        pendingDownloadMonitorTask?.cancel()
+        pendingDownloadMonitorTask = nil
     }
 
     func selectTool(_ tool: Tool) {

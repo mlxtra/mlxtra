@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = ChatViewModel()
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
 
     var body: some View {
@@ -17,6 +18,14 @@ struct ContentView: View {
             pendingDownloadModelId = requestedModel.modelId
             openSettings()
             viewModel.clearModelDownloadRequest()
+        }
+        .onAppear {
+            viewModel.refreshLocalEngineDownloadStatus()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                viewModel.refreshLocalEngineDownloadStatus()
+            }
         }
     }
 }

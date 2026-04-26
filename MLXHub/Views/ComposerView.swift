@@ -100,15 +100,17 @@ struct ComposerView: View {
 
             ToolSelectorInline(viewModel: viewModel)
 
-            LocalEngineStatusPill(
-                status: viewModel.localEngineStatus,
-                canFreeMemory: viewModel.canFreeLocalEngineMemory,
-                onOpenModels: { openSettings() },
-                onRestart: viewModel.restartLocalEngine,
-                onFreeMemory: viewModel.freeLocalEngineMemory
-            )
-
             Spacer()
+
+            if viewModel.localEngineStatus.isVisibleInComposer {
+                LocalEngineStatusPill(
+                    status: viewModel.localEngineStatus,
+                    canFreeMemory: viewModel.canFreeLocalEngineMemory,
+                    onOpenModels: { openSettings() },
+                    onRestart: viewModel.restartLocalEngine,
+                    onFreeMemory: viewModel.freeLocalEngineMemory
+                )
+            }
 
             if viewModel.isGenerating {
                 Button(action: {
@@ -130,6 +132,9 @@ struct ComposerView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .onAppear {
+            viewModel.refreshLocalEngineDownloadStatus()
+        }
     }
 
     @ViewBuilder
@@ -346,7 +351,7 @@ private struct LocalEngineStatusPopover: View {
                     }
                     .buttonStyle(.bordered)
 
-                    Text("Free memory by unloading the current model.")
+                    Text("The model will load again when needed.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }

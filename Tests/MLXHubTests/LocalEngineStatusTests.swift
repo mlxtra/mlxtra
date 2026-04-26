@@ -21,8 +21,9 @@ final class LocalEngineStatusTests: XCTestCase {
 
         XCTAssertEqual(status.state, .ready)
         XCTAssertEqual(status.title, "Qwen is ready")
-        XCTAssertEqual(status.detail, "Qwen 3.5 is loaded locally.")
+        XCTAssertEqual(status.detail, "Qwen 3.5 is using memory locally.")
         XCTAssertTrue(status.canFreeMemory)
+        XCTAssertTrue(status.isVisibleInComposer)
     }
 
     func testImageLoadingUsesPlainLanguage() {
@@ -46,6 +47,7 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertEqual(status.title, "Loading image model")
         XCTAssertEqual(status.detail, "Loading FLUX.2-klein-4B...")
         XCTAssertFalse(status.canFreeMemory)
+        XCTAssertTrue(status.isVisibleInComposer)
     }
 
     func testMusicReadyUsesModalityLabel() {
@@ -67,7 +69,29 @@ final class LocalEngineStatusTests: XCTestCase {
 
         XCTAssertEqual(status.state, .ready)
         XCTAssertEqual(status.title, "Music model is ready")
-        XCTAssertEqual(status.detail, "ACE-Step 1.5 Turbo is loaded locally.")
+        XCTAssertEqual(status.detail, "ACE-Step 1.5 Turbo is using memory locally.")
+    }
+
+    func testIdleStateStaysOutOfComposer() {
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .notInitialized,
+            isPythonLoading: false,
+            isModelLoading: false,
+            isGenerating: false,
+            loadingMessage: "",
+            isExecutorReady: false,
+            isModelLoaded: false,
+            selectedModelName: "Qwen 3.5",
+            activeModelName: nil,
+            activeModelRole: .chat,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: nil
+        )
+
+        XCTAssertEqual(status.state, .idle)
+        XCTAssertEqual(status.title, "Local model")
+        XCTAssertFalse(status.isVisibleInComposer)
     }
 
     func testMemoryFreedTakesPrecedenceWhenExecutorIsUnloaded() {
@@ -113,6 +137,7 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertEqual(status.state, .needsDownload)
         XCTAssertEqual(status.title, "Needs download")
         XCTAssertEqual(status.primaryAction, .openModels)
+        XCTAssertTrue(status.isVisibleInComposer)
     }
 
     func testRuntimeErrorUsesRestartAction() {

@@ -86,6 +86,7 @@ struct LocalEngineStatus: Equatable {
     let tone: Tone
     let primaryAction: Action?
     let canFreeMemory: Bool
+    let isVisibleInComposer: Bool
 
     static func resolve(
         runtimeState: RuntimeManager.RuntimeState,
@@ -113,7 +114,8 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "arrow.down.circle",
                 tone: .warning,
                 primaryAction: .openModels,
-                canFreeMemory: false
+                canFreeMemory: false,
+                isVisibleInComposer: true
             )
         }
 
@@ -125,7 +127,8 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "exclamationmark.triangle",
                 tone: .danger,
                 primaryAction: .restart,
-                canFreeMemory: false
+                canFreeMemory: false,
+                isVisibleInComposer: true
             )
         }
 
@@ -137,7 +140,8 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "bolt.horizontal.circle",
                 tone: .accent,
                 primaryAction: nil,
-                canFreeMemory: false
+                canFreeMemory: false,
+                isVisibleInComposer: true
             )
         }
 
@@ -149,7 +153,8 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "clock",
                 tone: .accent,
                 primaryAction: nil,
-                canFreeMemory: false
+                canFreeMemory: false,
+                isVisibleInComposer: true
             )
         }
 
@@ -161,7 +166,8 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "sparkles",
                 tone: .accent,
                 primaryAction: nil,
-                canFreeMemory: false
+                canFreeMemory: false,
+                isVisibleInComposer: true
             )
         }
 
@@ -173,7 +179,8 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "memorychip",
                 tone: .neutral,
                 primaryAction: nil,
-                canFreeMemory: false
+                canFreeMemory: false,
+                isVisibleInComposer: true
             )
         }
 
@@ -181,11 +188,12 @@ struct LocalEngineStatus: Equatable {
             return LocalEngineStatus(
                 state: .ready,
                 title: activeModelRole.readyTitle(modelName: modelName),
-                detail: "\(modelName) is loaded locally.",
+                detail: "\(modelName) is using memory locally.",
                 systemImage: "checkmark.circle",
                 tone: .success,
                 primaryAction: nil,
-                canFreeMemory: true
+                canFreeMemory: true,
+                isVisibleInComposer: true
             )
         }
 
@@ -197,18 +205,20 @@ struct LocalEngineStatus: Equatable {
                 systemImage: "circle",
                 tone: .neutral,
                 primaryAction: nil,
-                canFreeMemory: false
+                canFreeMemory: false,
+                isVisibleInComposer: false
             )
         }
 
         return LocalEngineStatus(
             state: .idle,
-            title: "Ready when you are",
+            title: "Local model",
             detail: "\(modelName) will prepare when you send a message.",
             systemImage: "circle",
             tone: .neutral,
             primaryAction: nil,
-            canFreeMemory: false
+            canFreeMemory: false,
+            isVisibleInComposer: false
         )
     }
 

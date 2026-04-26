@@ -174,6 +174,8 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let executor = MockChatModelExecutor()
         executor.isReady = true
         executor.isModelLoaded = true
+        executor.currentModelId = AIModel.defaultForCurrentHardware.modelId
+        executor.currentModelBackend = .vlm
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -191,6 +193,73 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(viewModel.localEngineStatus.state, .memoryFreed)
         XCTAssertEqual(viewModel.localEngineStatus.title, "Memory freed")
         XCTAssertFalse(viewModel.canFreeLocalEngineMemory)
+    }
+
+    func testMissingModelStatusPersistsAfterSettingsTriggerIsCleared() async {
+        let executor = MockChatModelExecutor()
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.image)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { viewModel.modelDownloadRequest != nil }
+
+        XCTAssertEqual(viewModel.localEngineStatus.state, .needsDownload)
+
+        viewModel.clearModelDownloadRequest()
+
+        XCTAssertNil(viewModel.modelDownloadRequest)
+        XCTAssertEqual(viewModel.localEngineStatus.state, .needsDownload)
+        XCTAssertEqual(viewModel.localEngineStatus.primaryAction, .openModels)
+    }
+
+    func testMissingModelStatusClearsAfterDownloadRefresh() async {
+        let executor = MockChatModelExecutor()
+        let imageModelId = "black-forest-labs/FLUX.2-klein-4B"
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.image)
+        viewModel.inputText = "Draw a quiet studio desk"
+        viewModel.sendMessage()
+        await waitUntil { viewModel.localEngineStatus.state == .needsDownload }
+
+        runtimeManager.downloadedModelIds.insert(imageModelId)
+        viewModel.refreshLocalEngineDownloadStatus()
+        await waitUntil { viewModel.localEngineStatus.state != .needsDownload }
+
+        XCTAssertNil(viewModel.pendingEngineDownloadModel)
+    }
+
+    func testReadyStatusUsesExecutorLoadedModelInsteadOfSelectedModel() {
+        let executor = MockChatModelExecutor()
+        executor.isReady = true
+        executor.isModelLoaded = true
+        executor.currentModelId = "ACE-Step/acestep-v15-turbo-continuous"
+        executor.currentModelBackend = .music
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+
+        XCTAssertEqual(viewModel.localEngineStatus.title, "Music model is ready")
+        XCTAssertEqual(viewModel.localEngineStatus.detail, "ACE-Step 1.5 Turbo is using memory locally.")
     }
 
     private func makePlan(model: DownloadableModel? = nil) -> ChatMediaToolExecutionPlan {
@@ -246,7 +315,9 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 private final class MockChatModelExecutor: ChatModelExecuting {
     let backend: RuntimeBackend = .vlm
     var isReady: Bool = true
-    var isModelLoaded: Bool = true
+    var isModelLoaded: Bool = false
+    var currentModelId: String?
+    var currentModelBackend: RuntimeBackend?
     weak var delegate: VLMExecutionDelegate?
     private let events: [ExecutionEvent]
     private(set) var receivedRequests: [ExecutionRequest] = []
@@ -260,6 +331,9 @@ private final class MockChatModelExecutor: ChatModelExecuting {
 
     func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
         receivedRequests.append(request)
+        currentModelId = request.modelId
+        currentModelBackend = request.backend
+        isModelLoaded = true
         return AsyncStream { continuation in
             for event in events {
                 continuation.yield(event)
@@ -272,13 +346,15 @@ private final class MockChatModelExecutor: ChatModelExecuting {
         terminateCount += 1
         isReady = false
         isModelLoaded = false
+        currentModelId = nil
+        currentModelBackend = nil
     }
 }
 
 @MainActor
 private final class MockChatRuntimeManager: ChatRuntimeManaging {
     var state: RuntimeManager.RuntimeState = .ready
-    private let downloadedModelIds: Set<String>
+    var downloadedModelIds: Set<String>
 
     init(downloadedModelIds: Set<String>) {
         self.downloadedModelIds = downloadedModelIds

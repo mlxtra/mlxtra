@@ -28,6 +28,7 @@ class VLMExecutor: NSObject, ModelExecutor {
     private(set) var isReady: Bool = false
     private(set) var isModelLoaded: Bool = false
     private(set) var currentModelId: String?
+    private(set) var currentModelBackend: RuntimeBackend?
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -37,6 +38,7 @@ class VLMExecutor: NSObject, ModelExecutor {
     private let stdoutDispatcher = BridgeOutputDispatcher()
     private let stdoutLineBuffer = BridgeLineBuffer()
     private var currentRequest: ExecutionRequest?
+    private var currentModelCacheKey: String?
     private var retryCount: Int = 0
     private let maxRetries: Int = 1
 
@@ -122,6 +124,8 @@ class VLMExecutor: NSObject, ModelExecutor {
         isReady = false
         isModelLoaded = false
         currentModelId = nil
+        currentModelBackend = nil
+        currentModelCacheKey = nil
         currentRequest = nil
         retryCount = 0
     }
@@ -204,6 +208,8 @@ class VLMExecutor: NSObject, ModelExecutor {
             isReady = false
             isModelLoaded = false
             currentModelId = nil
+            currentModelBackend = nil
+            currentModelCacheKey = nil
             currentRequest = nil
             retryCount = 0
             throw error
@@ -328,9 +334,12 @@ private final class StreamFinishState: @unchecked Sendable {
 
         // Load model if needed
         let modelCacheKey = "\(request.backend.rawValue):\(request.modelId)"
-        if currentModelId != modelCacheKey {
+        if currentModelCacheKey != modelCacheKey {
+            isModelLoaded = false
             try await loadModel(request.modelId, backend: request.backend)
-            currentModelId = modelCacheKey
+            currentModelCacheKey = modelCacheKey
+            currentModelId = request.modelId
+            currentModelBackend = request.backend
         }
 
         let messages = request.messages.map { $0.toDictionary() }
