@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ComposerView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.openSettings) private var openSettings
     @State private var isTextInputFocused = false
     @State private var isDropTargeted = false
 
@@ -98,6 +99,14 @@ struct ComposerView: View {
             .help("Attach file")
 
             ToolSelectorInline(viewModel: viewModel)
+
+            LocalEngineStatusPill(
+                status: viewModel.localEngineStatus,
+                canFreeMemory: viewModel.canFreeLocalEngineMemory,
+                onOpenModels: { openSettings() },
+                onRestart: viewModel.restartLocalEngine,
+                onFreeMemory: viewModel.freeLocalEngineMemory
+            )
 
             Spacer()
 
@@ -218,6 +227,150 @@ struct ComposerView: View {
 
         appendImageAttachments(imageURLs)
         return true
+    }
+}
+
+private struct LocalEngineStatusPill: View {
+    let status: LocalEngineStatus
+    let canFreeMemory: Bool
+    let onOpenModels: () -> Void
+    let onRestart: () -> Void
+    let onFreeMemory: () -> Void
+
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: status.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+
+                Text(status.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(tint.opacity(0.10))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(tint.opacity(0.20), lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(status.detail)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            LocalEngineStatusPopover(
+                status: status,
+                canFreeMemory: canFreeMemory,
+                onOpenModels: {
+                    isPresented = false
+                    onOpenModels()
+                },
+                onRestart: {
+                    isPresented = false
+                    onRestart()
+                },
+                onFreeMemory: {
+                    isPresented = false
+                    onFreeMemory()
+                }
+            )
+        }
+    }
+
+    private var tint: Color {
+        status.tone.color
+    }
+}
+
+private struct LocalEngineStatusPopover: View {
+    let status: LocalEngineStatus
+    let canFreeMemory: Bool
+    let onOpenModels: () -> Void
+    let onRestart: () -> Void
+    let onFreeMemory: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: status.systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(status.tone.color)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(status.title)
+                        .font(.system(size: 14, weight: .semibold))
+
+                    Text(status.detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if status.primaryAction != nil || canFreeMemory {
+                Divider()
+            }
+
+            if status.primaryAction == .openModels {
+                Button {
+                    onOpenModels()
+                } label: {
+                    Label("Open Models", systemImage: "square.grid.2x2")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if status.primaryAction == .restart {
+                Button {
+                    onRestart()
+                } label: {
+                    Label("Restart", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if canFreeMemory {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        onFreeMemory()
+                    } label: {
+                        Label("Free Memory", systemImage: "memorychip")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Text("Free memory by unloading the current model.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 280, alignment: .leading)
+    }
+}
+
+private extension LocalEngineStatus.Tone {
+    var color: Color {
+        switch self {
+        case .neutral:
+            return .secondary
+        case .accent:
+            return .accentColor
+        case .success:
+            return .green
+        case .warning:
+            return .orange
+        case .danger:
+            return .red
+        }
     }
 }
 

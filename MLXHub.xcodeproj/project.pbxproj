@@ -29,6 +29,7 @@
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
 		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
+		8A010001000000000000001B /* LocalEngineStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101B /* LocalEngineStatus.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,6 +58,7 @@
 		8A0100010000000000001018 /* acestep_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = acestep_bridge.py; sourceTree = "<group>"; };
 		8A0100010000000000001019 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
 		8A010001000000000000101A /* bridge_utils.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = bridge_utils.py; sourceTree = "<group>"; };
+		8A010001000000000000101B /* LocalEngineStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalEngineStatus.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -111,6 +113,7 @@
 			isa = PBXGroup;
 			children = (
 				8A0100010000000000001009 /* ChatViewModel.swift */,
+				8A010001000000000000101B /* LocalEngineStatus.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -307,6 +310,7 @@
 				8A0100010000000000000019 /* ComposerView.swift in Sources */,
 				8A0100010000000000000008 /* MessageBubbleView.swift in Sources */,
 				8A0100010000000000000009 /* ChatViewModel.swift in Sources */,
+				8A010001000000000000001B /* LocalEngineStatus.swift in Sources */,
 				8A0100010000000000000013 /* SettingsView.swift in Sources */,
 				8A010001000000000000000A /* Chat.swift in Sources */,
 				8A010001000000000000000B /* Tool.swift in Sources */,

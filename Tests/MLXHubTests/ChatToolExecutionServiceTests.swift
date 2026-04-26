@@ -166,6 +166,31 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertFalse(messages[1].isUser)
         XCTAssertFalse(messages[1].isStreaming)
         XCTAssertTrue(messages[1].content.contains("bridge failed"))
+        XCTAssertEqual(viewModel.localEngineStatus.state, .needsAttention)
+        XCTAssertEqual(viewModel.localEngineStatus.primaryAction, .restart)
+    }
+
+    func testFreeLocalEngineMemoryTerminatesExecutorAndUpdatesStatus() async {
+        let executor = MockChatModelExecutor()
+        executor.isReady = true
+        executor.isModelLoaded = true
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+
+        XCTAssertTrue(viewModel.canFreeLocalEngineMemory)
+
+        viewModel.freeLocalEngineMemory()
+        await waitUntil { executor.terminateCount == 1 }
+
+        XCTAssertEqual(viewModel.localEngineStatus.state, .memoryFreed)
+        XCTAssertEqual(viewModel.localEngineStatus.title, "Memory freed")
+        XCTAssertFalse(viewModel.canFreeLocalEngineMemory)
     }
 
     private func makePlan(model: DownloadableModel? = nil) -> ChatMediaToolExecutionPlan {
@@ -225,6 +250,7 @@ private final class MockChatModelExecutor: ChatModelExecuting {
     weak var delegate: VLMExecutionDelegate?
     private let events: [ExecutionEvent]
     private(set) var receivedRequests: [ExecutionRequest] = []
+    private(set) var terminateCount = 0
 
     init(events: [ExecutionEvent] = []) {
         self.events = events
@@ -242,7 +268,11 @@ private final class MockChatModelExecutor: ChatModelExecuting {
         }
     }
 
-    func terminate() async {}
+    func terminate() async {
+        terminateCount += 1
+        isReady = false
+        isModelLoaded = false
+    }
 }
 
 @MainActor

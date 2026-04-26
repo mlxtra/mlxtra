@@ -463,6 +463,10 @@ class ChatViewModel: ObservableObject {
     @Published var streamingMessageId: UUID?
     @Published private(set) var modelDownloadRequest: DownloadableModel?
     @Published private(set) var musicIntentState: MusicIntentState = .needsInstrumentalOrVocals
+    @Published private(set) var activeEngineModelName: String?
+    @Published private(set) var activeEngineModelRole: LocalEngineModelRole = .chat
+    @Published private(set) var freedEngineModelName: String?
+    @Published private(set) var localEngineErrorMessage: String?
 
     // MARK: - Private Properties
     private let chatPersistence: ChatPersistenceServicing
@@ -493,6 +497,28 @@ class ChatViewModel: ObservableObject {
 
     var isInputDisabled: Bool {
         isPythonLoading || isModelLoading || isGenerating
+    }
+
+    var localEngineStatus: LocalEngineStatus {
+        LocalEngineStatus.resolve(
+            runtimeState: runtimeManager.state,
+            isPythonLoading: isPythonLoading,
+            isModelLoading: isModelLoading,
+            isGenerating: isGenerating,
+            loadingMessage: loadingMessage,
+            isExecutorReady: vlmExecutor.isReady,
+            isModelLoaded: vlmExecutor.isModelLoaded,
+            selectedModelName: selectedModel.displayName,
+            activeModelName: activeEngineModelName,
+            activeModelRole: activeEngineModelRole,
+            pendingDownloadModelName: modelDownloadRequest?.name,
+            freedModelName: freedEngineModelName,
+            lastErrorMessage: localEngineErrorMessage
+        )
+    }
+
+    var canFreeLocalEngineMemory: Bool {
+        !isInputDisabled && localEngineStatus.canFreeMemory
     }
 
     private var generatedImagesDirectory: URL {
@@ -709,6 +735,50 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    func freeLocalEngineMemory() {
+        guard canFreeLocalEngineMemory else { return }
+
+        let freedModelName = activeEngineModelName ?? selectedModel.displayName
+        isPythonLoading = false
+        isModelLoading = false
+        isGenerating = false
+        loadingMessage = ""
+        localEngineErrorMessage = nil
+
+        Task {
+            await vlmExecutor.terminate()
+            activeEngineModelName = nil
+            activeEngineModelRole = .chat
+            self.freedEngineModelName = freedModelName
+        }
+    }
+
+    func restartLocalEngine() {
+        guard !isInputDisabled else { return }
+
+        isPythonLoading = true
+        loadingMessage = "Preparing local engine..."
+        activeEngineModelName = nil
+        activeEngineModelRole = .chat
+        freedEngineModelName = nil
+        localEngineErrorMessage = nil
+
+        Task {
+            await vlmExecutor.terminate()
+
+            do {
+                try await runtimeManager.initialize()
+                try await vlmExecutor.initialize()
+                isPythonLoading = false
+                loadingMessage = ""
+            } catch {
+                isPythonLoading = false
+                loadingMessage = ""
+                localEngineErrorMessage = "The local engine stopped. Restart to continue."
+            }
+        }
+    }
+
     // MARK: - Private Methods
     private var webSearchTool: [String: Any] {
         [
@@ -901,6 +971,10 @@ class ChatViewModel: ObservableObject {
             let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vlm)
             let activeModality: ModelModality = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vision)
             let downloadSize = (isImageGeneration || isSpeechGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
+            setActiveEngineModel(
+                name: activeModelName,
+                role: isImageGeneration ? .image : (isSpeechGeneration ? .speech : .chat)
+            )
             let requiredModel = downloadableModel(
                 modelId: resolvedModelId,
                 name: activeModelName,
@@ -1531,6 +1605,7 @@ class ChatViewModel: ObservableObject {
 
     private func executeMediaToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], plan: ChatMediaToolExecutionPlan) async {
         loadingMessage = plan.loadingStatus
+        setActiveEngineModel(name: plan.model.name, role: localEngineModelRole(for: plan))
         beginToolCallProgress(
             toolName: plan.toolName,
             status: plan.status,
@@ -1675,6 +1750,7 @@ class ChatViewModel: ObservableObject {
         }
 
         print("Generation error: \(error)")
+        localEngineErrorMessage = localEngineStatusMessage(for: error)
 
         // Build detailed error message
         var errorContent = "Sorry, I encountered an error."
@@ -1725,6 +1801,46 @@ class ChatViewModel: ObservableObject {
         isModelLoading = false
         streamingMessageId = nil
         loadingMessage = ""
+    }
+
+    private func localEngineStatusMessage(for error: Error) -> String? {
+        guard let execError = error as? ExecutionError else {
+            return nil
+        }
+
+        switch execError {
+        case .notInitialized,
+             .processNotRunning,
+             .modelNotLoaded,
+             .timeout,
+             .invalidResponse,
+             .processCrashed,
+             .encodingFailed,
+             .decodingFailed,
+             .requiresManualRetry,
+             .pythonError:
+            return "The local engine stopped. Restart to continue."
+        }
+    }
+
+    private func setActiveEngineModel(name: String, role: LocalEngineModelRole) {
+        activeEngineModelName = name
+        activeEngineModelRole = role
+        freedEngineModelName = nil
+        localEngineErrorMessage = nil
+    }
+
+    private func localEngineModelRole(for plan: ChatMediaToolExecutionPlan) -> LocalEngineModelRole {
+        switch plan.functionName {
+        case "generate_image":
+            return .image
+        case "create_speech":
+            return .speech
+        case "generate_music":
+            return .music
+        default:
+            return plan.attachmentKind == .image ? .image : .speech
+        }
     }
 
     func selectTool(_ tool: Tool) {
