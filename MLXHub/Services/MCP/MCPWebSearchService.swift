@@ -86,7 +86,7 @@ final class MCPWebSearchService {
         throw MCPError.missingTool
     }
 
-    private func chooseSearchTool(from tools: [MCPTool]) -> MCPTool? {
+    func chooseSearchTool(from tools: [MCPTool]) -> MCPTool? {
         tools.first { tool in
             let name = tool.name.lowercased()
             let description = tool.description.lowercased()
@@ -94,7 +94,7 @@ final class MCPWebSearchService {
         }
     }
 
-    private func searchArguments(for tool: MCPTool, query: String) -> [String: Any] {
+    func searchArguments(for tool: MCPTool, query: String) -> [String: Any] {
         var arguments: [String: Any] = [:]
 
         if tool.inputProperties["query"] != nil {
@@ -115,7 +115,7 @@ final class MCPWebSearchService {
         return arguments
     }
 
-    private func extractText(fromToolResult result: [String: Any]) -> String {
+    func extractText(fromToolResult result: [String: Any]) -> String {
         if let content = result["content"] as? [[String: Any]] {
             let parts = content.compactMap { item -> String? in
                 if item["type"] as? String == "text", let text = item["text"] as? String {
