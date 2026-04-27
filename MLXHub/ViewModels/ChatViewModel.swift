@@ -945,21 +945,7 @@ class ChatViewModel: ObservableObject {
     }
 
     private func modelDownloadRequiredMessage(for model: DownloadableModel, operation: String) -> String {
-        "\(operation) needs \(model.name) (\(String(format: "%.1f", model.downloadSizeGB)) GB). Opened Models so you can download it first, then try again."
-    }
-
-    private func appendAssistantMessage(_ content: String) {
-        let message = Message(
-            content: content,
-            isUser: false,
-            timestamp: Date()
-        )
-
-        if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
-            chats[index].messages.append(message)
-            chats[index].timestamp = Date()
-            persistConversationHistory()
-        }
+        "Model download required: \(operation) needs \(model.name) (\(String(format: "%.1f", model.downloadSizeGB)) GB)."
     }
 
     private func isModelDownloadedOffMain(modelId: String) async -> Bool {
@@ -973,7 +959,6 @@ class ChatViewModel: ObservableObject {
         }
 
         requestDownloadBeforeUse(model: model)
-        appendAssistantMessage(modelDownloadRequiredMessage(for: model, operation: operation))
         isGenerating = false
         isModelLoading = false
         streamingMessageId = nil
@@ -1627,10 +1612,16 @@ class ChatViewModel: ObservableObject {
                 }
                 if hasTerminalMediaTool {
                     if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
+                       !isModelDownloadRequiredMessage(toolContent),
                        !toolContent.contains("already displayed") {
                         updateStreamingMessage(messageId, content: toolContent)
                     }
-                    markMessageStopped(messageId)
+                    if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
+                       isModelDownloadRequiredMessage(toolContent) {
+                        removeAssistantMessage(messageId)
+                    } else {
+                        markMessageStopped(messageId)
+                    }
                     isGenerating = false
                     isModelLoading = false
                     streamingMessageId = nil
@@ -1659,11 +1650,15 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    private func isModelDownloadRequiredMessage(_ content: String) -> Bool {
+        content.hasPrefix("Model download required:")
+    }
+
     private func shouldBufferToolEnabledOutput(_ output: String) -> Bool {
         let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedOutput.isEmpty else { return true }
 
-        let toolPrefixes = ["<tool_call>", "<function=", "<|tool_call|>"]
+        let toolPrefixes = ["<tool_call>", "<function=", "<|tool_call|>", "<|tool_call>"]
         return toolPrefixes.contains { prefix in
             prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
         }
@@ -1816,6 +1811,16 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    private func removeAssistantMessage(_ messageId: UUID) {
+        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }),
+           !chats[chatIndex].messages[messageIndex].isUser {
+            chats[chatIndex].messages.remove(at: messageIndex)
+            chats[chatIndex].timestamp = Date()
+            persistConversationHistory()
+        }
+    }
+
     private func updateMessageToolCall(_ messageId: UUID, status: String) {
         if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
            let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }),
@@ -1844,33 +1849,7 @@ class ChatViewModel: ObservableObject {
         print("Generation error: \(error)")
         localEngineErrorMessage = localEngineStatusMessage(for: error)
 
-        // Build detailed error message
-        var errorContent = "Sorry, I encountered an error."
-
-        if let execError = error as? ExecutionError {
-            switch execError {
-            case .pythonError(let message):
-                errorContent = "❌ Python Error:\n\(message)"
-            case .notInitialized:
-                errorContent = "❌ The AI engine is not initialized. Please try again."
-            case .processNotRunning:
-                errorContent = "❌ The AI process is not running. Please restart the app."
-            case .modelNotLoaded:
-                errorContent = "❌ Failed to load the AI model. Please check your internet connection."
-            case .timeout:
-                errorContent = "⏱️ The operation timed out. Please try again."
-            case .invalidResponse:
-                errorContent = "❌ Received invalid response from AI engine."
-            case .processCrashed(let count):
-                errorContent = "💥 The AI process crashed (attempt \(count)). Retrying..."
-            case .encodingFailed, .decodingFailed:
-                errorContent = "❌ Communication error with AI engine."
-            case .requiresManualRetry:
-                errorContent = "❌ Please try sending your message again."
-            }
-        } else {
-            errorContent = "Sorry, I encountered an error: \(error.localizedDescription)"
-        }
+        let errorContent = userFacingErrorMessage(for: error)
 
         if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
             if let messageId,
@@ -1893,6 +1872,29 @@ class ChatViewModel: ObservableObject {
         isModelLoading = false
         streamingMessageId = nil
         loadingMessage = ""
+    }
+
+    private func userFacingErrorMessage(for error: Error) -> String {
+        guard let execError = error as? ExecutionError else {
+            return "The request could not be completed. Please try again."
+        }
+
+        switch execError {
+        case .pythonError,
+             .notInitialized,
+             .processNotRunning,
+             .invalidResponse,
+             .processCrashed,
+             .encodingFailed,
+             .decodingFailed:
+            return "The local engine stopped before it could finish. Restart it, then try again."
+        case .modelNotLoaded:
+            return "The selected model could not be loaded. Open Models to check the download, then try again."
+        case .timeout:
+            return "This took longer than expected. Please try again."
+        case .requiresManualRetry:
+            return "Please send your message again."
+        }
     }
 
     private func localEngineStatusMessage(for error: Error) -> String? {

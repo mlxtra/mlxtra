@@ -2,7 +2,14 @@ import SwiftUI
 
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.openSettings) private var openSettings
     let chatId: UUID
+    @State private var viewportHeight: CGFloat = 0
+    @State private var contentBottomY: CGFloat = 0
+    @State private var autoScrollEnabled = true
+
+    private let bottomAnchorID = "chat-bottom-anchor"
+    private let bottomScrollThreshold: CGFloat = 80
 
     // Access chat through viewModel so updates are observed
     var chat: Chat? {
@@ -22,19 +29,11 @@ struct ChatView: View {
             || !message.audioURLs.isEmpty
     }
 
-    private var hasStreamingToolProgress: Bool {
-        !(streamingAssistantMessage?.toolCalls.isEmpty ?? true)
-    }
-
     private var shouldShowTypingIndicator: Bool {
         viewModel.isGenerating
             && !hasStreamingProgressSurface
             && !viewModel.isPythonLoading
             && !viewModel.isModelLoading
-    }
-
-    private var shouldShowModelLoading: Bool {
-        (viewModel.isPythonLoading || viewModel.isModelLoading) && !hasStreamingToolProgress
     }
 
     var body: some View {
@@ -60,7 +59,9 @@ struct ChatView: View {
                             } else {
                                 MessageBubble(
                                     message: message,
-                                    isStreaming: message.isStreaming
+                                    isStreaming: message.isStreaming,
+                                    onOpenModels: { openSettings() },
+                                    onRestartLocalEngine: viewModel.restartLocalEngine
                                 )
                                 .id(message.id)
                             }
@@ -70,42 +71,57 @@ struct ChatView: View {
                             TypingIndicator()
                                 .id(streamingAssistantMessage?.id)
                         }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(bottomAnchorID)
+                            .background(
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: ChatContentBottomPreferenceKey.self,
+                                        value: geometry.frame(in: .named("ChatScrollView")).maxY
+                                    )
+                                }
+                            )
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
+                }
+                .coordinateSpace(name: "ChatScrollView")
+                .background(
+                    GeometryReader { geometry in
+                        Color.clear.preference(key: ChatViewportHeightPreferenceKey.self, value: geometry.size.height)
+                    }
+                )
+                .onPreferenceChange(ChatViewportHeightPreferenceKey.self) { height in
+                    viewportHeight = height
+                    updateAutoScrollState()
+                }
+                .onPreferenceChange(ChatContentBottomPreferenceKey.self) { bottomY in
+                    contentBottomY = bottomY
+                    updateAutoScrollState()
+                }
+                .onAppear {
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                    }
                 }
                 .onChange(of: viewModel.chats) { _, _ in
                     // Trigger update when chats array changes
                 }
                 .onChange(of: chat?.messages.count) { _, _ in
-                    if let lastMessage = chat?.messages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    }
+                    scrollToBottomIfNeeded(proxy)
                 }
                 .onChange(of: viewModel.isGenerating) { _, isGenerating in
-                    // Auto-scroll when generation starts
-                    if isGenerating, let lastMessage = chat?.messages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
+                    if isGenerating {
+                        scrollToBottomIfNeeded(proxy)
                     }
                 }
                 .onChange(of: chat?.messages.last?.content) { _, _ in
-                    // Auto-scroll when message content updates during streaming
-                    if viewModel.isGenerating, let lastMessage = chat?.messages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
+                    if viewModel.isGenerating {
+                        scrollToBottomIfNeeded(proxy)
                     }
                 }
-            }
-
-            // Loading indicator
-            if shouldShowModelLoading {
-                ModelLoadingView(message: viewModel.loadingMessage)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             // Input area
@@ -116,30 +132,33 @@ struct ChatView: View {
         }
         .background(Color(NSColor.windowBackgroundColor))
     }
+
+    private func scrollToBottomIfNeeded(_ proxy: ScrollViewProxy) {
+        guard autoScrollEnabled else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+        }
+    }
+
+    private func updateAutoScrollState() {
+        guard viewportHeight > 0 else { return }
+        autoScrollEnabled = contentBottomY <= viewportHeight + bottomScrollThreshold
+    }
 }
 
-struct ModelLoadingView: View {
-    let message: String
+private struct ChatViewportHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
 
-    var body: some View {
-        HStack(spacing: 12) {
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle())
-                .controlSize(.small)
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
 
-            Text(message)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+private struct ChatContentBottomPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
 
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

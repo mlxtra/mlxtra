@@ -356,16 +356,26 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
     if tool_calls:
         return tool_calls
 
-    # Gemma 4 format: <|tool_call|>call:name(param: "value")<|tool_call|>
+    # Gemma 4 format:
+    # <|tool_call|>call:name(param: "value")<|tool_call|>
+    # Some variants omit one pipe and use braces:
+    # <|tool_call>call:name{param:<|"|>value<|"|>}<tool_call|>
     gemma_pattern = re.compile(
-        r"<\|tool_call\|>call:([^(\s]+)\((.*?)\)\s*<\|tool_call\|>", re.DOTALL
+        r"<\|?tool_call\|?>\s*call:([^\s({]+)\s*([({])(.*?)([)}])\s*<\|?tool_call\|?>",
+        re.DOTALL,
     )
     for m in gemma_pattern.finditer(text):
         fn_name = m.group(1).strip()
-        args_str = m.group(2).strip()
+        open_delimiter = m.group(2)
+        close_delimiter = m.group(4)
+        if (open_delimiter == "(" and close_delimiter != ")") or (
+            open_delimiter == "{" and close_delimiter != "}"
+        ):
+            continue
+        args_str = m.group(3).replace('<|"|>', '"').strip()
         args = {}
         arg_pattern = re.compile(
-            r'(\w+):\s*(?:"((?:\\.|[^"\\])*)"|([^,)]*?))(?=,|\s*$)',
+            r'(\w+):\s*(?:"((?:\\.|[^"\\])*)"|([^,)}]*?))(?=,|\s*$)',
             re.DOTALL,
         )
         for pair in arg_pattern.finditer(args_str):

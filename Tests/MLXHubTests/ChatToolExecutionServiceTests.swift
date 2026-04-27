@@ -165,7 +165,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertTrue(messages[0].isUser)
         XCTAssertFalse(messages[1].isUser)
         XCTAssertFalse(messages[1].isStreaming)
-        XCTAssertTrue(messages[1].content.contains("bridge failed"))
+        XCTAssertEqual(messages[1].content, "The local engine stopped before it could finish. Restart it, then try again.")
         XCTAssertEqual(viewModel.localEngineStatus.state, .needsAttention)
         XCTAssertEqual(viewModel.localEngineStatus.primaryAction, .restart)
     }
@@ -328,7 +328,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
         XCTAssertEqual(viewModel.pendingEngineDownloadModel?.modelId, musicModelId)
         XCTAssertEqual(executor.receivedRequests.count, 0)
-        XCTAssertEqual(viewModel.chats.first?.messages.count, 2)
+        XCTAssertEqual(viewModel.chats.first?.messages.count, 1)
     }
 
     func testDeepResearchSeedsWebSearchAndLimitsToolsToSearch() async {

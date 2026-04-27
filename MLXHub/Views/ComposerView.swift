@@ -11,6 +11,11 @@ struct ComposerView: View {
         viewModel.isGenerating || isTextInputFocused || isDropTargeted
     }
 
+    private var canSend: Bool {
+        !viewModel.isInputDisabled
+            && (!viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.hasSelectedImages)
+    }
+
     private let acceptedDropTypes = [
         UTType.fileURL.identifier,
         UTType.image.identifier,
@@ -67,6 +72,13 @@ struct ComposerView: View {
                 }
             )
 
+            if viewModel.inputText.isEmpty {
+                Text(viewModel.hasSelectedImages ? "Add a note..." : "Ask anything...")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 6)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(minHeight: viewModel.hasSelectedImages ? 20 : 32, maxHeight: 80)
         .padding(.horizontal, 18)
@@ -128,6 +140,12 @@ struct ComposerView: View {
                 .help("Stop generating")
             } else {
                 ModelSelectorInline(viewModel: viewModel)
+                SendActionButton(
+                    isEnabled: canSend,
+                    action: {
+                        viewModel.sendMessage()
+                    }
+                )
             }
         }
         .padding(.horizontal, 12)
@@ -232,6 +250,71 @@ struct ComposerView: View {
 
         appendImageAttachments(imageURLs)
         return true
+    }
+}
+
+private struct SendActionButton: View {
+    let isEnabled: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(background)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .strokeBorder(borderColor, lineWidth: 1)
+                    }
+                    .shadow(
+                        color: shadowColor,
+                        radius: isEnabled ? (isHovered ? 10 : 7) : 0,
+                        x: 0,
+                        y: isHovered ? 4 : 2
+                    )
+
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(isEnabled ? Color.white : Color.secondary.opacity(0.65))
+            }
+            .frame(width: 36, height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .help(isEnabled ? "Send message" : "Type a message to send")
+        .accessibilityLabel("Send message")
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var background: AnyShapeStyle {
+        if isEnabled {
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        Color.accentColor,
+                        Color(red: 0.10, green: 0.47, blue: 0.96)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+
+        return AnyShapeStyle(Color(NSColor.controlColor).opacity(0.7))
+    }
+
+    private var borderColor: Color {
+        isEnabled ? Color.white.opacity(0.18) : Color(NSColor.separatorColor).opacity(0.28)
+    }
+
+    private var shadowColor: Color {
+        isEnabled ? Color.accentColor.opacity(0.22) : Color.clear
     }
 }
 

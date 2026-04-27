@@ -8,13 +8,22 @@ struct MessageBubble: View {
     @State private var isHovered = false
     @State private var cursorVisible = true
     @State private var showCopyFeedback = false
+    let onOpenModels: (() -> Void)?
+    let onRestartLocalEngine: (() -> Void)?
     private let avatarSize: CGFloat = 28
     private let messageMaxWidth: CGFloat = 680
     private let generatedMediaColumnWidth: CGFloat = 540
 
-    init(message: Message, isStreaming: Bool = false) {
+    init(
+        message: Message,
+        isStreaming: Bool = false,
+        onOpenModels: (() -> Void)? = nil,
+        onRestartLocalEngine: (() -> Void)? = nil
+    ) {
         self.message = message
         self.isStreaming = isStreaming
+        self.onOpenModels = onOpenModels
+        self.onRestartLocalEngine = onRestartLocalEngine
     }
 
     var body: some View {
@@ -68,7 +77,9 @@ struct MessageBubble: View {
                             content: message.content,
                             isStreaming: isStreaming,
                             cursorVisible: cursorVisible,
-                            onCopy: copyToClipboard
+                            onCopy: copyToClipboard,
+                            onOpenModels: onOpenModels,
+                            onRestartLocalEngine: onRestartLocalEngine
                         )
                         .contextMenu {
                             Button("Copy") {
@@ -983,20 +994,30 @@ struct AIContentView: View {
     let isStreaming: Bool
     let cursorVisible: Bool
     let onCopy: () -> Void
+    let onOpenModels: (() -> Void)?
+    let onRestartLocalEngine: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Thinking section - expanded while streaming, collapsible when complete
-            if let thinkingContent = extractThinking(content) {
-                ThinkingView(content: thinkingContent, isStreaming: isStreaming)
-            }
-
-            // Main response
-            if let mainContent = extractMainContent(content), !mainContent.isEmpty {
-                MarkdownTextView(
-                    text: mainContent + (isStreaming && cursorVisible ? "▊" : ""),
-                    isStreaming: isStreaming
+            if let recoveryNotice = RecoveryNotice(content: content), !isStreaming {
+                RecoveryNoticeView(
+                    notice: recoveryNotice,
+                    onOpenModels: onOpenModels,
+                    onRestartLocalEngine: onRestartLocalEngine
                 )
+            } else {
+                // Thinking section - expanded while streaming, collapsible when complete
+                if let thinkingContent = extractThinking(content) {
+                    ThinkingView(content: thinkingContent, isStreaming: isStreaming)
+                }
+
+                // Main response
+                if let mainContent = extractMainContent(content), !mainContent.isEmpty {
+                    MarkdownTextView(
+                        text: mainContent + (isStreaming && cursorVisible ? "▊" : ""),
+                        isStreaming: isStreaming
+                    )
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -1073,6 +1094,96 @@ struct AIContentView: View {
             ("<think>", "</think>"),
             ("<thinking>", "</thinking>")
         ]
+    }
+}
+
+private enum RecoveryAction {
+    case openModels
+    case restart
+}
+
+private struct RecoveryNotice {
+    let title: String
+    let detail: String
+    let systemImage: String
+    let actionTitle: String?
+    let action: RecoveryAction?
+
+    init?(content: String) {
+        switch content {
+        case "The local engine stopped before it could finish. Restart it, then try again.":
+            title = "Local engine stopped"
+            detail = content
+            systemImage = "exclamationmark.triangle"
+            actionTitle = "Restart"
+            action = .restart
+        case "The selected model could not be loaded. Open Models to check the download, then try again.":
+            title = "Model needs attention"
+            detail = content
+            systemImage = "arrow.down.circle"
+            actionTitle = "Open Models"
+            action = .openModels
+        case "This took longer than expected. Please try again.":
+            title = "Request timed out"
+            detail = content
+            systemImage = "clock"
+            actionTitle = nil
+            action = nil
+        case "Please send your message again.",
+             "The request could not be completed. Please try again.":
+            title = "Request not completed"
+            detail = content
+            systemImage = "arrow.clockwise"
+            actionTitle = nil
+            action = nil
+        default:
+            return nil
+        }
+    }
+}
+
+private struct RecoveryNoticeView: View {
+    let notice: RecoveryNotice
+    let onOpenModels: (() -> Void)?
+    let onRestartLocalEngine: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: notice.systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.orange)
+                .frame(width: 26, height: 26)
+                .background(Color.orange.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(notice.title)
+                    .font(.system(size: 13, weight: .semibold))
+
+                Text(notice.detail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let actionTitle = notice.actionTitle, let action = actionHandler {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .padding(.top, 2)
+                }
+            }
+        }
+    }
+
+    private var actionHandler: (() -> Void)? {
+        switch notice.action {
+        case .openModels:
+            return onOpenModels
+        case .restart:
+            return onRestartLocalEngine
+        case nil:
+            return nil
+        }
     }
 }
 

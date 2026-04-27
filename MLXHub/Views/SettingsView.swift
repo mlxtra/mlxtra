@@ -29,7 +29,7 @@ struct SettingsView: View {
             switch selectedPane {
             case .models:
                 modelsPane
-            case .prompts:
+            case .advanced:
                 promptsPane
             }
         }
@@ -62,7 +62,7 @@ struct SettingsView: View {
                     )
 
                     ModelSummaryBadge(
-                        title: "Active",
+                        title: "Downloading",
                         value: "\(activeCount)",
                         systemImage: "arrow.down.circle.fill",
                         tint: .accentColor
@@ -113,6 +113,15 @@ struct SettingsView: View {
                     }
                 )
             }
+
+            BeginnerModelSetupPanel(
+                starterModel: recommendedStarterModel,
+                starterState: downloadManager.state(for: recommendedStarterModel),
+                toolItems: beginnerToolItems,
+                onDownload: { model in
+                    downloadManager.download(model)
+                }
+            )
 
             controls
 
@@ -265,6 +274,19 @@ struct SettingsView: View {
         allModels.filter { downloadManager.state(for: $0) == .downloaded }.count
     }
 
+    private var recommendedStarterModel: DownloadableModel {
+        DownloadableModel.embeddedModel(modelId: AIModel.defaultForCurrentHardware.modelId)
+            ?? allModels.first!
+    }
+
+    private var beginnerToolItems: [BeginnerModelSetupItem] {
+        allModels
+            .filter { $0.modality != .vision }
+            .map { model in
+                BeginnerModelSetupItem(model: model, state: downloadManager.state(for: model))
+            }
+    }
+
     private var activeCount: Int {
         allModels.filter { downloadManager.state(for: $0).isDownloading }.count
     }
@@ -276,23 +298,239 @@ struct SettingsView: View {
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case models
-    case prompts
+    case advanced
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .models: return "Models"
-        case .prompts: return "Prompts"
+        case .advanced: return "Advanced"
         }
     }
 
     var subtitle: String {
         switch self {
         case .models:
-            return "Download local models before first use."
-        case .prompts:
-            return "Tune chat, research, and tool behavior."
+            return "Download once, then use models locally."
+        case .advanced:
+            return "Tune prompts and tool behavior."
+        }
+    }
+}
+
+private struct BeginnerModelSetupItem: Identifiable {
+    let model: DownloadableModel
+    let state: ModelDownloadManager.DownloadState
+
+    var id: String { model.id }
+}
+
+private struct BeginnerModelSetupPanel: View {
+    let starterModel: DownloadableModel
+    let starterState: ModelDownloadManager.DownloadState
+    let toolItems: [BeginnerModelSetupItem]
+    let onDownload: (DownloadableModel) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: starterState == .downloaded ? "checkmark.circle.fill" : "sparkles")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(starterState == .downloaded ? Color.green : Color.accentColor)
+                    .frame(width: 36, height: 36)
+                    .background((starterState == .downloaded ? Color.green : Color.accentColor).opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Start local AI")
+                        .font(.headline)
+                    Text("Download one chat model first. Add image, speech, or music only when you need those tools.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                beginnerDownloadAction(model: starterModel, state: starterState)
+            }
+
+            Divider()
+
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Starter model")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(starterModel.name)
+                        .font(.callout.weight(.medium))
+                }
+                .frame(width: 170, alignment: .leading)
+
+                setupStatusLabel(state: starterState)
+
+                Spacer()
+
+                Text("\(formatSize(starterModel.downloadSizeGB))")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(toolItems) { item in
+                    ToolSetupChip(item: item, onDownload: onDownload)
+                }
+            }
+        }
+        .padding(16)
+        .background(.thinMaterial.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private func beginnerDownloadAction(model: DownloadableModel, state: ModelDownloadManager.DownloadState) -> some View {
+        switch state {
+        case .downloaded:
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.green)
+        case .downloading(let progress):
+            VStack(alignment: .trailing, spacing: 5) {
+                ProgressView(value: progress?.fractionCompleted)
+                    .frame(width: 130)
+                Text(progress?.displayText ?? "Downloading")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .notDownloaded, .failed:
+            Button {
+                onDownload(model)
+            } label: {
+                Label(state.isFailed ? "Retry" : "Download Starter", systemImage: state.isFailed ? "arrow.clockwise" : "arrow.down.circle")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private func setupStatusLabel(state: ModelDownloadManager.DownloadState) -> some View {
+        Label(statusTitle(for: state), systemImage: statusIcon(for: state))
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(statusColor(for: state))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(statusColor(for: state).opacity(0.10))
+            .clipShape(Capsule())
+    }
+
+    private func statusTitle(for state: ModelDownloadManager.DownloadState) -> String {
+        switch state {
+        case .downloaded:
+            return "Ready"
+        case .downloading:
+            return "Downloading"
+        case .failed:
+            return "Needs retry"
+        case .notDownloaded:
+            return "Not downloaded"
+        }
+    }
+
+    private func statusIcon(for state: ModelDownloadManager.DownloadState) -> String {
+        switch state {
+        case .downloaded:
+            return "checkmark.circle.fill"
+        case .downloading:
+            return "arrow.down.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .notDownloaded:
+            return "circle"
+        }
+    }
+
+    private func statusColor(for state: ModelDownloadManager.DownloadState) -> Color {
+        switch state {
+        case .downloaded:
+            return .green
+        case .downloading:
+            return .accentColor
+        case .failed:
+            return .red
+        case .notDownloaded:
+            return .secondary
+        }
+    }
+}
+
+private struct ToolSetupChip: View {
+    let item: BeginnerModelSetupItem
+    let onDownload: (DownloadableModel) -> Void
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: item.model.modality.icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.model.modality.rawValue)
+                    .font(.caption.weight(.semibold))
+                Text(statusText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if item.state == .notDownloaded || item.state.isFailed {
+                Button {
+                    onDownload(item.model)
+                } label: {
+                    Image(systemName: item.state.isFailed ? "arrow.clockwise" : "arrow.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .help(item.state.isFailed ? "Retry download" : "Download \(item.model.name)")
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(tint.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(tint.opacity(0.14), lineWidth: 1)
+        }
+    }
+
+    private var statusText: String {
+        switch item.state {
+        case .downloaded:
+            return "Ready"
+        case .downloading(let progress):
+            return progress?.displayText ?? "Downloading"
+        case .failed:
+            return "Retry"
+        case .notDownloaded:
+            return formatSize(item.model.downloadSizeGB)
+        }
+    }
+
+    private var tint: Color {
+        switch item.state {
+        case .downloaded:
+            return .green
+        case .downloading:
+            return .accentColor
+        case .failed:
+            return .red
+        case .notDownloaded:
+            return .secondary
         }
     }
 }
@@ -489,7 +727,7 @@ private struct RequiredDownloadCallout: View {
                 .foregroundStyle(Color.accentColor)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Required for your last request")
+                Text("Download needed")
                     .font(.headline)
 
                 Text("\(model.name), \(formatSize(model.downloadSizeGB))")

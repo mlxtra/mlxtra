@@ -104,6 +104,16 @@ class TestParseToolCalls(unittest.TestCase):
         assert args["duration"] == 60
         assert args["instrumental"] is True
 
+    def test_gemma_tool_call_handles_braces_and_quote_tokens(self):
+        text = '<|tool_call>call:web_search{query:<|"|>TSLA stock price now<|"|>}<tool_call|>'
+
+        result = python_bridge.parse_tool_calls(text)
+        assert len(result) == 1
+        assert result[0]["function"]["name"] == "web_search"
+
+        args = json.loads(result[0]["function"]["arguments"])
+        assert args["query"] == "TSLA stock price now"
+
 
 class TestLastUserPrompt(unittest.TestCase):
     def test_returns_last_user_content(self):
