@@ -413,6 +413,56 @@ class RuntimeManager: ObservableObject {
 		return false
 	}
 
+        private nonisolated static func weightIndexFiles(at path: URL, maximumDepth: Int = 3) -> [URL] {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  let enumerator = FileManager.default.enumerator(
+                    at: path,
+                    includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                  ) else {
+                return []
+            }
+
+            var indexes: [URL] = []
+            for case let fileURL as URL in enumerator {
+                let relativeDepth = Self.relativePathDepth(fileURL, root: path)
+                if relativeDepth > maximumDepth {
+                    if (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                        enumerator.skipDescendants()
+                    }
+                    continue
+                }
+                if Self.isWeightIndexArtifact(fileURL) {
+                    indexes.append(fileURL)
+                }
+            }
+            return indexes
+        }
+
+        private nonisolated static func declaredWeightFilesAreComplete(indexURL: URL) -> Bool {
+            guard let data = try? Data(contentsOf: indexURL),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let weightMap = json["weight_map"] as? [String: String],
+                  !weightMap.isEmpty else {
+                return false
+            }
+
+            let baseURL = indexURL.deletingLastPathComponent()
+            let declaredFiles = Set(weightMap.values)
+            guard !declaredFiles.isEmpty else { return false }
+
+            for filename in declaredFiles {
+                let weightURL = baseURL.appendingPathComponent(filename)
+                guard Self.isModelWeightArtifact(weightURL),
+                      Self.modelWeightArtifactHasContent(weightURL) else {
+                    return false
+                }
+            }
+            return true
+        }
+
 	private nonisolated static func modelWeightArtifactHasContent(_ fileURL: URL) -> Bool {
 		let resolvedURL = fileURL.resolvingSymlinksInPath()
 		let pathToCheck = resolvedURL.path == fileURL.path ? fileURL.path : resolvedURL.path
@@ -429,7 +479,14 @@ class RuntimeManager: ObservableObject {
 	}
 
 		nonisolated static func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
-            snapshotContainsModelMetadata(snapshotPath) && containsModelWeights(at: snapshotPath)
+            guard snapshotContainsModelMetadata(snapshotPath) else { return false }
+
+            let indexes = weightIndexFiles(at: snapshotPath)
+            if !indexes.isEmpty {
+                return indexes.allSatisfy { declaredWeightFilesAreComplete(indexURL: $0) }
+            }
+
+            return containsModelWeights(at: snapshotPath)
 		}
 
         private nonisolated static func snapshotContainsModelMetadata(_ snapshotPath: URL) -> Bool {
@@ -477,14 +534,10 @@ class RuntimeManager: ObservableObject {
 		let filename = fileURL.lastPathComponent
 		let knownWeightFilenames = Set([
 			"model.safetensors",
-			"model.safetensors.index.json",
 			"pytorch_model.bin",
-			"pytorch_model.bin.index.json",
 			"model.bin",
 			"diffusion_pytorch_model.safetensors",
-			"diffusion_pytorch_model.safetensors.index.json",
-			"diffusion_pytorch_model.bin",
-			"diffusion_pytorch_model.bin.index.json"
+			"diffusion_pytorch_model.bin"
 		])
 
 		if knownWeightFilenames.contains(filename) {
@@ -498,6 +551,12 @@ class RuntimeManager: ObservableObject {
 		}
 		return false
 	}
+
+        private nonisolated static func isWeightIndexArtifact(_ fileURL: URL) -> Bool {
+            let filename = fileURL.lastPathComponent
+            return filename.hasSuffix(".safetensors.index.json")
+                || filename.hasSuffix(".bin.index.json")
+        }
     
     /// Get estimated model size
     func estimatedModelSize(modelId: String) -> Double {

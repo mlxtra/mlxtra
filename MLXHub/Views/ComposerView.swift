@@ -669,6 +669,11 @@ struct ToolRow: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
                 .labelStyle(.titleAndIcon)
+        case .paused:
+            Label("Paused", systemImage: "pause.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.orange)
+                .labelStyle(.titleAndIcon)
         case .failed:
             Label("Retry", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 10, weight: .semibold))
@@ -759,6 +764,11 @@ struct ModelSelectorInline: View {
             Label("Loading", systemImage: "arrow.down.circle.fill")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
+                .labelStyle(.titleAndIcon)
+        case .paused:
+            Label("Paused", systemImage: "pause.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.orange)
                 .labelStyle(.titleAndIcon)
         case .failed:
             Label("Retry", systemImage: "exclamationmark.triangle.fill")

@@ -110,6 +110,12 @@ struct SettingsView: View {
                     onDownload: {
                         downloadManager.download(pendingModel)
                     },
+                    onPause: {
+                        downloadManager.pause(pendingModel)
+                    },
+                    onCancel: {
+                        downloadManager.cancel(pendingModel)
+                    },
                     onDismiss: {
                         pendingDownloadModelId = ""
                     }
@@ -121,6 +127,12 @@ struct SettingsView: View {
                 downloadManager: downloadManager,
                 onDownload: { model in
                     downloadManager.download(model)
+                },
+                onPause: { model in
+                    downloadManager.pause(model)
+                },
+                onCancel: { model in
+                    downloadManager.cancel(model)
                 }
             )
 
@@ -128,6 +140,12 @@ struct SettingsView: View {
                 items: capabilityItems,
                 onDownload: { model in
                     downloadManager.download(model)
+                },
+                onPause: { model in
+                    downloadManager.pause(model)
+                },
+                onCancel: { model in
+                    downloadManager.cancel(model)
                 }
             )
 
@@ -393,7 +411,7 @@ struct SettingsView: View {
         switch state {
         case .downloaded:
             stateRank = 0
-        case .downloading:
+        case .downloading, .paused:
             stateRank = 1
         case .notDownloaded:
             stateRank = 2
@@ -466,6 +484,8 @@ private struct CapabilitySetupItem: Identifiable {
 private struct CapabilitySetupSection: View {
     let items: [CapabilitySetupItem]
     let onDownload: (DownloadableModel) -> Void
+    let onPause: (DownloadableModel) -> Void
+    let onCancel: (DownloadableModel) -> Void
 
     private let columns = [
         GridItem(.adaptive(minimum: 280), spacing: 10)
@@ -478,7 +498,12 @@ private struct CapabilitySetupSection: View {
 
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(items) { item in
-                    CapabilitySetupCard(item: item, onDownload: onDownload)
+                    CapabilitySetupCard(
+                        item: item,
+                        onDownload: onDownload,
+                        onPause: onPause,
+                        onCancel: onCancel
+                    )
                 }
             }
         }
@@ -488,6 +513,8 @@ private struct CapabilitySetupSection: View {
 private struct CapabilitySetupCard: View {
     let item: CapabilitySetupItem
     let onDownload: (DownloadableModel) -> Void
+    let onPause: (DownloadableModel) -> Void
+    let onCancel: (DownloadableModel) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -545,7 +572,37 @@ private struct CapabilitySetupCard: View {
                 Text(progress?.displayText ?? "Downloading")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Button {
+                        onPause(item.model)
+                    } label: {
+                        Label("Pause", systemImage: "pause.fill")
+                    }
+                    Button(role: .cancel) {
+                        onCancel(item.model)
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
+        case .paused:
+            HStack(spacing: 6) {
+                Button {
+                    onDownload(item.model)
+                } label: {
+                    Label("Resume", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(role: .cancel) {
+                    onCancel(item.model)
+                } label: {
+                    Label("Cancel", systemImage: "xmark")
+                }
+            }
+            .controlSize(.small)
         case .notDownloaded, .failed:
             Button {
                 onDownload(item.model)
@@ -573,6 +630,8 @@ private struct CapabilitySetupCard: View {
             return "Ready"
         case .downloading:
             return "Downloading"
+        case .paused:
+            return "Paused"
         case .failed:
             return "Needs retry"
         case .notDownloaded:
@@ -586,6 +645,8 @@ private struct CapabilitySetupCard: View {
             return "checkmark.circle.fill"
         case .downloading:
             return "arrow.down.circle.fill"
+        case .paused:
+            return "pause.circle.fill"
         case .failed:
             return "exclamationmark.triangle.fill"
         case .notDownloaded:
@@ -599,6 +660,8 @@ private struct CapabilitySetupCard: View {
             return .green
         case .downloading:
             return .accentColor
+        case .paused:
+            return .orange
         case .failed:
             return .red
         case .notDownloaded:
@@ -621,6 +684,8 @@ private struct BestForThisMacSection: View {
     let profiles: [ModelCapabilityProfile]
     @ObservedObject var downloadManager: ModelDownloadManager
     let onDownload: (DownloadableModel) -> Void
+    let onPause: (DownloadableModel) -> Void
+    let onCancel: (DownloadableModel) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -634,6 +699,12 @@ private struct BestForThisMacSection: View {
                         state: downloadManager.state(for: profile.downloadableModel),
                         onDownload: {
                             onDownload(profile.downloadableModel)
+                        },
+                        onPause: {
+                            onPause(profile.downloadableModel)
+                        },
+                        onCancel: {
+                            onCancel(profile.downloadableModel)
                         }
                     )
                 }
@@ -646,6 +717,8 @@ private struct BestModelCard: View {
     let profile: ModelCapabilityProfile
     let state: ModelDownloadManager.DownloadState
     let onDownload: () -> Void
+    let onPause: () -> Void
+    let onCancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -696,9 +769,33 @@ private struct BestModelCard: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.green)
         case .downloading:
-            Label("Downloading", systemImage: "arrow.down.circle.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
+            HStack(spacing: 6) {
+                Label("Downloading", systemImage: "arrow.down.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                Button(action: onPause) {
+                    Image(systemName: "pause.fill")
+                }
+                .help("Pause download")
+                Button(role: .cancel, action: onCancel) {
+                    Image(systemName: "xmark")
+                }
+                .help("Cancel download")
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.borderless)
+        case .paused:
+            HStack(spacing: 6) {
+                Button(action: onDownload) {
+                    Label("Resume", systemImage: "play.fill")
+                }
+                Button(role: .cancel, action: onCancel) {
+                    Image(systemName: "xmark")
+                }
+                .help("Cancel download")
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         case .notDownloaded, .failed:
             Button {
                 onDownload()
@@ -998,6 +1095,52 @@ private struct ModelDownloadRow: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
+
+                HStack(spacing: 6) {
+                    Button {
+                        downloadManager.pause(model)
+                    } label: {
+                        Label("Pause", systemImage: "pause.fill")
+                    }
+
+                    Button(role: .cancel) {
+                        downloadManager.cancel(model)
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+        case .paused(let progress):
+            VStack(alignment: .trailing, spacing: 6) {
+                Label("Paused", systemImage: "pause.circle.fill")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.orange)
+
+                if let detailText = progress?.detailText {
+                    Text(detailText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 6) {
+                    Button {
+                        downloadManager.resume(model)
+                    } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button(role: .cancel) {
+                        downloadManager.cancel(model)
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
+                }
+                .controlSize(.small)
             }
 
         case .downloaded:
@@ -1040,6 +1183,8 @@ private struct RequiredDownloadCallout: View {
     let model: DownloadableModel
     let state: ModelDownloadManager.DownloadState
     let onDownload: () -> Void
+    let onPause: () -> Void
+    let onCancel: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -1100,8 +1245,33 @@ private struct RequiredDownloadCallout: View {
                     ProgressView()
                         .controlSize(.small)
                 }
+
+                HStack(spacing: 6) {
+                    Button(action: onPause) {
+                        Image(systemName: "pause.fill")
+                    }
+                    .help("Pause download")
+                    Button(role: .cancel, action: onCancel) {
+                        Image(systemName: "xmark")
+                    }
+                    .help("Cancel download")
+                }
+                .buttonStyle(.borderless)
             }
             .frame(width: 138, alignment: .trailing)
+
+        case .paused:
+            HStack(spacing: 6) {
+                Button(action: onDownload) {
+                    Label("Resume", systemImage: "play.fill")
+                }
+                Button(role: .cancel, action: onCancel) {
+                    Image(systemName: "xmark")
+                }
+                .help("Cancel download")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
 
         case .downloaded:
             Label("Ready", systemImage: "checkmark.circle.fill")

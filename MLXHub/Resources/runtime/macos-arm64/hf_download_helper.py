@@ -69,6 +69,7 @@ class JsonTqdm(tqdm):
         unit = str(self.unit or "")
         description = str(self.desc or "")
         kind = progress_kind(unit, description)
+        display_percent = None if kind == "bytes" else percent
 
         emit(
             {
@@ -79,7 +80,7 @@ class JsonTqdm(tqdm):
                 "progress_kind": kind,
                 "downloaded": downloaded,
                 "total": total,
-                "percent": percent,
+                "percent": display_percent,
             }
         )
 

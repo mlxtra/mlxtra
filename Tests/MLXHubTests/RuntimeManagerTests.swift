@@ -204,6 +204,45 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertFalse(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
     }
 
+    func testSnapshotValidationRejectsIndexWithoutDeclaredWeights() throws {
+        let snapshotPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: snapshotPath) }
+
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data("""
+        {
+          "metadata": {},
+          "weight_map": {
+            "layer.0": "model-00001-of-00002.safetensors",
+            "layer.1": "model-00002-of-00002.safetensors"
+          }
+        }
+        """.utf8).write(to: snapshotPath.appendingPathComponent("model.safetensors.index.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model-00001-of-00002.safetensors"))
+
+        XCTAssertFalse(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
+    func testSnapshotValidationAcceptsCompleteDeclaredWeightIndex() throws {
+        let snapshotPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: snapshotPath) }
+
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data("""
+        {
+          "metadata": {},
+          "weight_map": {
+            "layer.0": "model-00001-of-00002.safetensors",
+            "layer.1": "model-00002-of-00002.safetensors"
+          }
+        }
+        """.utf8).write(to: snapshotPath.appendingPathComponent("model.safetensors.index.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model-00001-of-00002.safetensors"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model-00002-of-00002.safetensors"))
+
+        XCTAssertTrue(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
+    }
+
     func testSnapshotValidationRejectsWeightsWithoutMetadata() throws {
         let snapshotPath = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: snapshotPath) }

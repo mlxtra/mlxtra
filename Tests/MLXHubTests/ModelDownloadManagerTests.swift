@@ -8,6 +8,7 @@ final class ModelDownloadManagerTests: XCTestCase {
     func testDownloadStateEquatable() {
         XCTAssertEqual(ModelDownloadManager.DownloadState.notDownloaded, ModelDownloadManager.DownloadState.notDownloaded)
         XCTAssertEqual(ModelDownloadManager.DownloadState.downloading(nil), ModelDownloadManager.DownloadState.downloading(nil))
+        XCTAssertEqual(ModelDownloadManager.DownloadState.paused(nil), ModelDownloadManager.DownloadState.paused(nil))
         XCTAssertEqual(ModelDownloadManager.DownloadState.downloaded, ModelDownloadManager.DownloadState.downloaded)
         XCTAssertEqual(ModelDownloadManager.DownloadState.failed("error"), ModelDownloadManager.DownloadState.failed("error"))
         XCTAssertNotEqual(ModelDownloadManager.DownloadState.notDownloaded, ModelDownloadManager.DownloadState.downloaded)
@@ -17,8 +18,42 @@ final class ModelDownloadManagerTests: XCTestCase {
     func testDownloadStateIsDownloading() {
         XCTAssertFalse(ModelDownloadManager.DownloadState.notDownloaded.isDownloading)
         XCTAssertTrue(ModelDownloadManager.DownloadState.downloading(nil).isDownloading)
+        XCTAssertFalse(ModelDownloadManager.DownloadState.paused(nil).isDownloading)
         XCTAssertFalse(ModelDownloadManager.DownloadState.downloaded.isDownloading)
         XCTAssertFalse(ModelDownloadManager.DownloadState.failed("error").isDownloading)
+    }
+
+    func testDownloadStatePausedAndProgress() {
+        let progress = ModelDownloadManager.DownloadProgress(
+            status: "Downloading",
+            description: nil,
+            unit: "files",
+            progressKind: "files",
+            downloadedBytes: 2,
+            totalBytes: 4,
+            percent: 50
+        )
+
+        XCTAssertTrue(ModelDownloadManager.DownloadState.paused(progress).isPaused)
+        XCTAssertEqual(ModelDownloadManager.DownloadState.paused(progress).progress, progress)
+        XCTAssertEqual(ModelDownloadManager.DownloadState.downloading(progress).progress, progress)
+        XCTAssertNil(ModelDownloadManager.DownloadState.notDownloaded.progress)
+    }
+
+    func testByteProgressDoesNotUsePercentDisplay() {
+        let progress = ModelDownloadManager.DownloadProgress(
+            status: "Downloading",
+            description: "model.safetensors",
+            unit: "B",
+            progressKind: "bytes",
+            downloadedBytes: 1_048_576,
+            totalBytes: 2_097_152,
+            percent: nil
+        )
+
+        XCTAssertNil(progress.fractionCompleted)
+        XCTAssertEqual(progress.displayText, "Downloading")
+        XCTAssertEqual(progress.detailText, "1 MB of 2.1 MB")
     }
 
     func testDownloadProgressFormatting() {
@@ -51,6 +86,7 @@ final class ModelDownloadManagerTests: XCTestCase {
     func testDownloadStateTerminalStatus() {
         XCTAssertFalse(ModelDownloadManager.DownloadState.notDownloaded.isTerminal)
         XCTAssertFalse(ModelDownloadManager.DownloadState.downloading(nil).isTerminal)
+        XCTAssertFalse(ModelDownloadManager.DownloadState.paused(nil).isTerminal)
         XCTAssertTrue(ModelDownloadManager.DownloadState.downloaded.isTerminal)
         XCTAssertTrue(ModelDownloadManager.DownloadState.failed("error").isTerminal)
     }
@@ -89,6 +125,10 @@ final class ModelDownloadManagerTests: XCTestCase {
         XCTAssertEqual(
             ModelDownloadError.downloadFailed("").errorDescription,
             ""
+        )
+        XCTAssertEqual(
+            ModelDownloadError.stoppedByUser.errorDescription,
+            "Download stopped."
         )
     }
 }

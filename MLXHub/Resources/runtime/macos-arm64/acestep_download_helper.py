@@ -93,6 +93,7 @@ def install_huggingface_progress_hook():
             unit = str(self.unit or "")
             description = str(self.desc or "")
             kind = progress_kind(unit, description)
+            display_percent = None if kind == "bytes" else percent
 
             emit(
                 {
@@ -103,7 +104,7 @@ def install_huggingface_progress_hook():
                     "progress_kind": kind,
                     "downloaded": downloaded,
                     "total": total,
-                    "percent": percent,
+                    "percent": display_percent,
                 }
             )
 

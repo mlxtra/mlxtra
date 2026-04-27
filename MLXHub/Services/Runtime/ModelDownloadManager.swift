@@ -49,6 +49,11 @@ private final class DownloadOutputLog: @unchecked Sendable {
 	}
 }
 
+private enum DownloadStopReason: Equatable {
+    case pause
+    case cancel
+}
+
 final class DownloadErrorTracker: @unchecked Sendable {
 	private let lock = NSLock()
 	private var receivedError: [String: Bool] = [:]
@@ -142,6 +147,7 @@ final class ModelDownloadManager: ObservableObject {
     enum DownloadState: Equatable {
         case notDownloaded
         case downloading(DownloadProgress?)
+        case paused(DownloadProgress?)
         case downloaded
         case failed(String)
 
@@ -152,11 +158,27 @@ final class ModelDownloadManager: ObservableObject {
             return false
         }
 
+        var isPaused: Bool {
+            if case .paused = self {
+                return true
+            }
+            return false
+        }
+
+        var progress: DownloadProgress? {
+            switch self {
+            case .downloading(let progress), .paused(let progress):
+                return progress
+            case .notDownloaded, .downloaded, .failed:
+                return nil
+            }
+        }
+
         var isTerminal: Bool {
             switch self {
             case .downloaded, .failed:
                 return true
-            case .notDownloaded, .downloading:
+            case .notDownloaded, .downloading, .paused:
                 return false
             }
         }
@@ -166,6 +188,9 @@ final class ModelDownloadManager: ObservableObject {
 
 	private let runtimeManager = RuntimeManager()
 	private var tasks: [String: Task<Void, Never>] = [:]
+    private var processes: [String: Process] = [:]
+    private var stopReasons: [String: DownloadStopReason] = [:]
+    private var lastProgress: [String: DownloadProgress] = [:]
 	private let errorTracker = DownloadErrorTracker()
 
     init() {
@@ -174,7 +199,8 @@ final class ModelDownloadManager: ObservableObject {
 
     func refreshStatuses() {
         let modelsToCheck = DownloadableModel.embedded.compactMap { model -> (id: String, modelId: String)? in
-            guard states[model.id]?.isDownloading != true else {
+            guard states[model.id]?.isDownloading != true,
+                  states[model.id]?.isPaused != true else {
                 return nil
             }
             return (model.id, model.modelId)
@@ -188,7 +214,8 @@ final class ModelDownloadManager: ObservableObject {
                 }
             }.value
 
-            for (modelId, isDownloaded) in results where states[modelId]?.isDownloading != true {
+            for (modelId, isDownloaded) in results
+                where states[modelId]?.isDownloading != true && states[modelId]?.isPaused != true {
                 states[modelId] = isDownloaded ? .downloaded : .notDownloaded
             }
         }
@@ -206,7 +233,8 @@ final class ModelDownloadManager: ObservableObject {
         guard tasks[model.id] == nil else { return }
 
         errorTracker.clearErrorReceived(for: model.id)
-        states[model.id] = .downloading(nil)
+        stopReasons[model.id] = nil
+        states[model.id] = .downloading(states[model.id]?.progress ?? lastProgress[model.id])
         tasks[model.id] = Task { [weak self] in
             guard let self else { return }
 
@@ -219,13 +247,65 @@ final class ModelDownloadManager: ObservableObject {
                 }
                 let isDownloaded = await isModelDownloadedOffMain(modelId: model.modelId)
                 states[model.id] = isDownloaded ? .downloaded : .failed("Download finished, but model files were not found in cache.")
+                if isDownloaded {
+                    lastProgress[model.id] = nil
+                }
             } catch {
-                if !errorTracker.errorWasReceived(for: model.id) {
+                if let stopReason = stopReasons[model.id] {
+                    switch stopReason {
+                    case .pause:
+                        states[model.id] = .paused(lastProgress[model.id])
+                    case .cancel:
+                        lastProgress[model.id] = nil
+                        states[model.id] = .notDownloaded
+                    }
+                } else if !errorTracker.errorWasReceived(for: model.id) {
                     states[model.id] = .failed(error.localizedDescription)
                 }
             }
 
             tasks[model.id] = nil
+            processes[model.id] = nil
+            stopReasons[model.id] = nil
+        }
+    }
+
+    func pause(_ model: DownloadableModel) {
+        stop(model, reason: .pause)
+    }
+
+    func resume(_ model: DownloadableModel) {
+        download(model)
+    }
+
+    func cancel(_ model: DownloadableModel) {
+        stop(model, reason: .cancel)
+    }
+
+    private func stop(_ model: DownloadableModel, reason: DownloadStopReason) {
+        guard tasks[model.id] != nil else {
+            if reason == .cancel {
+                lastProgress[model.id] = nil
+                states[model.id] = .notDownloaded
+            }
+            return
+        }
+
+        stopReasons[model.id] = reason
+        switch reason {
+        case .pause:
+            states[model.id] = .paused(states[model.id]?.progress ?? lastProgress[model.id])
+        case .cancel:
+            lastProgress[model.id] = nil
+            states[model.id] = .notDownloaded
+        }
+
+        if let process = processes[model.id], process.isRunning {
+            process.terminate()
+        } else {
+            tasks[model.id]?.cancel()
+            tasks[model.id] = nil
+            stopReasons[model.id] = nil
         }
     }
 
@@ -243,7 +323,7 @@ final class ModelDownloadManager: ObservableObject {
 
         print("[ModelDownloadManager] Running ACE-Step download helper with Python at \(pythonPath.path)")
 
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let process = Process()
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -312,7 +392,18 @@ final class ModelDownloadManager: ObservableObject {
                 }
 
                 Task { @MainActor [weak self] in
-                    self?.handleDownloadEventLines(output, modelId: modelId)
+                    guard let self else {
+                        continuation.resume(throwing: ModelDownloadError.downloadFailed("Download manager was released."))
+                        return
+                    }
+
+                    self.processes[modelId] = nil
+                    self.handleDownloadEventLines(output, modelId: modelId)
+
+                    if self.stopReasons[modelId] != nil {
+                        continuation.resume(throwing: ModelDownloadError.stoppedByUser)
+                        return
+                    }
 
                     if process.terminationStatus == 0 {
                         continuation.resume()
@@ -324,7 +415,9 @@ final class ModelDownloadManager: ObservableObject {
 
             do {
                 try process.run()
+                processes[modelId] = process
             } catch {
+                processes[modelId] = nil
                 continuation.resume(throwing: error)
             }
         }
@@ -334,7 +427,7 @@ final class ModelDownloadManager: ObservableObject {
         let helperPath = runtimeManager.huggingFaceDownloadHelperPath()
         let pythonPath = runtimeManager.pythonExecutablePath()
 
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let process = Process()
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -398,7 +491,18 @@ final class ModelDownloadManager: ObservableObject {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
                 Task { @MainActor [weak self] in
-                    self?.handleDownloadEventLines(output, modelId: modelId)
+                    guard let self else {
+                        continuation.resume(throwing: ModelDownloadError.downloadFailed("Download manager was released."))
+                        return
+                    }
+
+                    self.processes[modelId] = nil
+                    self.handleDownloadEventLines(output, modelId: modelId)
+
+                    if self.stopReasons[modelId] != nil {
+                        continuation.resume(throwing: ModelDownloadError.stoppedByUser)
+                        return
+                    }
 
                     if process.terminationStatus == 0 {
                         continuation.resume()
@@ -410,7 +514,9 @@ final class ModelDownloadManager: ObservableObject {
 
             do {
                 try process.run()
+                processes[modelId] = process
             } catch {
+                processes[modelId] = nil
                 continuation.resume(throwing: error)
             }
         }
@@ -425,6 +531,8 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     private func handleDownloadEventLine(_ line: String, modelId: String) {
+        guard stopReasons[modelId] == nil else { return }
+
         guard let data = line.data(using: .utf8),
               let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = event["type"] as? String else {
@@ -434,7 +542,7 @@ final class ModelDownloadManager: ObservableObject {
         switch type {
         case "download.started":
             guard states[modelId]?.isTerminal != true else { return }
-            states[modelId] = .downloading(DownloadProgress(
+            let progress = DownloadProgress(
                 status: "Preparing",
                 description: nil,
                 unit: nil,
@@ -442,21 +550,26 @@ final class ModelDownloadManager: ObservableObject {
                 downloadedBytes: nil,
                 totalBytes: nil,
                 percent: nil
-            ))
+            )
+            lastProgress[modelId] = progress
+            states[modelId] = .downloading(progress)
         case "download.progress":
             guard states[modelId]?.isTerminal != true else { return }
-            states[modelId] = .downloading(DownloadProgress(
+            let progressKind = event["progress_kind"] as? String
+            let progress = DownloadProgress(
                 status: event["status"] as? String ?? "Downloading",
                 description: event["description"] as? String,
                 unit: event["unit"] as? String,
-                progressKind: event["progress_kind"] as? String,
+                progressKind: progressKind,
                 downloadedBytes: Self.int64Value(event["downloaded"]),
                 totalBytes: Self.int64Value(event["total"]),
-                percent: event["percent"] as? Double
-            ))
+                percent: progressKind == "bytes" ? nil : Self.doubleValue(event["percent"])
+            )
+            lastProgress[modelId] = progress
+            states[modelId] = .downloading(progress)
         case "download.complete":
             guard states[modelId]?.isTerminal != true else { return }
-            states[modelId] = .downloading(DownloadProgress(
+            let progress = DownloadProgress(
                 status: "Verifying",
                 description: nil,
                 unit: nil,
@@ -464,7 +577,9 @@ final class ModelDownloadManager: ObservableObject {
                 downloadedBytes: nil,
                 totalBytes: nil,
                 percent: nil
-            ))
+            )
+            lastProgress[modelId] = progress
+            states[modelId] = .downloading(progress)
         case "download.error":
             guard states[modelId] != .downloaded else { return }
             if let message = event["message"] as? String {
@@ -489,6 +604,19 @@ final class ModelDownloadManager: ObservableObject {
         return nil
     }
 
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let value = value as? Double {
+            return value
+        }
+        if let value = value as? Int {
+            return Double(value)
+        }
+        if let value = value as? NSNumber {
+            return value.doubleValue
+        }
+        return nil
+    }
+
     private func bundledPythonEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         for key in ["PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"] {
@@ -504,11 +632,14 @@ final class ModelDownloadManager: ObservableObject {
 
 enum ModelDownloadError: LocalizedError {
     case downloadFailed(String)
+    case stoppedByUser
 
     var errorDescription: String? {
         switch self {
         case .downloadFailed(let message):
             return message
+        case .stoppedByUser:
+            return "Download stopped."
         }
     }
 }
