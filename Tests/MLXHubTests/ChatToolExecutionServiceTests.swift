@@ -142,6 +142,30 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
     }
 
+    func testChatModeSendsPlainVLMRequestWithoutTools() async {
+        let executor = MockChatModelExecutor(events: [
+            .complete("Plain answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.chat)
+        viewModel.inputText = "Explain this simply"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertEqual(executor.receivedRequests[0].backend, .vlm)
+        XCTAssertNil(executor.receivedRequests[0].tools)
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.content, "Plain answer.")
+    }
+
     func testStreamErrorReplacesStreamingAssistantMessage() async {
         let executor = MockChatModelExecutor(events: [
             .error(ExecutionError.pythonError("bridge failed"))

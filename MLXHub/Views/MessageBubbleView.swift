@@ -988,7 +988,47 @@ private final class ImageLightboxWindowController {
     }
 }
 
-// MARK: - AI Content View with Thinking and Markdown
+enum ReasoningContentFilter {
+    private static let tagPairs: [(open: String, close: String)] = [
+        ("<think>", "</think>"),
+        ("<thinking>", "</thinking>")
+    ]
+
+    static func visibleText(from text: String) -> String? {
+        var sanitized = text
+
+        for tagPair in tagPairs {
+            sanitized = removeCompleteTaggedSections(from: sanitized, tagPair: tagPair)
+
+            if let openRange = sanitized.range(of: tagPair.open) {
+                sanitized.removeSubrange(openRange.lowerBound..<sanitized.endIndex)
+            }
+
+            while let closeRange = sanitized.range(of: tagPair.close) {
+                sanitized.removeSubrange(sanitized.startIndex..<closeRange.upperBound)
+            }
+        }
+
+        let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func removeCompleteTaggedSections(
+        from text: String,
+        tagPair: (open: String, close: String)
+    ) -> String {
+        var result = text
+
+        while let openRange = result.range(of: tagPair.open),
+              let closeRange = result[openRange.upperBound...].range(of: tagPair.close) {
+            result.removeSubrange(openRange.lowerBound..<closeRange.upperBound)
+        }
+
+        return result
+    }
+}
+
+// MARK: - AI Content View with Markdown
 struct AIContentView: View {
     let content: String
     let isStreaming: Bool
@@ -1006,13 +1046,7 @@ struct AIContentView: View {
                     onRestartLocalEngine: onRestartLocalEngine
                 )
             } else {
-                // Thinking section - expanded while streaming, collapsible when complete
-                if let thinkingContent = extractThinking(content) {
-                    ThinkingView(content: thinkingContent, isStreaming: isStreaming)
-                }
-
-                // Main response
-                if let mainContent = extractMainContent(content), !mainContent.isEmpty {
+                if let mainContent = ReasoningContentFilter.visibleText(from: content), !mainContent.isEmpty {
                     MarkdownTextView(
                         text: mainContent + (isStreaming && cursorVisible ? "▊" : ""),
                         isStreaming: isStreaming
@@ -1026,75 +1060,6 @@ struct AIContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    /// Extract thinking content from  <think>  tags
-    /// Handles both complete and incomplete (streaming) thinking sections
-    private func extractThinking(_ text: String) -> String? {
-        for tagPair in thinkingTagPairs {
-            // Check if we have an opening tag
-            guard text.contains(tagPair.open) else { continue }
-
-            // If we have both opening and closing tags, extract content between them
-            if text.contains(tagPair.close) {
-                let pattern = "\(NSRegularExpression.escapedPattern(for: tagPair.open))(.*?)\(NSRegularExpression.escapedPattern(for: tagPair.close))"
-                guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
-                    return nil
-                }
-
-                let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-                let thinkingParts = matches.compactMap { match -> String? in
-                    guard let range = Range(match.range(at: 1), in: text) else { return nil }
-                    return String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-
-                return thinkingParts.isEmpty ? nil : thinkingParts.joined(separator: "\n")
-            }
-
-            // Incomplete thinking (streaming): extract everything after the opening tag
-            if let range = text.range(of: tagPair.open) {
-                let thinkingContent = String(text[range.upperBound...])
-                return thinkingContent.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        }
-
-        return nil
-    }
-
-    /// Extract main content (everything outside  <think>  tags)
-    /// Returns nil if there's incomplete thinking (to hide main content while thinking)
-    private func extractMainContent(_ text: String) -> String? {
-        for tagPair in thinkingTagPairs {
-            // If we have complete think tags, remove them and return the rest
-            if text.contains(tagPair.open) && text.contains(tagPair.close) {
-                // Remove think tags and their content
-                let pattern = "\(NSRegularExpression.escapedPattern(for: tagPair.open)).*?\(NSRegularExpression.escapedPattern(for: tagPair.close))"
-                guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
-                    return text
-                }
-
-                let mutableText = NSMutableString(string: text)
-                regex.replaceMatches(in: mutableText, options: [], range: NSRange(location: 0, length: mutableText.length), withTemplate: "")
-
-                let result = String(mutableText).trimmingCharacters(in: .whitespacesAndNewlines)
-                return result.isEmpty ? nil : result
-            }
-
-            // If we have opening tag but no closing tag (incomplete/streaming), return nil
-            // This hides the main content until thinking is complete
-            if text.contains(tagPair.open) && !text.contains(tagPair.close) {
-                return nil
-            }
-        }
-
-        // No think tags at all, return full text
-        return text
-    }
-
-    private var thinkingTagPairs: [(open: String, close: String)] {
-        [
-            ("<think>", "</think>"),
-            ("<thinking>", "</thinking>")
-        ]
-    }
 }
 
 private enum RecoveryAction {

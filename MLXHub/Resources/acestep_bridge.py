@@ -135,8 +135,11 @@ def generate_music_once(request: dict) -> None:
     keyscale = coerce_string(parameters.get("keyscale")).strip()
     if keyscale:
         params_kwargs["keyscale"] = keyscale
+    timesignature = coerce_string(parameters.get("timesignature")).strip()
+    if timesignature:
+        params_kwargs["timesignature"] = timesignature
     vocal_language = coerce_string(parameters.get("vocal_language")).strip()
-    if vocal_language:
+    if vocal_language and vocal_language != "unknown":
         params_kwargs["vocal_language"] = vocal_language
 
     config = GenerationConfig(

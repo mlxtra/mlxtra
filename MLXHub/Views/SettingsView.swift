@@ -6,9 +6,11 @@ struct SettingsView: View {
     @AppStorage(PromptConfiguration.systemPromptKey) private var systemPrompt = PromptConfiguration.defaultSystemPrompt
     @AppStorage(PromptConfiguration.deepResearchSystemPromptKey) private var deepResearchSystemPrompt = PromptConfiguration.defaultDeepResearchSystemPrompt
     @AppStorage(PromptConfiguration.toolDefinitionsKey) private var toolDefinitionsJSON = PromptConfiguration.defaultToolDefinitionsJSON
+    @AppStorage("MLXHub.showExpertSettings") private var showExpertSettings = false
     @State private var searchText = ""
     @State private var selectedFilter: ModelDownloadFilter = .all
     @State private var selectedPane: SettingsPane = .models
+    @State private var showDetailedModels = false
 
     private var allModels: [DownloadableModel] {
         DownloadableModel.embedded
@@ -114,38 +116,53 @@ struct SettingsView: View {
                 )
             }
 
-            BeginnerModelSetupPanel(
-                starterModel: recommendedStarterModel,
-                starterState: downloadManager.state(for: recommendedStarterModel),
-                toolItems: beginnerToolItems,
+            BestForThisMacSection(
+                profiles: bestProfilesForThisMac,
+                downloadManager: downloadManager,
                 onDownload: { model in
                     downloadManager.download(model)
                 }
             )
 
-            controls
+            CapabilitySetupSection(
+                items: capabilityItems,
+                onDownload: { model in
+                    downloadManager.download(model)
+                }
+            )
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    if modelsByModality.isEmpty {
-                        EmptyModelsView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 56)
-                    } else {
-                        VStack(alignment: .leading, spacing: 20) {
-                            ForEach(modelsByModality, id: \.0.id) { modality, models in
-                                modelSection(modality: modality, models: models)
+            DisclosureGroup(isExpanded: $showDetailedModels) {
+                VStack(alignment: .leading, spacing: 14) {
+                    controls
+
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            if modelsByModality.isEmpty {
+                                EmptyModelsView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 56)
+                            } else {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    ForEach(modelsByModality, id: \.0.id) { modality, models in
+                                        modelSection(modality: modality, models: models)
+                                    }
+                                }
+                                .padding(.bottom, 12)
                             }
                         }
-                        .padding(.bottom, 12)
+                        .frame(minHeight: 180)
+                        .onAppear {
+                            scrollToPendingModel(proxy)
+                        }
+                        .onChange(of: pendingDownloadModelId) { _, _ in
+                            scrollToPendingModel(proxy)
+                        }
                     }
                 }
-                .onAppear {
-                    scrollToPendingModel(proxy)
-                }
-                .onChange(of: pendingDownloadModelId) { _, _ in
-                    scrollToPendingModel(proxy)
-                }
+                .padding(.top, 10)
+            } label: {
+                Label("Detailed model list", systemImage: "list.bullet.rectangle")
+                    .font(.headline)
             }
         }
     }
@@ -153,25 +170,36 @@ struct SettingsView: View {
     private var promptsPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PromptEditorSection(
-                    title: "System Prompt",
-                    text: $systemPrompt,
-                    defaultValue: PromptConfiguration.defaultSystemPrompt
+                AdvancedQuickControls(
+                    systemPrompt: $systemPrompt,
+                    deepResearchSystemPrompt: $deepResearchSystemPrompt,
+                    toolDefinitionsJSON: $toolDefinitionsJSON
                 )
 
-                PromptEditorSection(
-                    title: "Deep Research Prompt",
-                    text: $deepResearchSystemPrompt,
-                    defaultValue: PromptConfiguration.defaultDeepResearchSystemPrompt
-                )
+                DisclosureGroup(isExpanded: $showExpertSettings) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        PromptEditorSection(
+                            title: "System Prompt",
+                            text: $systemPrompt,
+                            defaultValue: PromptConfiguration.defaultSystemPrompt
+                        )
 
-                PromptEditorSection(
-                    title: "Tool Definitions",
-                    text: $toolDefinitionsJSON,
-                    defaultValue: PromptConfiguration.defaultToolDefinitionsJSON,
-                    validationMessage: PromptConfiguration.toolDefinitionsValidationMessage(toolDefinitionsJSON),
-                    monospaced: true
-                )
+                        PromptEditorSection(
+                            title: "Deep Research Prompt",
+                            text: $deepResearchSystemPrompt,
+                            defaultValue: PromptConfiguration.defaultDeepResearchSystemPrompt
+                        )
+
+                        ToolDefinitionsEditorSection(
+                            text: $toolDefinitionsJSON,
+                            defaultValue: PromptConfiguration.defaultToolDefinitionsJSON
+                        )
+                    }
+                    .padding(.top, 10)
+                } label: {
+                    Label("Expert prompt and tool editing", systemImage: "slider.horizontal.3")
+                        .font(.headline)
+                }
             }
             .padding(.bottom, 12)
         }
@@ -259,6 +287,9 @@ struct SettingsView: View {
             selectedFilter.includes(downloadManager.state(for: model))
                 && (query.isEmpty || model.matchesDownloadSearch(query))
         }
+        .sorted { lhs, rhs in
+            modelSortKey(lhs) < modelSortKey(rhs)
+        }
     }
 
     private var pendingModel: DownloadableModel? {
@@ -275,16 +306,66 @@ struct SettingsView: View {
     }
 
     private var recommendedStarterModel: DownloadableModel {
-        DownloadableModel.embeddedModel(modelId: AIModel.defaultForCurrentHardware.modelId)
+        bestProfile(for: .vision)?.downloadableModel
             ?? allModels.first!
     }
 
-    private var beginnerToolItems: [BeginnerModelSetupItem] {
-        allModels
-            .filter { $0.modality != .vision }
-            .map { model in
-                BeginnerModelSetupItem(model: model, state: downloadManager.state(for: model))
-            }
+    private var bestProfilesForThisMac: [ModelCapabilityProfile] {
+        ModelModality.allCases.compactMap { bestProfile(for: $0) }
+    }
+
+    private var capabilityItems: [CapabilitySetupItem] {
+        let items: [CapabilitySetupItem?] = [
+            CapabilitySetupItem(
+                title: "Chat",
+                subtitle: "Local conversation and image understanding",
+                icon: "bubble.left.and.bubble.right",
+                model: recommendedStarterModel,
+                fit: modelFit(for: recommendedStarterModel),
+                state: downloadManager.state(for: recommendedStarterModel)
+            ),
+            capabilityItem(
+                title: "Image",
+                subtitle: "Generate or edit images",
+                icon: "photo",
+                modality: .image
+            ),
+            capabilityItem(
+                title: "Speech",
+                subtitle: "Create spoken audio",
+                icon: "waveform",
+                modality: .audio
+            ),
+            capabilityItem(
+                title: "Music",
+                subtitle: "Generate local music",
+                icon: "music.note",
+                modality: .music
+            )
+        ]
+
+        return items.compactMap { $0 }
+    }
+
+    private func capabilityItem(
+        title: String,
+        subtitle: String,
+        icon: String,
+        modality: ModelModality
+    ) -> CapabilitySetupItem? {
+        guard let model = bestProfile(for: modality)?.downloadableModel
+                ?? allModels.first(where: { $0.modality == modality }) else {
+            return nil
+        }
+
+        return CapabilitySetupItem(
+            title: title,
+            subtitle: subtitle,
+            icon: icon,
+            model: model,
+            fit: modelFit(for: model),
+            state: downloadManager.state(for: model)
+        )
     }
 
     private var activeCount: Int {
@@ -293,6 +374,58 @@ struct SettingsView: View {
 
     private var totalDownloadSizeGB: Double {
         allModels.reduce(0) { $0 + $1.downloadSizeGB }
+    }
+
+    private func bestProfile(for modality: ModelModality) -> ModelCapabilityProfile? {
+        ModelSelectionStore().selectedProfile(for: modality)
+            ?? ModelCapabilityProfile.bestProfile(for: modality)
+    }
+
+    private func modelFit(for model: DownloadableModel) -> ModelFit {
+        ModelCapabilityProfile.embeddedProfile(modelId: model.modelId)?.fit()
+            ?? ModelFit.classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: AIModel.currentHardwareMemoryGB)
+    }
+
+    private func modelSortKey(_ model: DownloadableModel) -> ModelListSortKey {
+        let fit = modelFit(for: model)
+        let state = downloadManager.state(for: model)
+        let stateRank: Int
+        switch state {
+        case .downloaded:
+            stateRank = 0
+        case .downloading:
+            stateRank = 1
+        case .notDownloaded:
+            stateRank = 2
+        case .failed:
+            stateRank = 3
+        }
+        return ModelListSortKey(
+            fitRank: fit.sortRank,
+            stateRank: stateRank,
+            memoryRank: -(model.estimatedMemoryGB ?? 0),
+            name: model.name
+        )
+    }
+}
+
+private struct ModelListSortKey: Comparable {
+    let fitRank: Int
+    let stateRank: Int
+    let memoryRank: Double
+    let name: String
+
+    static func < (lhs: ModelListSortKey, rhs: ModelListSortKey) -> Bool {
+        if lhs.fitRank != rhs.fitRank {
+            return lhs.fitRank < rhs.fitRank
+        }
+        if lhs.stateRank != rhs.stateRank {
+            return lhs.stateRank < rhs.stateRank
+        }
+        if lhs.memoryRank != rhs.memoryRank {
+            return lhs.memoryRank < rhs.memoryRank
+        }
+        return lhs.name < rhs.name
     }
 }
 
@@ -319,116 +452,123 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     }
 }
 
-private struct BeginnerModelSetupItem: Identifiable {
+private struct CapabilitySetupItem: Identifiable {
+    let title: String
+    let subtitle: String
+    let icon: String
     let model: DownloadableModel
+    let fit: ModelFit
     let state: ModelDownloadManager.DownloadState
 
-    var id: String { model.id }
+    var id: String { title }
 }
 
-private struct BeginnerModelSetupPanel: View {
-    let starterModel: DownloadableModel
-    let starterState: ModelDownloadManager.DownloadState
-    let toolItems: [BeginnerModelSetupItem]
+private struct CapabilitySetupSection: View {
+    let items: [CapabilitySetupItem]
     let onDownload: (DownloadableModel) -> Void
 
+    private let columns = [
+        GridItem(.adaptive(minimum: 280), spacing: 10)
+    ]
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: starterState == .downloaded ? "checkmark.circle.fill" : "sparkles")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(starterState == .downloaded ? Color.green : Color.accentColor)
-                    .frame(width: 36, height: 36)
-                    .background((starterState == .downloaded ? Color.green : Color.accentColor).opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Capabilities")
+                .font(.headline)
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Start local AI")
-                        .font(.headline)
-                    Text("Download one chat model first. Add image, speech, or music only when you need those tools.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 12)
-
-                beginnerDownloadAction(model: starterModel, state: starterState)
-            }
-
-            Divider()
-
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Starter model")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(starterModel.name)
-                        .font(.callout.weight(.medium))
-                }
-                .frame(width: 170, alignment: .leading)
-
-                setupStatusLabel(state: starterState)
-
-                Spacer()
-
-                Text("\(formatSize(starterModel.downloadSizeGB))")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: 8) {
-                ForEach(toolItems) { item in
-                    ToolSetupChip(item: item, onDownload: onDownload)
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(items) { item in
+                    CapabilitySetupCard(item: item, onDownload: onDownload)
                 }
             }
         }
-        .padding(16)
-        .background(.thinMaterial.opacity(0.7))
+    }
+}
+
+private struct CapabilitySetupCard: View {
+    let item: CapabilitySetupItem
+    let onDownload: (DownloadableModel) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: item.icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(item.title)
+                        .font(.system(size: 14, weight: .semibold))
+
+                    statusLabel
+                    fitLabel
+                }
+
+                Text(item.subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                Text("\(item.model.name) - \(formatSize(item.model.downloadSizeGB))")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+
+                actionView
+                    .padding(.top, 3)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+        .background(.thinMaterial.opacity(0.68))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                .stroke(tint.opacity(0.14), lineWidth: 1)
         }
     }
 
     @ViewBuilder
-    private func beginnerDownloadAction(model: DownloadableModel, state: ModelDownloadManager.DownloadState) -> some View {
-        switch state {
+    private var actionView: some View {
+        switch item.state {
         case .downloaded:
-            Label("Ready", systemImage: "checkmark.circle.fill")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.green)
+            EmptyView()
         case .downloading(let progress):
-            VStack(alignment: .trailing, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: progress?.fractionCompleted)
-                    .frame(width: 130)
+                    .frame(width: 140)
                 Text(progress?.displayText ?? "Downloading")
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         case .notDownloaded, .failed:
             Button {
-                onDownload(model)
+                onDownload(item.model)
             } label: {
-                Label(state.isFailed ? "Retry" : "Download Starter", systemImage: state.isFailed ? "arrow.clockwise" : "arrow.down.circle")
+                Label(item.state.isFailed ? "Retry" : "Download", systemImage: item.state.isFailed ? "arrow.clockwise" : "arrow.down.circle")
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
     }
 
-    private func setupStatusLabel(state: ModelDownloadManager.DownloadState) -> some View {
-        Label(statusTitle(for: state), systemImage: statusIcon(for: state))
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(statusColor(for: state))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(statusColor(for: state).opacity(0.10))
+    private var statusLabel: some View {
+        Label(statusText, systemImage: statusIcon)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(tint.opacity(0.10))
             .clipShape(Capsule())
     }
 
-    private func statusTitle(for state: ModelDownloadManager.DownloadState) -> String {
-        switch state {
+    private var statusText: String {
+        switch item.state {
         case .downloaded:
             return "Ready"
         case .downloading:
@@ -436,12 +576,12 @@ private struct BeginnerModelSetupPanel: View {
         case .failed:
             return "Needs retry"
         case .notDownloaded:
-            return "Not downloaded"
+            return "Missing"
         }
     }
 
-    private func statusIcon(for state: ModelDownloadManager.DownloadState) -> String {
-        switch state {
+    private var statusIcon: String {
+        switch item.state {
         case .downloaded:
             return "checkmark.circle.fill"
         case .downloading:
@@ -449,75 +589,7 @@ private struct BeginnerModelSetupPanel: View {
         case .failed:
             return "exclamationmark.triangle.fill"
         case .notDownloaded:
-            return "circle"
-        }
-    }
-
-    private func statusColor(for state: ModelDownloadManager.DownloadState) -> Color {
-        switch state {
-        case .downloaded:
-            return .green
-        case .downloading:
-            return .accentColor
-        case .failed:
-            return .red
-        case .notDownloaded:
-            return .secondary
-        }
-    }
-}
-
-private struct ToolSetupChip: View {
-    let item: BeginnerModelSetupItem
-    let onDownload: (DownloadableModel) -> Void
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: item.model.modality.icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 16)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.model.modality.rawValue)
-                    .font(.caption.weight(.semibold))
-                Text(statusText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            if item.state == .notDownloaded || item.state.isFailed {
-                Button {
-                    onDownload(item.model)
-                } label: {
-                    Image(systemName: item.state.isFailed ? "arrow.clockwise" : "arrow.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.borderless)
-                .help(item.state.isFailed ? "Retry download" : "Download \(item.model.name)")
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(tint.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(tint.opacity(0.14), lineWidth: 1)
-        }
-    }
-
-    private var statusText: String {
-        switch item.state {
-        case .downloaded:
-            return "Ready"
-        case .downloading(let progress):
-            return progress?.displayText ?? "Downloading"
-        case .failed:
-            return "Retry"
-        case .notDownloaded:
-            return formatSize(item.model.downloadSizeGB)
+            return "arrow.down.circle"
         }
     }
 
@@ -531,6 +603,170 @@ private struct ToolSetupChip: View {
             return .red
         case .notDownloaded:
             return .secondary
+        }
+    }
+
+    private var fitLabel: some View {
+        Label(item.fit.shortTitle, systemImage: item.fit.systemImage)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(item.fit.tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(item.fit.tint.opacity(0.10))
+            .clipShape(Capsule())
+    }
+}
+
+private struct BestForThisMacSection: View {
+    let profiles: [ModelCapabilityProfile]
+    @ObservedObject var downloadManager: ModelDownloadManager
+    let onDownload: (DownloadableModel) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Best for this Mac")
+                .font(.headline)
+
+            HStack(spacing: 10) {
+                ForEach(profiles) { profile in
+                    BestModelCard(
+                        profile: profile,
+                        state: downloadManager.state(for: profile.downloadableModel),
+                        onDownload: {
+                            onDownload(profile.downloadableModel)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct BestModelCard: View {
+    let profile: ModelCapabilityProfile
+    let state: ModelDownloadManager.DownloadState
+    let onDownload: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: profile.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(profile.fit().tint)
+                    .frame(width: 24, height: 24)
+                    .background(profile.fit().tint.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Text(profile.modality.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(profile.name)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+
+            HStack(spacing: 6) {
+                Label(profile.fit().shortTitle, systemImage: profile.fit().systemImage)
+                    .foregroundStyle(profile.fit().tint)
+                Text(formatSize(profile.downloadSizeGB))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption2.weight(.medium))
+
+            Spacer(minLength: 0)
+
+            actionView
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+        .background(.thinMaterial.opacity(0.68))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var actionView: some View {
+        switch state {
+        case .downloaded:
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.green)
+        case .downloading:
+            Label("Downloading", systemImage: "arrow.down.circle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+        case .notDownloaded, .failed:
+            Button {
+                onDownload()
+            } label: {
+                Label(state.isFailed ? "Retry" : "Download", systemImage: state.isFailed ? "arrow.clockwise" : "arrow.down.circle")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+    }
+}
+
+private struct AdvancedQuickControls: View {
+    @Binding var systemPrompt: String
+    @Binding var deepResearchSystemPrompt: String
+    @Binding var toolDefinitionsJSON: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Prompt controls")
+                        .font(.headline)
+                    Text("Use these resets for normal setup. Raw prompt and tool JSON editing is available in Expert.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    systemPrompt = PromptConfiguration.defaultSystemPrompt
+                } label: {
+                    Label("Reset System", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    deepResearchSystemPrompt = PromptConfiguration.defaultDeepResearchSystemPrompt
+                } label: {
+                    Label("Reset Research", systemImage: "magnifyingglass")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    toolDefinitionsJSON = PromptConfiguration.defaultToolDefinitionsJSON
+                } label: {
+                    Label("Restore Tools", systemImage: "wrench.and.screwdriver")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(14)
+        .background(.thinMaterial.opacity(0.68))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
 }
@@ -582,6 +818,83 @@ private struct PromptEditorSection: View {
     }
 }
 
+private struct ToolDefinitionsEditorSection: View {
+    @Binding var text: String
+    let defaultValue: String
+    @State private var draftText = ""
+
+    private var validationMessage: String? {
+        PromptConfiguration.toolDefinitionsValidationMessage(draftText)
+    }
+
+    private var hasChanges: Bool {
+        draftText != text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Tool Definitions")
+                    .font(.headline)
+
+                Spacer()
+
+                Button("Revert") {
+                    draftText = text
+                }
+                .buttonStyle(.borderless)
+                .disabled(!hasChanges)
+
+                Button("Restore") {
+                    draftText = defaultValue
+                    text = defaultValue
+                }
+                .buttonStyle(.borderless)
+
+                Button("Save") {
+                    guard validationMessage == nil else { return }
+                    text = draftText
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!hasChanges || validationMessage != nil)
+            }
+
+            TextEditor(text: $draftText)
+                .font(.system(.callout, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(minHeight: 180)
+                .background(.thinMaterial.opacity(0.65))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(validationMessage == nil ? Color.primary.opacity(0.07) : Color.orange.opacity(0.45), lineWidth: 1)
+                }
+
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if hasChanges {
+                Label("Unsaved tool changes", systemImage: "pencil")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            if draftText.isEmpty {
+                draftText = text
+            }
+        }
+        .onChange(of: text) { _, newValue in
+            if !hasChanges {
+                draftText = newValue
+            }
+        }
+    }
+}
+
 private struct ModelDownloadRow: View {
     let model: DownloadableModel
     @ObservedObject var downloadManager: ModelDownloadManager
@@ -609,6 +922,10 @@ private struct ModelDownloadRow: View {
                 Text("\(formatSize(model.downloadSizeGB)) - \(storageLabel)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+
+                Label(modelFit.shortTitle, systemImage: modelFit.systemImage)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(modelFit.tint)
             }
 
             Spacer(minLength: 16)
@@ -711,6 +1028,11 @@ private struct ModelDownloadRow: View {
 
     private var storageLabel: String {
         model.modelId.hasPrefix("ACE-Step/") ? "MLXHub checkpoints" : "Hugging Face cache"
+    }
+
+    private var modelFit: ModelFit {
+        ModelCapabilityProfile.embeddedProfile(modelId: model.modelId)?.fit()
+            ?? ModelFit.classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: AIModel.currentHardwareMemoryGB)
     }
 }
 
@@ -872,6 +1194,28 @@ private extension ModelDownloadManager.DownloadState {
             return true
         }
         return false
+    }
+}
+
+private extension ModelModality {
+    var displayName: String {
+        switch self {
+        case .vision: return "Chat"
+        case .image: return "Image"
+        case .audio: return "Speech"
+        case .music: return "Music"
+        }
+    }
+}
+
+private extension ModelFit {
+    var tint: Color {
+        switch self {
+        case .recommended: return .green
+        case .compatible: return .accentColor
+        case .heavy: return .orange
+        case .unknown: return .secondary
+        }
     }
 }
 

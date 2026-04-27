@@ -179,16 +179,24 @@ struct ChatHistoryItem: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: chat.icon)
+            Image(systemName: rowIcon)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 20, height: 20)
 
-            Text(chat.title.isEmpty ? "New chat" : chat.title)
-                .font(.system(size: 13))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(chat.title.isEmpty ? "New chat" : chat.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Text(previewText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
 
             Spacer()
 
@@ -220,9 +228,14 @@ struct ChatHistoryItem: View {
                 .buttonStyle(.plain)
                 .help(isConfirmingDelete ? "Confirm delete" : "Delete chat")
                 .transition(.opacity)
+            } else {
+                Text(timestampText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .background {
@@ -262,6 +275,74 @@ struct ChatHistoryItem: View {
 
         return Color.white.opacity(0.18)
     }
+
+    private var rowIcon: String {
+        for message in chat.messages.reversed() {
+            if !message.imageURLs.isEmpty {
+                return "photo"
+            }
+
+            if let audioURL = message.audioURLs.first {
+                return audioURL.path.localizedCaseInsensitiveContains("music") ? "music.note" : "waveform"
+            }
+
+            if let toolCall = message.toolCalls.first {
+                if toolCall.icon == "magnifyingglass" {
+                    return "magnifyingglass"
+                }
+                if toolCall.icon == "photo" {
+                    return "photo"
+                }
+                if toolCall.icon == "music.note" || toolCall.icon == "waveform" {
+                    return toolCall.icon
+                }
+            }
+        }
+
+        return chat.icon
+    }
+
+    private var previewText: String {
+        guard let message = chat.messages.last else {
+            return "No messages yet"
+        }
+
+        if !message.imageURLs.isEmpty {
+            return "Generated image"
+        }
+
+        if let audioURL = message.audioURLs.first {
+            return audioURL.path.localizedCaseInsensitiveContains("music") ? "Generated music" : "Generated speech"
+        }
+
+        if let visibleText = ReasoningContentFilter.visibleText(from: message.content), !visibleText.isEmpty {
+            return message.isUser ? visibleText : visibleText
+        }
+
+        return message.isUser ? "Message" : "Assistant response"
+    }
+
+    private var timestampText: String {
+        if Calendar.current.isDateInToday(chat.timestamp) {
+            return Self.timeFormatter.string(from: chat.timestamp)
+        }
+
+        return Self.dateFormatter.string(from: chat.timestamp)
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .none
+        return formatter
+    }()
 
     private func handleDeleteTap() {
         if isConfirmingDelete {

@@ -139,6 +139,7 @@ struct ComposerView: View {
                 .buttonStyle(.plain)
                 .help("Stop generating")
             } else {
+                ModelParameterButton(viewModel: viewModel)
                 ModelSelectorInline(viewModel: viewModel)
                 SendActionButton(
                     isEnabled: canSend,
@@ -336,7 +337,7 @@ private struct LocalEngineStatusPill: View {
                 Image(systemName: status.systemImage)
                     .font(.system(size: 12, weight: .semibold))
 
-                Text(status.title)
+                Text(compactTitle)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
             }
@@ -378,6 +379,19 @@ private struct LocalEngineStatusPill: View {
 
     private var tint: Color {
         status.tone.color
+    }
+
+    private var compactTitle: String {
+        switch status.state {
+        case .ready:
+            return "Ready"
+        case .needsDownload:
+            return "Download needed"
+        case .memoryFreed:
+            return "Unloaded"
+        default:
+            return status.title
+        }
     }
 }
 
@@ -514,6 +528,7 @@ struct AnimatedComposerBorder: View {
 
 struct ToolSelectorInline: View {
     @ObservedObject var viewModel: ChatViewModel
+    @StateObject private var downloadManager = ModelDownloadManager()
     @State private var isShowingPopover = false
 
     private var isActive: Bool {
@@ -528,7 +543,7 @@ struct ToolSelectorInline: View {
                 Image(systemName: viewModel.selectedTool.icon)
                     .font(.system(size: 14))
                 Text(viewModel.selectedTool.rawValue)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: .medium))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10))
             }
@@ -546,8 +561,15 @@ struct ToolSelectorInline: View {
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isShowingPopover, arrowEdge: .bottom) {
-            ToolSelectorPopover(viewModel: viewModel, isPresented: $isShowingPopover)
-                .frame(width: 240)
+            ToolSelectorPopover(
+                viewModel: viewModel,
+                downloadManager: downloadManager,
+                isPresented: $isShowingPopover
+            )
+            .frame(width: 300)
+        }
+        .onAppear {
+            downloadManager.refreshStatuses()
         }
         .fixedSize()
     }
@@ -555,6 +577,7 @@ struct ToolSelectorInline: View {
 
 struct ToolSelectorPopover: View {
     @ObservedObject var viewModel: ChatViewModel
+    @ObservedObject var downloadManager: ModelDownloadManager
     @Binding var isPresented: Bool
 
     var body: some View {
@@ -563,8 +586,10 @@ struct ToolSelectorPopover: View {
                 ToolRow(
                     tool: tool,
                     isSelected: viewModel.selectedTool == tool,
+                    state: viewModel.downloadRequirement(for: tool).map { downloadManager.state(for: $0) },
                     action: {
                         viewModel.selectTool(tool)
+                        downloadManager.refreshStatuses()
                         isPresented = false
                     }
                 )
@@ -586,6 +611,7 @@ struct ToolSelectorPopover: View {
 struct ToolRow: View {
     let tool: Tool
     let isSelected: Bool
+    let state: ModelDownloadManager.DownloadState?
     let action: () -> Void
     @State private var isHovered = false
 
@@ -595,11 +621,11 @@ struct ToolRow: View {
                 Image(systemName: tool.icon)
                     .font(.system(size: 14))
                     .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    .frame(width: 20)
+                    .frame(width: 22)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tool.rawValue)
-                        .font(.system(size: 13))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(isSelected ? Color.accentColor : .primary)
                     Text(tool.subtitle)
                         .font(.system(size: 11))
@@ -608,10 +634,14 @@ struct ToolRow: View {
 
                 Spacer()
 
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                HStack(spacing: 6) {
+                    readinessBadge
+
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -625,28 +655,67 @@ struct ToolRow: View {
             isHovered = hovering
         }
     }
+
+    @ViewBuilder
+    private var readinessBadge: some View {
+        switch state {
+        case .downloaded:
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.green)
+                .labelStyle(.titleAndIcon)
+        case .downloading:
+            Label("Loading", systemImage: "arrow.down.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .labelStyle(.titleAndIcon)
+        case .failed:
+            Label("Retry", systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.red)
+                .labelStyle(.titleAndIcon)
+        case .notDownloaded:
+            Label("Missing", systemImage: "arrow.down.circle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
+        case nil:
+            EmptyView()
+        }
+    }
 }
 
 struct ModelSelectorInline: View {
     @ObservedObject var viewModel: ChatViewModel
+    @StateObject private var downloadManager = ModelDownloadManager()
 
     var body: some View {
         Menu {
-            ForEach(AIModel.allCases, id: \.id) { model in
+            ForEach(viewModel.availableProfilesForCurrentMode) { profile in
                 Button(action: {
-                    viewModel.selectModel(model)
+                    viewModel.selectModelProfile(profile)
                 }) {
                     HStack {
+                        Image(systemName: profile.icon)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18)
+
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(model.displayName)
+                            Text(profile.name)
                                 .font(.system(size: 13))
-                            Text(model.subtitle)
+                            Text(profile.subtitle)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
 
-                        if viewModel.selectedModel == model {
-                            Spacer()
+                        Spacer()
+
+                        HStack(spacing: 5) {
+                            modelBadges(for: profile)
+                        }
+
+                        if viewModel.isModelProfileSelected(profile) {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Color.accentColor)
@@ -656,7 +725,7 @@ struct ModelSelectorInline: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(viewModel.selectedModel.displayName)
+                Text(viewModel.activeModelProfile.name)
                     .font(.system(size: 13))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10))
@@ -666,7 +735,243 @@ struct ModelSelectorInline: View {
             .padding(.vertical, 6)
         }
         .menuStyle(.borderlessButton)
+        .onAppear {
+            downloadManager.refreshStatuses()
+        }
         .fixedSize()
+    }
+
+    @ViewBuilder
+    private func modelBadges(for profile: ModelCapabilityProfile) -> some View {
+        let fit = profile.fit()
+        Label(fit.shortTitle, systemImage: fit.systemImage)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(fit.tint)
+            .labelStyle(.titleAndIcon)
+
+        switch downloadManager.state(for: profile.downloadableModel) {
+        case .downloaded:
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.green)
+                .labelStyle(.titleAndIcon)
+        case .downloading:
+            Label("Loading", systemImage: "arrow.down.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .labelStyle(.titleAndIcon)
+        case .failed:
+            Label("Retry", systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.red)
+                .labelStyle(.titleAndIcon)
+        case .notDownloaded:
+            Label("Missing", systemImage: "arrow.down.circle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
+        }
+    }
+}
+
+private struct ModelParameterButton: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Model settings")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            ModelParameterPopover(viewModel: viewModel)
+                .frame(width: 320)
+        }
+    }
+}
+
+private struct ModelParameterPopover: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @State private var showAdvanced = false
+
+    private var profile: ModelCapabilityProfile {
+        viewModel.activeModelProfile
+    }
+
+    private var basicParameters: [ModelParameterDefinition] {
+        profile.parameters.filter { !$0.isAdvanced }
+    }
+
+    private var advancedParameters: [ModelParameterDefinition] {
+        profile.parameters.filter(\.isAdvanced)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: profile.icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(profile.name)
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(profile.fit().title)
+                        .font(.caption)
+                        .foregroundStyle(profile.fit().tint)
+                }
+
+                Spacer()
+            }
+
+            if !basicParameters.isEmpty {
+                VStack(spacing: 10) {
+                    ForEach(basicParameters) { parameter in
+                        ParameterControl(
+                            definition: parameter,
+                            value: viewModel.parameterValue(for: profile, key: parameter.key),
+                            onChange: { value in
+                                viewModel.setParameterValue(value, for: parameter, profile: profile)
+                            }
+                        )
+                    }
+                }
+            }
+
+            if !advancedParameters.isEmpty {
+                DisclosureGroup(isExpanded: $showAdvanced) {
+                    VStack(spacing: 10) {
+                        ForEach(advancedParameters) { parameter in
+                            ParameterControl(
+                                definition: parameter,
+                                value: viewModel.parameterValue(for: profile, key: parameter.key),
+                                onChange: { value in
+                                    viewModel.setParameterValue(value, for: parameter, profile: profile)
+                                }
+                            )
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Text("Advanced")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Menu {
+                    ForEach(profile.presets) { preset in
+                        Button(preset.label) {
+                            viewModel.applyParameterPreset(preset, to: profile)
+                        }
+                    }
+                } label: {
+                    Text("Use preset")
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(profile.presets.isEmpty)
+
+                Spacer()
+
+                Button("Reset") {
+                    viewModel.resetParameters(for: profile)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(14)
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+}
+
+private struct ParameterControl: View {
+    let definition: ModelParameterDefinition
+    let value: String
+    let onChange: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(definition.label)
+                    .font(.caption.weight(.medium))
+                Spacer()
+                if definition.type == .decimal || definition.type == .integer {
+                    Text(displayValue)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            control
+        }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        switch definition.type {
+        case .decimal, .integer:
+            Slider(
+                value: Binding(
+                    get: { Double(value) ?? Double(definition.defaultValue) ?? 0 },
+                    set: { onChange(definition.clampedString($0)) }
+                ),
+                in: definition.range ?? 0...1,
+                step: definition.step
+            )
+        case .boolean:
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { value == "true" },
+                    set: { onChange($0 ? "true" : "false") }
+                )
+            )
+            .toggleStyle(.switch)
+            .labelsHidden()
+        case .option:
+            Picker(definition.label, selection: Binding(
+                get: { value },
+                set: { newValue in onChange(newValue) }
+            )) {
+                ForEach(definition.options, id: \.self) { option in
+                    Text(option.isEmpty ? "Auto" : option.capitalized).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+        case .text:
+            TextField(definition.defaultValue, text: Binding(
+                get: { value },
+                set: { newValue in onChange(newValue) }
+            ))
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private var displayValue: String {
+        value.isEmpty ? "Auto" : value
+    }
+}
+
+private extension ModelFit {
+    var tint: Color {
+        switch self {
+        case .recommended: return .green
+        case .compatible: return .accentColor
+        case .heavy: return .orange
+        case .unknown: return .secondary
+        }
     }
 }
 

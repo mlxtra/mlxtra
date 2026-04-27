@@ -475,19 +475,17 @@ class ChatViewModel: ObservableObject {
     @Published private(set) var activeEngineModelRole: LocalEngineModelRole = .chat
     @Published private(set) var freedEngineModelName: String?
     @Published private(set) var localEngineErrorMessage: String?
+    @Published private var modelSelectionRevision = 0
+    @Published private var modelParameterRevision = 0
 
     // MARK: - Private Properties
     private let chatPersistence: ChatPersistenceServicing
     private let vlmExecutor: ChatModelExecuting
     private let runtimeManager: ChatRuntimeManaging
     private let toolExecutor: ChatToolExecutionServicing
+    private let modelSelectionStore: ModelSelectionStore
+    private let modelParameterStore: ModelParameterStore
     private var generationTask: Task<Void, Never>?
-    private let imageGenerationModelId = "black-forest-labs/FLUX.2-klein-4B"
-    private let imageGenerationModelName = "FLUX.2-klein-4B"
-    private let speechGenerationModelId = "kugelaudio/kugelaudio-0-open"
-    private let speechGenerationModelName = "KugelAudio 0 Open"
-    private let musicGenerationModelId = "ACE-Step/acestep-v15-turbo-continuous"
-    private let musicGenerationModelName = "ACE-Step 1.5 Turbo"
     private let maxAutoToolDepth = 4
     private var pendingDownloadMonitorTask: Task<Void, Never>?
     private var pendingEngineDownloadReason: PendingEngineDownloadReason?
@@ -518,7 +516,7 @@ class ChatViewModel: ObservableObject {
             loadingMessage: loadingMessage,
             isExecutorReady: vlmExecutor.isReady,
             isModelLoaded: vlmExecutor.isModelLoaded,
-            selectedModelName: selectedModel.displayName,
+            selectedModelName: activeModelProfile.name,
             activeModelName: loadedEngineModelName ?? activeEngineModelName,
             activeModelRole: loadedEngineModelRole ?? activeEngineModelRole,
             pendingDownloadModelId: pendingEngineDownloadModel?.modelId,
@@ -530,6 +528,14 @@ class ChatViewModel: ObservableObject {
 
     var canFreeLocalEngineMemory: Bool {
         !isInputDisabled && localEngineStatus.canFreeMemory
+    }
+
+    var activeModelProfile: ModelCapabilityProfile {
+        profile(for: selectedTool)
+    }
+
+    var availableProfilesForCurrentMode: [ModelCapabilityProfile] {
+        ModelCapabilityProfile.sortedProfiles(for: modelModality(for: selectedTool))
     }
 
     private var generatedImagesDirectory: URL {
@@ -561,7 +567,8 @@ class ChatViewModel: ObservableObject {
         chatPersistence: ChatPersistenceServicing? = nil,
         vlmExecutor: ChatModelExecuting? = nil,
         runtimeManager: ChatRuntimeManaging? = nil,
-        toolExecutor: ChatToolExecutionServicing? = nil
+        toolExecutor: ChatToolExecutionServicing? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         let resolvedChatPersistence = chatPersistence ?? LocalChatPersistenceService()
         let resolvedRuntimeManager = runtimeManager ?? RuntimeManager()
@@ -570,11 +577,17 @@ class ChatViewModel: ObservableObject {
         self.chatPersistence = resolvedChatPersistence
         self.runtimeManager = resolvedRuntimeManager
         self.vlmExecutor = resolvedExecutor
+        self.modelSelectionStore = ModelSelectionStore(userDefaults: userDefaults)
+        self.modelParameterStore = ModelParameterStore(userDefaults: userDefaults)
         self.toolExecutor = toolExecutor ?? DefaultChatToolExecutionService(
             modelExecutor: resolvedExecutor,
             runtimeManager: resolvedRuntimeManager,
             webSearchService: MCPWebSearchService()
         )
+
+        if let storedChatModel = modelSelectionStore.selectedProfile(for: .vision)?.aiModel {
+            selectedModel = storedChatModel
+        }
 
         loadConversationHistory()
         self.vlmExecutor.delegate = self
@@ -749,7 +762,7 @@ class ChatViewModel: ObservableObject {
     func freeLocalEngineMemory() {
         guard canFreeLocalEngineMemory else { return }
 
-        let freedModelName = loadedEngineModelName ?? activeEngineModelName ?? selectedModel.displayName
+        let freedModelName = loadedEngineModelName ?? activeEngineModelName ?? activeModelProfile.name
         isPythonLoading = false
         isModelLoading = false
         isGenerating = false
@@ -822,7 +835,7 @@ class ChatViewModel: ObservableObject {
 
         if pendingEngineDownloadReason == .generation,
            pendingEngineDownloadModel?.modelId != requirement.modelId,
-           selectedTool == .auto || selectedTool == .research {
+           selectedTool == .auto || selectedTool == .chat || selectedTool == .research {
             return
         }
 
@@ -834,36 +847,78 @@ class ChatViewModel: ObservableObject {
     }
 
     private func downloadRequirementForCurrentSelection() -> DownloadableModel? {
-        switch selectedTool {
-        case .auto, .research:
-            return downloadableModel(
-                modelId: selectedModel.modelId,
-                name: selectedModel.displayName,
-                modality: .vision,
-                downloadSizeGB: selectedModel.info.downloadSize
-            )
+        downloadRequirement(for: selectedTool)
+    }
+
+    func downloadRequirement(for tool: Tool) -> DownloadableModel? {
+        profile(for: tool).downloadableModel
+    }
+
+    private func modelModality(for tool: Tool) -> ModelModality {
+        switch tool {
+        case .auto, .chat, .research:
+            return .vision
         case .image:
-            return downloadableModel(
-                modelId: imageGenerationModelId,
-                name: imageGenerationModelName,
-                modality: .image,
-                downloadSizeGB: runtimeManager.estimatedModelSize(modelId: imageGenerationModelId)
-            )
+            return .image
         case .tts:
-            return downloadableModel(
-                modelId: speechGenerationModelId,
-                name: speechGenerationModelName,
-                modality: .audio,
-                downloadSizeGB: runtimeManager.estimatedModelSize(modelId: speechGenerationModelId)
-            )
+            return .audio
         case .music:
-            return downloadableModel(
-                modelId: musicGenerationModelId,
-                name: musicGenerationModelName,
-                modality: .music,
-                downloadSizeGB: runtimeManager.estimatedModelSize(modelId: musicGenerationModelId)
-            )
+            return .music
         }
+    }
+
+    private func profile(for tool: Tool) -> ModelCapabilityProfile {
+        let modality = modelModality(for: tool)
+        if let profile = modelSelectionStore.selectedProfile(for: modality) {
+            return profile
+        }
+
+        return ModelCapabilityProfile.profiles(for: modality).first
+            ?? ModelCapabilityProfile.embedded.first!
+    }
+
+    func isModelProfileSelected(_ profile: ModelCapabilityProfile) -> Bool {
+        self.profile(for: selectedTool).modelId == profile.modelId
+    }
+
+    func selectModelProfile(_ profile: ModelCapabilityProfile) {
+        modelSelectionStore.setSelectedModelId(profile.modelId, for: profile.modality)
+        if let aiModel = profile.aiModel {
+            selectedModel = aiModel
+        }
+        modelSelectionRevision += 1
+        isModelMenuOpen = false
+        refreshLocalEngineDownloadStatus()
+    }
+
+    func parameterValue(for profile: ModelCapabilityProfile, key: String) -> String {
+        _ = modelParameterRevision
+        return modelParameterStore.values(for: profile)[key]
+            ?? profile.parameterDefinition(key: key)?.defaultValue
+            ?? ""
+    }
+
+    func setParameterValue(_ value: String, for definition: ModelParameterDefinition, profile: ModelCapabilityProfile) {
+        let resolvedValue: String
+        switch definition.type {
+        case .decimal, .integer:
+            resolvedValue = definition.clampedString(Double(value) ?? Double(definition.defaultValue) ?? 0)
+        case .boolean, .option, .text:
+            resolvedValue = value
+        }
+
+        modelParameterStore.setValue(resolvedValue, for: definition.key, modelId: profile.modelId)
+        modelParameterRevision += 1
+    }
+
+    func applyParameterPreset(_ preset: ModelParameterPreset, to profile: ModelCapabilityProfile) {
+        modelParameterStore.applyPreset(preset, to: profile)
+        modelParameterRevision += 1
+    }
+
+    func resetParameters(for profile: ModelCapabilityProfile) {
+        modelParameterStore.reset(profile: profile)
+        modelParameterRevision += 1
     }
 
     private func clearPendingEngineDownloadModel() {
@@ -921,17 +976,6 @@ class ChatViewModel: ObservableObject {
         return autoTools
     }
 
-    private func downloadableModel(modelId: String, name: String, modality: ModelModality, downloadSizeGB: Double) -> DownloadableModel {
-        DownloadableModel.embeddedModel(modelId: modelId) ?? DownloadableModel(
-            id: modelId,
-            name: name,
-            subtitle: "\(modality.rawValue) model",
-            modelId: modelId,
-            modality: modality,
-            downloadSizeGB: downloadSizeGB
-        )
-    }
-
     private func requestDownloadBeforeUse(model: DownloadableModel) {
         modelDownloadRequest = model
         pendingEngineDownloadModel = model
@@ -968,7 +1012,7 @@ class ChatViewModel: ObservableObject {
 
     private func operationNameForCurrentSelection() -> String {
         switch selectedTool {
-        case .auto:
+        case .auto, .chat:
             return "Chat"
         case .image:
             return "Image generation"
@@ -988,23 +1032,19 @@ class ChatViewModel: ObservableObject {
             let isMusicGeneration = selectedTool == .music
             let isDeepResearch = selectedTool == .research
 
-            let activeModelId = isImageGeneration ? imageGenerationModelId : selectedModel.modelId
-            let resolvedModelId = isSpeechGeneration ? speechGenerationModelId : activeModelId
-            let activeModelName = isImageGeneration ? imageGenerationModelName : (isSpeechGeneration ? speechGenerationModelName : selectedModel.displayName)
+            let selectedCapabilityProfile = profile(for: selectedTool)
+            let activeChatProfile = profile(for: .chat)
+            let activeChatModel = activeChatProfile.aiModel ?? selectedModel
+            let executionProfile = (isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile
+            let resolvedModelId = executionProfile.modelId
+            let activeModelName = executionProfile.name
             let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vlm)
-            let activeModality: ModelModality = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vision)
-            let downloadSize = (isImageGeneration || isSpeechGeneration) ? runtimeManager.estimatedModelSize(modelId: resolvedModelId) : selectedModel.info.downloadSize
             let modelWillLoad = !isLoadedEngineModel(modelId: resolvedModelId, backend: activeBackend)
             setActiveEngineModel(
                 name: activeModelName,
                 role: isImageGeneration ? .image : (isSpeechGeneration ? .speech : .chat)
             )
-            let requiredModel = downloadableModel(
-                modelId: resolvedModelId,
-                name: activeModelName,
-                modality: activeModality,
-                downloadSizeGB: downloadSize
-            )
+            let requiredModel = executionProfile.downloadableModel
 
             if let selectionRequirement = downloadRequirementForCurrentSelection(),
                selectionRequirement.modelId != requiredModel.modelId {
@@ -1016,7 +1056,7 @@ class ChatViewModel: ObservableObject {
                 }
             }
 
-            guard await requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
+                guard await requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
                 return
             }
 
@@ -1062,9 +1102,9 @@ class ChatViewModel: ObservableObject {
             } else {
                 let initialToolCall: ToolCall?
                 if isImageGeneration {
-                    initialToolCall = ToolCall(toolName: "FLUX.2 image generation", status: prompt, icon: "photo")
+                    initialToolCall = ToolCall(toolName: "\(executionProfile.name) image generation", status: prompt, icon: "photo")
                 } else if isSpeechGeneration {
-                    initialToolCall = ToolCall(toolName: "KugelAudio speech generation", status: prompt, icon: "waveform")
+                    initialToolCall = ToolCall(toolName: "\(executionProfile.name) speech generation", status: prompt, icon: "waveform")
                 } else {
                     initialToolCall = nil
                 }
@@ -1111,13 +1151,24 @@ class ChatViewModel: ObservableObject {
                 }
             }
 
-            let chatTemplateKwargs: [String: Any]? = !isImageGeneration && !isSpeechGeneration && !isMusicGeneration && selectedModel.modelId.lowercased().contains("qwen")
-                ? ["enable_thinking": selectedModel.enableThinking]
+            let chatExecutionParameters = modelParameterStore.executionParameters(for: activeChatProfile)
+            let mediaExecutionParameters = isImageGeneration || isSpeechGeneration
+                ? modelParameterStore.executionParameters(for: executionProfile)
+                : nil
+            let enableThinking = (chatExecutionParameters["enable_thinking"] as? Bool) ?? activeChatModel.enableThinking
+            let chatTemplateKwargs: [String: Any]? = !isImageGeneration && !isSpeechGeneration && !isMusicGeneration && activeChatProfile.modelId.lowercased().contains("qwen")
+                ? ["enable_thinking": enableThinking]
                 : nil
 
             let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth))
             let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil)
             let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration
+            let maxTokens = (chatExecutionParameters["max_tokens"] as? Int) ?? activeChatModel.defaultMaxTokens
+            let temperature = (chatExecutionParameters["temperature"] as? Double) ?? activeChatModel.temperatureRange.default
+            let topP = (chatExecutionParameters["top_p"] as? Double) ?? activeChatModel.topP
+            let topK = (chatExecutionParameters["top_k"] as? Int) ?? activeChatModel.topK
+            let minP = (chatExecutionParameters["min_p"] as? Double) ?? activeChatModel.minP
+            let repetitionPenalty = (chatExecutionParameters["repetition_penalty"] as? Double) ?? activeChatModel.repetitionPenalty
 
             let request = ExecutionRequest(
                 backend: activeBackend,
@@ -1125,15 +1176,15 @@ class ChatViewModel: ObservableObject {
                 messages: isDirectMediaGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
                 images: images.isEmpty ? nil : images,
                 outputDirectory: outputDirectory,
-                maxTokens: isDirectMediaGeneration ? 0 : selectedModel.defaultMaxTokens,
-                temperature: isDirectMediaGeneration ? 1.0 : selectedModel.temperatureRange.default,
-                topP: isDirectMediaGeneration ? nil : selectedModel.topP,
-                topK: isDirectMediaGeneration ? nil : selectedModel.topK,
-                minP: isDirectMediaGeneration ? nil : selectedModel.minP,
-                repetitionPenalty: isDirectMediaGeneration ? nil : selectedModel.repetitionPenalty,
+                maxTokens: isDirectMediaGeneration ? 0 : maxTokens,
+                temperature: isDirectMediaGeneration ? 1.0 : temperature,
+                topP: isDirectMediaGeneration ? nil : topP,
+                topK: isDirectMediaGeneration ? nil : topK,
+                minP: isDirectMediaGeneration ? nil : minP,
+                repetitionPenalty: isDirectMediaGeneration ? nil : repetitionPenalty,
                 chatTemplateKwargs: chatTemplateKwargs,
                 tools: tools,
-                parameters: nil
+                parameters: mediaExecutionParameters
             )
 
             let stream = try await vlmExecutor.execute(request: request)
@@ -1218,17 +1269,22 @@ class ChatViewModel: ObservableObject {
     }
 
     private func defaultMusicParameters(caption: String) -> [String: Any] {
-        [
+        var parameters = modelParameterStore.executionParameters(for: profile(for: .music))
+        parameters.merge([
             "caption": caption,
-            "duration": 30,
             "batch_size": 1,
-            "inference_steps": 8,
             "audio_format": "wav",
             "thinking": false,
+            "bpm": 0,
+            "keyscale": "",
+            "timesignature": "",
+            "vocal_language": "unknown",
             "instrumental": caption.localizedCaseInsensitiveContains("instrumental")
                 || caption.localizedCaseInsensitiveContains("beat")
                 || caption.localizedCaseInsensitiveContains("background music")
-        ]
+        ]) { _, newValue in newValue }
+
+        return parameters
     }
 
     private func executeWebSearchToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
@@ -1256,30 +1312,27 @@ class ChatViewModel: ObservableObject {
             imagePrompt = decodedPrompt
         }
 
-        let model = downloadableModel(
-            modelId: imageGenerationModelId,
-            name: imageGenerationModelName,
-            modality: .image,
-            downloadSizeGB: runtimeManager.estimatedModelSize(modelId: imageGenerationModelId)
-        )
+        let imageProfile = profile(for: .image)
+        let model = imageProfile.downloadableModel
         await executeMediaToolCall(
             toolCall,
             messages: &messages,
             plan: ChatMediaToolExecutionPlan(
                 functionName: "generate_image",
-                toolName: "FLUX.2 image generation",
+                toolName: "\(imageProfile.name) image generation",
                 status: imagePrompt,
                 icon: "photo",
                 details: [],
                 model: model,
                 request: ExecutionRequest(
                     backend: .image,
-                    modelId: imageGenerationModelId,
+                    modelId: imageProfile.modelId,
                     messages: [ExecutionMessage(role: .user, content: imagePrompt)],
                     images: images.isEmpty ? nil : images,
                     outputDirectory: generatedImagesDirectory,
                     maxTokens: 0,
-                    temperature: 1.0
+                    temperature: 1.0,
+                    parameters: modelParameterStore.executionParameters(for: imageProfile)
                 ),
                 loadingStatus: "Generating image...",
                 operationName: "Image generation",
@@ -1299,29 +1352,26 @@ class ChatViewModel: ObservableObject {
             speechText = decodedText
         }
 
-        let model = downloadableModel(
-            modelId: speechGenerationModelId,
-            name: speechGenerationModelName,
-            modality: .audio,
-            downloadSizeGB: runtimeManager.estimatedModelSize(modelId: speechGenerationModelId)
-        )
+        let speechProfile = profile(for: .tts)
+        let model = speechProfile.downloadableModel
         await executeMediaToolCall(
             toolCall,
             messages: &messages,
             plan: ChatMediaToolExecutionPlan(
                 functionName: "create_speech",
-                toolName: "KugelAudio speech generation",
+                toolName: "\(speechProfile.name) speech generation",
                 status: speechText,
                 icon: "waveform",
                 details: [],
                 model: model,
                 request: ExecutionRequest(
                     backend: .audio,
-                    modelId: speechGenerationModelId,
+                    modelId: speechProfile.modelId,
                     messages: [ExecutionMessage(role: .user, content: speechText)],
                     outputDirectory: generatedSpeechDirectory,
                     maxTokens: 0,
-                    temperature: 1.0
+                    temperature: 1.0,
+                    parameters: modelParameterStore.executionParameters(for: speechProfile)
                 ),
                 loadingStatus: "Generating speech...",
                 operationName: "Speech generation",
@@ -1349,6 +1399,18 @@ class ChatViewModel: ObservableObject {
             if let instrumental = decoded["instrumental"] {
                 parameters["instrumental"] = normalizedMusicBool(instrumental) ?? instrumental
             }
+            if let bpm = decoded["bpm"] {
+                parameters["bpm"] = normalizedMusicNumber(bpm)
+            }
+            if let keyscale = decoded["keyscale"] as? String {
+                parameters["keyscale"] = keyscale
+            }
+            if let timesignature = decoded["timesignature"] as? String {
+                parameters["timesignature"] = timesignature
+            }
+            if let vocalLanguage = decoded["vocal_language"] as? String {
+                parameters["vocal_language"] = vocalLanguage
+            }
         }
 
         let musicPrompt = (parameters["caption"] as? String) ?? prompt
@@ -1363,25 +1425,21 @@ class ChatViewModel: ObservableObject {
             return
         }
 
-        let model = downloadableModel(
-            modelId: musicGenerationModelId,
-            name: musicGenerationModelName,
-            modality: .music,
-            downloadSizeGB: runtimeManager.estimatedModelSize(modelId: musicGenerationModelId)
-        )
+        let musicProfile = profile(for: .music)
+        let model = musicProfile.downloadableModel
         await executeMediaToolCall(
             toolCall,
             messages: &messages,
             plan: ChatMediaToolExecutionPlan(
                 functionName: "generate_music",
-                toolName: "ACE-Step music generation",
+                toolName: "\(musicProfile.name) music generation",
                 status: musicPrompt,
                 icon: "music.note",
                 details: musicToolCallDetails(parameters),
                 model: model,
                 request: ExecutionRequest(
                     backend: .music,
-                    modelId: musicGenerationModelId,
+                    modelId: musicProfile.modelId,
                     messages: [ExecutionMessage(role: .user, content: musicPrompt)],
                     outputDirectory: generatedMusicDirectory,
                     maxTokens: 0,
@@ -2015,6 +2073,8 @@ class ChatViewModel: ObservableObject {
 
     func selectModel(_ model: AIModel) {
         selectedModel = model
+        modelSelectionStore.setSelectedModelId(model.modelId, for: .vision)
+        modelSelectionRevision += 1
         isModelMenuOpen = false
         refreshLocalEngineDownloadStatus()
     }

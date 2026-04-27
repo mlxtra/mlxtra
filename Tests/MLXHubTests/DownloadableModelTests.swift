@@ -72,7 +72,8 @@ final class DownloadableModelTests: XCTestCase {
                 subtitle: model.subtitle,
                 modelId: model.modelId,
                 modality: .vision,
-                downloadSizeGB: model.downloadSizeGB
+                downloadSizeGB: model.downloadSizeGB,
+                estimatedMemoryGB: model.memoryRequirementGB
             )
         }
 

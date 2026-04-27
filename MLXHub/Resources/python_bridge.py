@@ -596,10 +596,14 @@ def handle_image_generation(request: dict) -> None:
     prompt = request.get("prompt") or _last_user_prompt(messages)
     image_paths = request.get("images", [])
     output_dir = Path(request.get("output_dir") or Path.home() / "Pictures" / "MLXHub")
-    width = int(request.get("width", 1024))
-    height = int(request.get("height", 1024))
-    steps = int(request.get("steps", 4))
-    seed = int(request.get("seed") or (time.time_ns() % 2_147_483_647))
+    parameters = request.get("parameters", {}) or {}
+    if not isinstance(parameters, dict):
+        parameters = {}
+    width = int(parameters.get("width") or request.get("width", 1024))
+    height = int(parameters.get("height") or request.get("height", 1024))
+    steps = int(parameters.get("steps") or request.get("steps", 4))
+    guidance = float(parameters.get("guidance") or request.get("guidance", 1.0))
+    seed = int(parameters.get("seed") or request.get("seed") or (time.time_ns() % 2_147_483_647))
 
     if not prompt:
         send_json(
@@ -625,6 +629,7 @@ def handle_image_generation(request: dict) -> None:
             "num_inference_steps": steps,
             "width": width,
             "height": height,
+            "guidance": guidance,
         }
 
         if image_paths and hasattr(model, "generate_image"):
@@ -636,7 +641,11 @@ def handle_image_generation(request: dict) -> None:
             generation_kwargs.pop("image_paths", None)
             if image_paths:
                 generation_kwargs["image_path"] = image_paths[0]
-            image = model.generate_image(**generation_kwargs)
+            try:
+                image = model.generate_image(**generation_kwargs)
+            except TypeError:
+                generation_kwargs.pop("guidance", None)
+                image = model.generate_image(**generation_kwargs)
 
         output_path = output_dir / f"flux2-klein-{uuid.uuid4().hex}.png"
         image.save(str(output_path), overwrite=True)
@@ -687,9 +696,12 @@ def handle_audio_speech(request: dict) -> None:
         request.get("input") or request.get("text") or _last_user_prompt(messages)
     ).strip()
     output_dir = Path(request.get("output_dir") or Path.home() / "Music" / "MLXHub")
-    cfg_scale = float(request.get("cfg_scale", 3.0))
-    ddpm_steps = int(request.get("ddpm_steps", 10))
-    voice = request.get("voice", "default")
+    parameters = request.get("parameters", {}) or {}
+    if not isinstance(parameters, dict):
+        parameters = {}
+    cfg_scale = float(parameters.get("cfg_scale") or request.get("cfg_scale", 3.0))
+    ddpm_steps = int(parameters.get("ddpm_steps") or request.get("ddpm_steps", 10))
+    voice = parameters.get("voice") or request.get("voice", "default")
 
     if not text:
         send_json(
@@ -961,8 +973,11 @@ def handle_music_generation(request: dict) -> None:
         keyscale = coerce_string(parameters.get("keyscale")).strip()
         if keyscale:
             params_kwargs["keyscale"] = keyscale
+        timesignature = coerce_string(parameters.get("timesignature")).strip()
+        if timesignature:
+            params_kwargs["timesignature"] = timesignature
         vocal_language = coerce_string(parameters.get("vocal_language")).strip()
-        if vocal_language:
+        if vocal_language and vocal_language != "unknown":
             params_kwargs["vocal_language"] = vocal_language
 
         config = GenerationConfig(

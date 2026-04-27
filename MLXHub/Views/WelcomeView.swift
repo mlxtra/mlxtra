@@ -32,11 +32,19 @@ struct WelcomeView: View {
 
             greeting
 
+            WelcomePromptChips { item in
+                viewModel.selectTool(item.tool)
+                viewModel.inputText = item.prompt
+            }
+            .frame(maxWidth: 720)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 16)
+
             if !hasSeenFirstRunGuide {
                 FirstRunGuideView(
-                    modelName: viewModel.selectedModel.displayName,
+                    modelName: viewModel.activeModelProfile.name,
                     onOpenModels: {
-                        pendingDownloadModelId = viewModel.selectedModel.modelId
+                        pendingDownloadModelId = viewModel.activeModelProfile.modelId
                         openSettings()
                     },
                     onDeepResearch: {
@@ -91,6 +99,95 @@ struct WelcomeView: View {
         }
 
         welcomeMessage = newMessage
+    }
+}
+
+private struct WelcomePromptItem: Identifiable {
+    let title: String
+    let icon: String
+    let tool: Tool
+    let prompt: String
+
+    var id: String { title }
+}
+
+private struct WelcomePromptChips: View {
+    let onSelect: (WelcomePromptItem) -> Void
+
+    private let items: [WelcomePromptItem] = [
+        WelcomePromptItem(
+            title: "Ask",
+            icon: "bubble.left.and.bubble.right",
+            tool: .chat,
+            prompt: "Help me think through "
+        ),
+        WelcomePromptItem(
+            title: "Analyze image",
+            icon: "eye",
+            tool: .chat,
+            prompt: "Look at the attached image and tell me what stands out."
+        ),
+        WelcomePromptItem(
+            title: "Create image",
+            icon: "photo",
+            tool: .image,
+            prompt: "Create an image of "
+        ),
+        WelcomePromptItem(
+            title: "Create speech",
+            icon: "waveform",
+            tool: .tts,
+            prompt: "Create speech from this text: "
+        ),
+        WelcomePromptItem(
+            title: "Make music",
+            icon: "music.note",
+            tool: .music,
+            prompt: "Create an instrumental "
+        ),
+        WelcomePromptItem(
+            title: "Research",
+            icon: "magnifyingglass",
+            tool: .research,
+            prompt: "Research the latest information about "
+        )
+    ]
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 150), spacing: 8)
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            ForEach(items) { item in
+                Button {
+                    onSelect(item)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 18, height: 18)
+
+                        Text(item.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 11)
+                    .frame(height: 36)
+                    .background(.thinMaterial.opacity(0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(item.prompt)
+            }
+        }
     }
 }
 
