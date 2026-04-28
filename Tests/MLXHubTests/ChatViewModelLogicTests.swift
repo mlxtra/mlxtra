@@ -63,6 +63,20 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertNil(state.blockedToolMessage)
     }
 
+    func testMusicToolCallReadyWhenApprovalUsesPunctuation() {
+        let state = MusicIntentState.forToolCall(
+            prompt: "yes, generate",
+            parameters: [
+                "caption": "bright pop song with vocals",
+                "lyrics": "[verse]\nNeon hearts are waking\n[chorus]\nWe rise into the light",
+                "instrumental": false
+            ]
+        )
+
+        XCTAssertEqual(state, .readyToGenerate)
+        XCTAssertNil(state.blockedToolMessage)
+    }
+
     func testMusicToolCallReadyWhenUserProvidesLyrics() {
         let prompt = """
         Create a pop song with these lyrics:

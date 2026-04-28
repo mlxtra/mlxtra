@@ -121,6 +121,11 @@ enum MusicIntentState: Equatable {
     }
 
     private static func containsApproval(_ text: String) -> Bool {
+        let normalizedWords = text
+            .lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .joined(separator: " ")
+        let paddedWords = " \(normalizedWords) "
         let approvalPhrases = [
             "yes",
             "approved",
@@ -135,7 +140,10 @@ enum MusicIntentState: Equatable {
             "okay"
         ]
         return approvalPhrases.contains { phrase in
-            text == phrase || text.contains(" \(phrase)") || text.contains("\(phrase) ")
+            let normalizedPhrase = phrase
+                .split { !$0.isLetter && !$0.isNumber }
+                .joined(separator: " ")
+            return normalizedWords == normalizedPhrase || paddedWords.contains(" \(normalizedPhrase) ")
         }
     }
 
@@ -1720,6 +1728,28 @@ class ChatViewModel: ObservableObject {
         return autoTools
     }
 
+    private func toolNames(from tools: [[String: Any]]?) -> Set<String> {
+        guard let tools else { return [] }
+        return Set(tools.compactMap { tool in
+            guard let function = tool["function"] as? [String: Any],
+                  let name = function["name"] as? String,
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+
+            return name
+        })
+    }
+
+    private func toolAvailabilityInstruction(allowedToolNames: Set<String>) -> String {
+        guard !allowedToolNames.isEmpty else {
+            return "Available tools in this mode: none. Do not write, simulate, or mention tool calls."
+        }
+
+        let names = allowedToolNames.sorted().joined(separator: ", ")
+        return "Available tools in this mode: \(names). Use only these tools. Do not call any other tool."
+    }
+
     private func requestDownloadBeforeUse(model: DownloadableModel) {
         modelDownloadRequest = model
         pendingEngineDownloadModel = model
@@ -1868,12 +1898,16 @@ class ChatViewModel: ObservableObject {
                 }
             }
 
+            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth))
+            let allowedToolNames = toolNames(from: tools)
+
             var messages: [ExecutionMessage]
             if let toolMessages {
                 messages = toolMessages
             } else {
                 messages = []
                 var systemContent = isDeepResearch ? deepResearchSystemPrompt : systemPrompt
+                systemContent += "\n\n\(toolAvailabilityInstruction(allowedToolNames: allowedToolNames))"
 
                 if isMusicGeneration {
                     musicIntentState = musicIntentStateForCurrentComposer(prompt: prompt)
@@ -1907,7 +1941,6 @@ class ChatViewModel: ObservableObject {
                 ? ["enable_thinking": enableThinking]
                 : nil
 
-            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth))
             let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil)
             let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration
             let maxTokens = (chatExecutionParameters["max_tokens"] as? Int) ?? activeChatModel.defaultMaxTokens
@@ -1944,6 +1977,7 @@ class ChatViewModel: ObservableObject {
                 prompt: prompt,
                 toolDepth: toolDepth,
                 hasTools: tools != nil,
+                allowedToolNames: allowedToolNames,
                 isImageGeneration: isImageGeneration,
                 isSpeechGeneration: isSpeechGeneration,
                 isMusicGeneration: isMusicGeneration
@@ -1965,7 +1999,7 @@ class ChatViewModel: ObservableObject {
             await executeImageGenerationToolCall(toolCall, messages: &messages, images: images, prompt: prompt)
         case "create_speech":
             await executeSpeechGenerationToolCall(toolCall, messages: &messages, prompt: prompt)
-        case "generate_music":
+        case "generate_music", "create_music":
             await executeMusicGenerationToolCall(toolCall, messages: &messages, prompt: prompt)
         default:
             messages.append(ExecutionMessage(
@@ -2371,6 +2405,7 @@ class ChatViewModel: ObservableObject {
         prompt: String? = nil,
         toolDepth: Int = 0,
         hasTools: Bool = false,
+        allowedToolNames: Set<String> = [],
         isImageGeneration: Bool = false,
         isSpeechGeneration: Bool = false,
         isMusicGeneration: Bool = false
@@ -2451,6 +2486,57 @@ class ChatViewModel: ObservableObject {
                 ChatStreamDiagnostics.log("stream.complete responseChars=\(response.count)")
 #endif
                 fullResponse = response
+                if hasTools,
+                   let plainTextToolCall = plainTextToolCall(from: response, prompt: prompt),
+                   var currentMessages = messages,
+                   let currentImages = images,
+                   let currentPrompt = prompt {
+                    guard allowedToolNames.contains(plainTextToolCall.function.name) else {
+                        finalizeMessage(
+                            messageId,
+                            content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
+                            usage: usage,
+                            clearToolCall: false
+                        )
+                        isGenerating = false
+                        isModelLoading = false
+                        streamingMessageId = nil
+                        generationTask = nil
+                        loadingMessage = ""
+                        return
+                    }
+
+                    updateStreamingMessage(messageId, content: "")
+                    currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [plainTextToolCall]))
+                    await executeToolCall(plainTextToolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
+
+                    if isTerminalMediaTool(plainTextToolCall.function.name) {
+                        if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
+                           !isModelDownloadRequiredMessage(toolContent),
+                           !toolContent.contains("already displayed") {
+                            updateStreamingMessage(messageId, content: toolContent)
+                        }
+                        if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
+                           isModelDownloadRequiredMessage(toolContent) {
+                            removeAssistantMessage(messageId)
+                        } else {
+                            markMessageStopped(messageId)
+                        }
+                        isGenerating = false
+                        isModelLoading = false
+                        if isMusicGeneration {
+                            activeMusicGenerationDraft = nil
+                        }
+                        streamingMessageId = nil
+                        generationTask = nil
+                        loadingMessage = ""
+                        return
+                    }
+
+                    await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+                    return
+                }
+
                 finalizeMessage(
                     messageId,
                     content: (isImageGeneration || isSpeechGeneration) ? "" : fullResponse,
@@ -2467,13 +2553,28 @@ class ChatViewModel: ObservableObject {
                 
             case .toolCalls(let toolCalls):
                 guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
+                let executableToolCalls = toolCalls.filter { allowedToolNames.contains($0.function.name) }
+                guard !executableToolCalls.isEmpty else {
+                    finalizeMessage(
+                        messageId,
+                        content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
+                        usage: TokenUsage(promptTokens: 0, completionTokens: 0),
+                        clearToolCall: false
+                    )
+                    isGenerating = false
+                    isModelLoading = false
+                    streamingMessageId = nil
+                    generationTask = nil
+                    loadingMessage = ""
+                    return
+                }
                 guard toolDepth < maxAutoToolDepth else {
                     // Max tool depth reached, skip recursive tool execution
                     currentMessages.append(ExecutionMessage(role: .assistant, content: "Maximum tool call depth reached. Cannot execute more tool calls."))
                     return
                 }
-                let hasTerminalMediaTool = toolCalls.contains { isTerminalMediaTool($0.function.name) }
-                for toolCall in toolCalls {
+                let hasTerminalMediaTool = executableToolCalls.contains { isTerminalMediaTool($0.function.name) }
+                for toolCall in executableToolCalls {
                     currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
                     await executeToolCall(toolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
                 }
@@ -2541,7 +2642,7 @@ class ChatViewModel: ObservableObject {
     }
 
     private func isTerminalMediaTool(_ name: String) -> Bool {
-        name == "generate_image" || name == "create_speech" || name == "generate_music"
+        name == "generate_image" || name == "create_speech" || name == "generate_music" || name == "create_music"
     }
 
     private func decodeToolArguments(_ toolCall: ExecutionToolCall) -> [String: Any]? {
@@ -2549,6 +2650,209 @@ class ChatViewModel: ObservableObject {
             return nil
         }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func plainTextToolCall(from response: String, prompt: String?) -> ExecutionToolCall? {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        let supportedNames = ["generate_music", "create_music", "generate_image", "create_speech"]
+
+        for name in supportedNames where trimmed.hasPrefix("\(name)(") && trimmed.hasSuffix(")") {
+            let openParenIndex = trimmed.index(trimmed.startIndex, offsetBy: name.count)
+            let argumentsStart = trimmed.index(after: openParenIndex)
+            let argumentsEnd = trimmed.index(before: trimmed.endIndex)
+            let rawArguments = String(trimmed[argumentsStart..<argumentsEnd])
+            guard var arguments = parsePlainTextToolArguments(rawArguments) else {
+                return nil
+            }
+
+            let normalizedName = name == "create_music" ? "generate_music" : name
+            if normalizedName == "generate_music",
+               (arguments["caption"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                arguments["caption"] = musicCaptionFallback(currentPrompt: prompt ?? "")
+            }
+            return ExecutionToolCall(
+                id: "plain-text-\(normalizedName)-\(UUID().uuidString)",
+                function: ExecutionToolCallFunction(
+                    name: normalizedName,
+                    arguments: jsonArguments(arguments)
+                )
+            )
+        }
+
+        return nil
+    }
+
+    private func musicCaptionFallback(currentPrompt: String) -> String {
+        let trimmedCurrentPrompt = currentPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !isMusicApprovalOnly(trimmedCurrentPrompt), !trimmedCurrentPrompt.isEmpty {
+            return trimmedCurrentPrompt
+        }
+
+        if let chat = selectedChat {
+            for message in chat.messages.reversed() where message.isUser {
+                let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !content.isEmpty,
+                      content != trimmedCurrentPrompt,
+                      !isMusicApprovalOnly(content),
+                      containsMusicIntentLanguage(content) else {
+                    continue
+                }
+                return content
+            }
+        }
+
+        return trimmedCurrentPrompt.isEmpty ? "Create a song with the approved lyrics." : trimmedCurrentPrompt
+    }
+
+    private func isMusicApprovalOnly(_ text: String) -> Bool {
+        let normalized = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        let approvalWords = ["yes", "yep", "yeah", "ok", "okay", "approved", "go ahead", "generate", "create it", "looks good"]
+        return normalized.count <= 40 && approvalWords.contains { normalized == $0 || normalized.contains($0) }
+    }
+
+    private func containsMusicIntentLanguage(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        return [
+            "music",
+            "song",
+            "track",
+            "beat",
+            "loop",
+            "soundtrack",
+            "instrumental",
+            "vocals",
+            "lyrics"
+        ].contains { normalized.contains($0) }
+    }
+
+    private func parsePlainTextToolArguments(_ rawArguments: String) -> [String: Any]? {
+        var result: [String: Any] = [:]
+        var index = rawArguments.startIndex
+
+        func skipWhitespaceAndCommas() {
+            while index < rawArguments.endIndex {
+                let character = rawArguments[index]
+                if character.isWhitespace || character == "," {
+                    index = rawArguments.index(after: index)
+                } else {
+                    break
+                }
+            }
+        }
+
+        func parseKey() -> String? {
+            let start = index
+            while index < rawArguments.endIndex {
+                let character = rawArguments[index]
+                if character.isLetter || character.isNumber || character == "_" {
+                    index = rawArguments.index(after: index)
+                } else {
+                    break
+                }
+            }
+            guard start < index else { return nil }
+            return String(rawArguments[start..<index])
+        }
+
+        func parseQuotedString(quote: Character) -> String? {
+            index = rawArguments.index(after: index)
+            var value = ""
+            var isEscaping = false
+
+            while index < rawArguments.endIndex {
+                let character = rawArguments[index]
+                index = rawArguments.index(after: index)
+
+                if isEscaping {
+                    switch character {
+                    case "n":
+                        value.append("\n")
+                    case "t":
+                        value.append("\t")
+                    case "r":
+                        value.append("\r")
+                    case "\\", "\"", "'":
+                        value.append(character)
+                    default:
+                        value.append(character)
+                    }
+                    isEscaping = false
+                    continue
+                }
+
+                if character == "\\" {
+                    isEscaping = true
+                    continue
+                }
+
+                if character == quote {
+                    return value
+                }
+
+                value.append(character)
+            }
+
+            return nil
+        }
+
+        func parseBareValue() -> Any {
+            let start = index
+            while index < rawArguments.endIndex, rawArguments[index] != "," {
+                index = rawArguments.index(after: index)
+            }
+            let value = String(rawArguments[start..<index])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            switch value.lowercased() {
+            case "true":
+                return true
+            case "false":
+                return false
+            case "none", "null":
+                return NSNull()
+            default:
+                if let intValue = Int(value) {
+                    return intValue
+                }
+                if let doubleValue = Double(value) {
+                    return doubleValue
+                }
+                return value
+            }
+        }
+
+        while index < rawArguments.endIndex {
+            skipWhitespaceAndCommas()
+            guard index < rawArguments.endIndex else { break }
+            guard let key = parseKey() else { return nil }
+
+            while index < rawArguments.endIndex, rawArguments[index].isWhitespace {
+                index = rawArguments.index(after: index)
+            }
+            guard index < rawArguments.endIndex, rawArguments[index] == "=" else {
+                return nil
+            }
+            index = rawArguments.index(after: index)
+
+            while index < rawArguments.endIndex, rawArguments[index].isWhitespace {
+                index = rawArguments.index(after: index)
+            }
+            guard index < rawArguments.endIndex else { return nil }
+
+            let value: Any
+            if rawArguments[index] == "\"" || rawArguments[index] == "'" {
+                guard let stringValue = parseQuotedString(quote: rawArguments[index]) else {
+                    return nil
+                }
+                value = stringValue
+            } else {
+                value = parseBareValue()
+            }
+
+            result[key] = value
+        }
+
+        return result.isEmpty ? nil : result
     }
 
     private func beginToolCallProgress(toolName: String, status: String, icon: String, details: [ToolCallDetail] = []) {

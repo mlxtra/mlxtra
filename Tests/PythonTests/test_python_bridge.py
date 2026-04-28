@@ -114,6 +114,45 @@ class TestParseToolCalls(unittest.TestCase):
         args = json.loads(result[0]["function"]["arguments"])
         assert args["query"] == "TSLA stock price now"
 
+    def test_plain_json_name_parameters_tool_call(self):
+        text = '{"name": "web_search", "parameters": {"query": "latest Swift release"}}'
+
+        result = python_bridge.parse_tool_calls(text)
+        assert len(result) == 1
+        assert result[0]["function"]["name"] == "web_search"
+
+        args = json.loads(result[0]["function"]["arguments"])
+        assert args["query"] == "latest Swift release"
+
+    def test_openai_json_tool_calls_shape(self):
+        text = json.dumps({
+            "tool_calls": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "generate_music",
+                        "arguments": json.dumps({
+                            "caption": "clockwork garden",
+                            "instrumental": True,
+                        }),
+                    },
+                }
+            ]
+        })
+
+        result = python_bridge.parse_tool_calls(text)
+        assert len(result) == 1
+        assert result[0]["function"]["name"] == "generate_music"
+
+        args = json.loads(result[0]["function"]["arguments"])
+        assert args["caption"] == "clockwork garden"
+        assert args["instrumental"] is True
+
+    def test_plain_json_without_tool_name_is_not_a_tool_call(self):
+        text = '{"answer": "No tool needed"}'
+
+        assert python_bridge.parse_tool_calls(text) == []
+
 
 class TestLastUserPrompt(unittest.TestCase):
     def test_returns_last_user_content(self):

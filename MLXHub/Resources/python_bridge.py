@@ -336,6 +336,64 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
             pass
         return stripped
 
+    def append_tool_call(fn_name: Any, args: Any) -> None:
+        if not isinstance(fn_name, str) or not fn_name.strip():
+            return
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except (json.JSONDecodeError, ValueError):
+                args = {}
+        if not isinstance(args, dict):
+            args = {}
+        tool_calls.append(
+            {
+                "id": f"call_{uuid.uuid4().hex[:8]}",
+                "type": "function",
+                "function": {"name": fn_name.strip(), "arguments": json.dumps(args)},
+            }
+        )
+
+    def append_json_tool_call(value: Any) -> None:
+        if not isinstance(value, dict):
+            return
+
+        function = value.get("function")
+        if isinstance(function, dict):
+            append_tool_call(
+                function.get("name"),
+                function.get("arguments", value.get("parameters", {})),
+            )
+            return
+
+        append_tool_call(
+            value.get("name"),
+            value.get("parameters", value.get("arguments", {})),
+        )
+
+    def parse_json_tool_calls() -> None:
+        stripped = text.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+        if fenced:
+            stripped = fenced.group(1).strip()
+        if not stripped.startswith(("{", "[")):
+            return
+
+        try:
+            value = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            return
+
+        if isinstance(value, dict) and isinstance(value.get("tool_calls"), list):
+            candidates = value["tool_calls"]
+        elif isinstance(value, list):
+            candidates = value
+        else:
+            candidates = [value]
+
+        for candidate in candidates:
+            append_json_tool_call(candidate)
+
     # Qwen3.5 format: <function=name>\n<parameter=key>\nvalue\n</parameter>\n</function>
     fn_pattern = re.compile(r"<function=([^>]+)>(.*?)</function>", re.DOTALL)
     for m in fn_pattern.finditer(text):
@@ -353,6 +411,13 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
             }
         )
 
+    if tool_calls:
+        return tool_calls
+
+    # Plain JSON formats are common when small models follow generic tool instructions:
+    # {"name": "web_search", "parameters": {"query": "..."}}
+    # {"tool_calls": [{"function": {"name": "web_search", "arguments": "{\"query\":\"...\"}"}}]}
+    parse_json_tool_calls()
     if tool_calls:
         return tool_calls
 

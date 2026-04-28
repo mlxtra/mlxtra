@@ -9,19 +9,7 @@ enum PromptConfiguration {
     static let defaultSystemPrompt = """
     You are a helpful assistant.
 
-    When the user asks you to create, generate, draw, edit, or make an image, use the generate_image tool. If the image needs current information, use web_search first, then use generate_image with the current information from the search result. Do not generate markdown image tags, image URLs, data URLs, or links to external image services. After the generate_image tool runs, the app displays the image automatically; respond with concise text only.
-
-    When the user asks you to create speech, narration, voiceover, or text-to-speech audio, use the create_speech tool with the exact text that should be spoken. After the create_speech tool runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
-
-    When the user asks you to create music, a song, beat, loop, soundtrack, instrumental, or background music, do not call generate_music until the request is ready.
-
-    Music readiness rules:
-    - If the user clearly asks for instrumental music, a beat, background music, a backing track, or no vocals, call generate_music with instrumental=true.
-    - If the user does not say whether they want instrumental music or vocals, ask: "Would you like instrumental music, or should I include vocals with lyrics? If you'd like lyrics, you can provide your own or I can write them for you."
-    - If the user wants vocals and provides lyrics, call generate_music with those lyrics.
-    - If the user wants vocals but does not provide lyrics, write lyrics with section labels like [verse], [chorus], and [bridge], then ask: "Here are the lyrics I wrote for your song:\\n\\n<lyrics>\\n\\nDo these look good, or would you like me to change anything before I generate the music?"
-    - If you wrote or revised lyrics, wait for explicit user approval before calling generate_music.
-    - After generate_music runs, the app displays the audio automatically; respond with concise text only and do not include local file paths.
+    Use only tools that are explicitly available in the current mode. If no tool is available, answer normally or ask the user to switch modes. Never write, simulate, or mention a tool call for an unavailable tool.
     """
 
     static let defaultDeepResearchSystemPrompt = """
@@ -107,7 +95,7 @@ enum PromptConfiguration {
             "type": "function",
             "function": [
                 "name": "generate_music",
-                "description": "Create a song, instrumental track, beat, loop, background music, or music sample only after the user has specified instrumental music or approved lyrics for vocals.",
+                "description": "Create music only when the user has either requested instrumental/no-vocal music or approved/provided lyrics for vocals. Ask a follow-up instead of calling this tool when that choice is unclear.",
                 "parameters": [
                     "type": "object",
                     "properties": [
@@ -117,7 +105,7 @@ enum PromptConfiguration {
                         ],
                         "lyrics": [
                             "type": "string",
-                            "description": "Optional lyrics with section labels like [verse] and [chorus]."
+                            "description": "Lyrics with section labels like [verse] and [chorus]. Required when instrumental is false."
                         ],
                         "duration": [
                             "type": "number",
@@ -125,10 +113,10 @@ enum PromptConfiguration {
                         ],
                         "instrumental": [
                             "type": "boolean",
-                            "description": "True when the user asks for instrumental, beat, backing track, or no vocals."
+                            "description": "True only for instrumental, beat, backing track, background music, or no-vocal requests. False only when lyrics are provided or approved."
                         ]
                     ],
-                    "required": ["caption"]
+                    "required": ["caption", "instrumental"]
                 ]
             ]
         ]
@@ -154,7 +142,7 @@ enum PromptConfiguration {
 
     static func toolDefinitionsValidationMessage(_ text: String) -> String? {
         parsedToolDefinitions(from: text) == nil
-            ? "Tool definitions must be a JSON array of function tools with names."
+            ? "Tool definitions must be a JSON array of supported function tools with object parameters."
             : nil
     }
 
@@ -171,8 +159,12 @@ enum PromptConfiguration {
             return nil
         }
 
-        let validTools = tools.filter { toolName(in: $0) != nil }
-        return validTools.isEmpty ? nil : validTools
+        let validTools = tools.compactMap { validToolDefinition($0) }
+        guard !validTools.isEmpty, validTools.count == tools.count else {
+            return nil
+        }
+
+        return validTools
     }
 
     private static func toolName(in tool: [String: Any]) -> String? {
@@ -184,6 +176,37 @@ enum PromptConfiguration {
 
         return name
     }
+
+    private static func validToolDefinition(_ tool: [String: Any]) -> [String: Any]? {
+        guard tool["type"] as? String == "function",
+              let function = tool["function"] as? [String: Any],
+              let name = toolName(in: tool),
+              supportedToolNames.contains(name),
+              let parameters = function["parameters"] as? [String: Any],
+              parameters["type"] as? String == "object",
+              let properties = parameters["properties"] as? [String: Any],
+              !properties.isEmpty else {
+            return nil
+        }
+
+        if parameters["required"] != nil {
+            guard let required = parameters["required"] as? [String] else {
+                return nil
+            }
+            guard required.allSatisfy({ properties[$0] != nil }) else {
+                return nil
+            }
+        }
+
+        return tool
+    }
+
+    private static let supportedToolNames: Set<String> = [
+        "web_search",
+        "generate_image",
+        "create_speech",
+        "generate_music"
+    ]
 
     private static func prettyPrintedJSON(_ value: Any) -> String {
         guard JSONSerialization.isValidJSONObject(value),

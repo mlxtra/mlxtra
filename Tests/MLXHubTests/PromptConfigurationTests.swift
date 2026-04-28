@@ -66,6 +66,75 @@ final class PromptConfigurationTests: XCTestCase {
         XCTAssertNotNil(PromptConfiguration.toolDefinitionsValidationMessage("{ invalid json"))
     }
 
+    func testCustomToolDefinitionsRejectUnsupportedToolNames() {
+        let text = """
+        [
+          {
+            "type": "function",
+            "function": {
+              "name": "delete_file",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": { "type": "string" }
+                }
+              }
+            }
+          }
+        ]
+        """
+
+        XCTAssertNotNil(PromptConfiguration.toolDefinitionsValidationMessage(text))
+    }
+
+    func testCustomToolDefinitionsRequireObjectParameters() {
+        let text = """
+        [
+          {
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "parameters": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+        """
+
+        XCTAssertNotNil(PromptConfiguration.toolDefinitionsValidationMessage(text))
+    }
+
+    func testCustomToolDefinitionsRejectMalformedRequiredList() {
+        let text = """
+        [
+          {
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string" }
+                },
+                "required": "query"
+              }
+            }
+          }
+        ]
+        """
+
+        XCTAssertNotNil(PromptConfiguration.toolDefinitionsValidationMessage(text))
+    }
+
+    func testMusicToolRequiresExplicitInstrumentalFlag() {
+        let function = PromptConfiguration.musicGenerationTool["function"] as? [String: Any]
+        let parameters = function?["parameters"] as? [String: Any]
+        let required = parameters?["required"] as? [String]
+
+        XCTAssertEqual(required, ["caption", "instrumental"])
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "MLXHub.PromptConfigurationTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
