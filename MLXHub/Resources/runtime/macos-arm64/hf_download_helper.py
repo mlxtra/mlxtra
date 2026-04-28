@@ -3,8 +3,10 @@ import json
 import sys
 import time
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, snapshot_download
 from tqdm.auto import tqdm
+
+AGGREGATE_TOTAL_BYTES = None
 
 
 def emit(event):
@@ -44,6 +46,24 @@ def progress_status(raw_status, kind):
     }.get(raw_status, raw_status)
 
 
+def estimate_repo_size(repo_id):
+    try:
+        total = 0
+        api = HfApi()
+        for item in api.list_repo_tree(repo_id=repo_id, recursive=True, expand=True):
+            size = getattr(item, "size", None)
+            if size:
+                total += int(size)
+        return total or None
+    except Exception:
+        return None
+
+
+def is_aggregate_byte_progress(kind, description):
+    normalized_description = str(description or "").lower()
+    return kind == "bytes" and AGGREGATE_TOTAL_BYTES and "downloading" in normalized_description
+
+
 class JsonTqdm(tqdm):
     def __init__(self, *args, **kwargs):
         self._last_emit = 0.0
@@ -65,24 +85,34 @@ class JsonTqdm(tqdm):
     def _emit_progress(self, status):
         total = int(self.total) if self.total else None
         downloaded = int(self.n or 0)
-        percent = (downloaded / total * 100.0) if total else None
         unit = str(self.unit or "")
         description = str(self.desc or "")
         kind = progress_kind(unit, description)
-        display_percent = None if kind == "bytes" else percent
+        percent = None
+        percent_reliable = False
+        progress_scope = None
 
-        emit(
-            {
-                "type": "download.progress",
-                "status": progress_status(status, kind),
-                "description": description,
-                "unit": unit,
-                "progress_kind": kind,
-                "downloaded": downloaded,
-                "total": total,
-                "percent": display_percent,
-            }
-        )
+        if is_aggregate_byte_progress(kind, description):
+            total = int(AGGREGATE_TOTAL_BYTES)
+            downloaded = min(downloaded, total)
+            percent = (downloaded / total * 100.0) if total else None
+            percent_reliable = percent is not None
+            progress_scope = "aggregate"
+
+        event = {
+            "type": "download.progress",
+            "status": progress_status(status, kind),
+            "description": description,
+            "unit": unit,
+            "progress_kind": kind,
+            "downloaded": downloaded,
+            "total": total,
+            "percent": percent,
+            "percent_reliable": percent_reliable,
+        }
+        if progress_scope:
+            event["progress_scope"] = progress_scope
+        emit(event)
 
 
 def main():
@@ -92,6 +122,33 @@ def main():
 
     repo_id = sys.argv[1]
     emit({"type": "download.started", "repo_id": repo_id})
+
+    emit(
+        {
+            "type": "download.progress",
+            "status": "Preparing download",
+            "description": "Checking download size",
+            "progress_kind": "activity",
+        }
+    )
+
+    global AGGREGATE_TOTAL_BYTES
+    AGGREGATE_TOTAL_BYTES = estimate_repo_size(repo_id)
+    if AGGREGATE_TOTAL_BYTES:
+        emit(
+            {
+                "type": "download.progress",
+                "status": "Preparing download",
+                "description": "Download size calculated",
+                "unit": "B",
+                "progress_kind": "bytes",
+                "progress_scope": "aggregate",
+                "downloaded": 0,
+                "total": AGGREGATE_TOTAL_BYTES,
+                "percent": 0.0,
+                "percent_reliable": True,
+            }
+        )
 
     path = snapshot_download(repo_id=repo_id, tqdm_class=JsonTqdm)
 

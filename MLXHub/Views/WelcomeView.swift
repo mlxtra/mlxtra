@@ -34,7 +34,9 @@ struct WelcomeView: View {
 
             WelcomePromptChips { item in
                 viewModel.selectTool(item.tool)
-                viewModel.inputText = item.prompt
+                if !item.prompt.isEmpty {
+                    viewModel.inputText = item.prompt
+                }
             }
             .frame(maxWidth: 720)
             .padding(.horizontal, 24)
@@ -119,37 +121,37 @@ private struct WelcomePromptChips: View {
             title: "Ask",
             icon: "bubble.left.and.bubble.right",
             tool: .chat,
-            prompt: "Help me think through "
+            prompt: ""
         ),
         WelcomePromptItem(
             title: "Analyze image",
             icon: "eye",
             tool: .chat,
-            prompt: "Look at the attached image and tell me what stands out."
+            prompt: ""
         ),
         WelcomePromptItem(
             title: "Create image",
             icon: "photo",
             tool: .image,
-            prompt: "Create an image of "
+            prompt: ""
         ),
         WelcomePromptItem(
             title: "Create speech",
             icon: "waveform",
             tool: .tts,
-            prompt: "Create speech from this text: "
+            prompt: ""
         ),
         WelcomePromptItem(
             title: "Make music",
             icon: "music.note",
             tool: .music,
-            prompt: "Create an instrumental "
+            prompt: ""
         ),
         WelcomePromptItem(
             title: "Research",
             icon: "magnifyingglass",
             tool: .research,
-            prompt: "Research the latest information about "
+            prompt: ""
         )
     ]
 
@@ -185,7 +187,7 @@ private struct WelcomePromptChips: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help(item.prompt)
+                .help(item.title)
             }
         }
     }
@@ -209,7 +211,7 @@ private struct FirstRunGuideView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Start with \(modelName)")
                     .font(.system(size: 13, weight: .semibold))
-                Text("Download once, then chat locally. Deep Research can use live web results when selected.")
+                Text("Download once, then chat locally. Research uses live web results when selected.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -227,7 +229,7 @@ private struct FirstRunGuideView: View {
             Button {
                 onDeepResearch()
             } label: {
-                Label("Deep Research", systemImage: "magnifyingglass")
+                Label("Research", systemImage: "magnifyingglass")
             }
             .buttonStyle(.bordered)
 

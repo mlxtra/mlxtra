@@ -25,7 +25,7 @@ enum PromptConfiguration {
     """
 
     static let defaultDeepResearchSystemPrompt = """
-    You are running Deep Research mode.
+    You are running Research mode.
 
     Research expectations:
     - Use web_search for the user's main question before answering.

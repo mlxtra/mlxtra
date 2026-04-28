@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @StateObject private var downloadManager = ModelDownloadManager()
+    @StateObject private var downloadManager = ModelDownloadManager.shared
     @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
     @AppStorage(PromptConfiguration.systemPromptKey) private var systemPrompt = PromptConfiguration.defaultSystemPrompt
     @AppStorage(PromptConfiguration.deepResearchSystemPromptKey) private var deepResearchSystemPrompt = PromptConfiguration.defaultDeepResearchSystemPrompt
@@ -24,21 +24,44 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header
-            panePicker
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                panePicker
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
 
-            switch selectedPane {
-            case .models:
-                modelsPane
-            case .advanced:
-                promptsPane
+            Divider()
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    paneContent
+                        .padding(24)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onAppear {
+                    revealPendingModelIfNeeded(proxy)
+                }
+                .onChange(of: pendingDownloadModelId) { _, _ in
+                    revealPendingModelIfNeeded(proxy)
+                }
             }
         }
-        .padding(24)
-        .frame(width: 720, height: 560)
+        .frame(width: 900, height: 680)
         .onAppear {
             downloadManager.refreshStatuses()
+        }
+    }
+
+    @ViewBuilder
+    private var paneContent: some View {
+        switch selectedPane {
+        case .models:
+            modelsPane
+        case .advanced:
+            promptsPane
         }
     }
 
@@ -153,28 +176,17 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     controls
 
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            if modelsByModality.isEmpty {
-                                EmptyModelsView()
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 56)
-                            } else {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    ForEach(modelsByModality, id: \.0.id) { modality, models in
-                                        modelSection(modality: modality, models: models)
-                                    }
-                                }
-                                .padding(.bottom, 12)
+                    if modelsByModality.isEmpty {
+                        EmptyModelsView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 56)
+                    } else {
+                        VStack(alignment: .leading, spacing: 20) {
+                            ForEach(modelsByModality, id: \.0.id) { modality, models in
+                                modelSection(modality: modality, models: models)
                             }
                         }
-                        .frame(minHeight: 180)
-                        .onAppear {
-                            scrollToPendingModel(proxy)
-                        }
-                        .onChange(of: pendingDownloadModelId) { _, _ in
-                            scrollToPendingModel(proxy)
-                        }
+                        .padding(.bottom, 12)
                     }
                 }
                 .padding(.top, 10)
@@ -186,41 +198,39 @@ struct SettingsView: View {
     }
 
     private var promptsPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                AdvancedQuickControls(
-                    systemPrompt: $systemPrompt,
-                    deepResearchSystemPrompt: $deepResearchSystemPrompt,
-                    toolDefinitionsJSON: $toolDefinitionsJSON
-                )
+        VStack(alignment: .leading, spacing: 18) {
+            AdvancedQuickControls(
+                systemPrompt: $systemPrompt,
+                deepResearchSystemPrompt: $deepResearchSystemPrompt,
+                toolDefinitionsJSON: $toolDefinitionsJSON
+            )
 
-                DisclosureGroup(isExpanded: $showExpertSettings) {
-                    VStack(alignment: .leading, spacing: 18) {
-                        PromptEditorSection(
-                            title: "System Prompt",
-                            text: $systemPrompt,
-                            defaultValue: PromptConfiguration.defaultSystemPrompt
-                        )
+            DisclosureGroup(isExpanded: $showExpertSettings) {
+                VStack(alignment: .leading, spacing: 18) {
+                    PromptEditorSection(
+                        title: "System Prompt",
+                        text: $systemPrompt,
+                        defaultValue: PromptConfiguration.defaultSystemPrompt
+                    )
 
-                        PromptEditorSection(
-                            title: "Deep Research Prompt",
-                            text: $deepResearchSystemPrompt,
-                            defaultValue: PromptConfiguration.defaultDeepResearchSystemPrompt
-                        )
+                    PromptEditorSection(
+                        title: "Research Prompt",
+                        text: $deepResearchSystemPrompt,
+                        defaultValue: PromptConfiguration.defaultDeepResearchSystemPrompt
+                    )
 
-                        ToolDefinitionsEditorSection(
-                            text: $toolDefinitionsJSON,
-                            defaultValue: PromptConfiguration.defaultToolDefinitionsJSON
-                        )
-                    }
-                    .padding(.top, 10)
-                } label: {
-                    Label("Expert prompt and tool editing", systemImage: "slider.horizontal.3")
-                        .font(.headline)
+                    ToolDefinitionsEditorSection(
+                        text: $toolDefinitionsJSON,
+                        defaultValue: PromptConfiguration.defaultToolDefinitionsJSON
+                    )
                 }
+                .padding(.top, 10)
+            } label: {
+                Label("Expert prompt and tool editing", systemImage: "slider.horizontal.3")
+                    .font(.headline)
             }
-            .padding(.bottom, 12)
         }
+        .padding(.bottom, 12)
     }
 
     private var controls: some View {
@@ -296,6 +306,13 @@ struct SettingsView: View {
                 proxy.scrollTo(pendingDownloadModelId, anchor: .center)
             }
         }
+    }
+
+    private func revealPendingModelIfNeeded(_ proxy: ScrollViewProxy) {
+        guard !pendingDownloadModelId.isEmpty else { return }
+        selectedPane = .models
+        showDetailedModels = true
+        scrollToPendingModel(proxy)
     }
 
     private var filteredModels: [DownloadableModel] {

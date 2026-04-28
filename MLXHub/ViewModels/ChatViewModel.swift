@@ -30,7 +30,7 @@ enum MusicIntentState: Equatable {
         case .needsInstrumentalOrVocals:
             return "Current music intent state: ask whether the user wants instrumental music or vocals with lyrics before calling generate_music."
         case .needsLyrics:
-            return "Current music intent state: the user wants vocals, but lyrics are missing. Write lyrics or ask for lyrics, then wait for approval before calling generate_music."
+            return "Current music intent state: the user wants vocals, but lyrics are missing. Generate lyrics or ask for lyrics, then wait for approval before calling generate_music."
         case .awaitingLyricsApproval:
             return "Current music intent state: lyrics are drafted but not approved. Ask for explicit approval before calling generate_music."
         case .readyToGenerate:
@@ -43,7 +43,7 @@ enum MusicIntentState: Equatable {
         case .needsInstrumentalOrVocals:
             return "Do not call generate_music yet. Ask the user whether they want instrumental music or vocals with lyrics."
         case .needsLyrics:
-            return "Do not call generate_music yet. The user wants vocals, but lyrics are missing. Write lyrics or ask the user for lyrics, then wait for approval."
+            return "Do not call generate_music yet. The user wants vocals, but lyrics are missing. Generate lyrics or ask the user for lyrics, then wait for approval."
         case .awaitingLyricsApproval:
             return "Do not call generate_music yet. You drafted lyrics, but the user has not explicitly approved them. Ask whether the lyrics look good or need changes."
         case .readyToGenerate:
@@ -152,6 +152,84 @@ enum MusicIntentState: Equatable {
         let matchingWords = lyricWords.filter { normalizedPrompt.contains(String($0)) }
         return matchingWords.count >= min(6, lyricWords.count)
     }
+}
+
+enum MusicVocalMode: String, CaseIterable, Identifiable {
+    case auto = "Auto"
+    case instrumental = "Instrumental"
+    case vocals = "With vocals"
+
+    var id: String { rawValue }
+}
+
+enum MusicComposerPrompt: Equatable {
+    case chooseVocals
+    case needsLyrics
+    case reviewLyrics
+}
+
+private enum MusicPrimaryAction {
+    case chooseVocals
+    case writeLyrics
+    case useLyrics
+    case createSong
+}
+
+private struct MusicGenerationDraft {
+    let vocalMode: MusicVocalMode
+    let lyrics: String?
+}
+
+enum ComposerDraftPrimaryAction: Equatable {
+    case send
+    case chooseMusicVocals
+    case generateMusicLyrics
+    case useMusicLyrics
+    case createSong
+}
+
+enum ComposerDraftSlotAction: String, Equatable, Identifiable {
+    case attachReference
+    case chooseInstrumental
+    case chooseVocals
+    case showLyricsEditor
+    case regenerateLyrics
+
+    var id: String { rawValue }
+}
+
+struct ComposerDraftSlotActionItem: Identifiable, Equatable {
+    let action: ComposerDraftSlotAction
+    let title: String
+    let systemImage: String
+
+    var id: ComposerDraftSlotAction { action }
+}
+
+struct ComposerDraftSlot: Identifiable, Equatable {
+    enum Tone: Equatable {
+        case neutral
+        case needed
+    }
+
+    let id: String
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+    let tone: Tone
+    let actions: [ComposerDraftSlotActionItem]
+}
+
+struct ComposerDraft: Equatable {
+    let mode: Tool
+    let placeholder: String
+    let primaryTitle: String?
+    let primarySystemImage: String
+    let primaryHelp: String
+    let primaryAction: ComposerDraftPrimaryAction
+    let isPrimaryEnabled: Bool
+    let showsMusicControls: Bool
+    let slots: [ComposerDraftSlot]
 }
 
 @MainActor
@@ -455,7 +533,16 @@ class ChatViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var chats: [Chat] = []
     @Published var selectedChatId: UUID?
-    @Published var inputText: String = ""
+    @Published var inputText: String = "" {
+        didSet {
+            guard inputText != oldValue, selectedTool == .music else { return }
+            activeMusicGenerationDraft = nil
+            if musicLyricsApproved {
+                musicLyricsApproved = false
+            }
+            refreshMusicDraftGuidance()
+        }
+    }
     @Published var selectedTool: Tool = .auto
     @Published var selectedModel: AIModel = AIModel.defaultForCurrentHardware
     @Published var isToolMenuOpen: Bool = false
@@ -466,11 +553,26 @@ class ChatViewModel: ObservableObject {
     @Published var isPythonLoading: Bool = false
     @Published var isModelLoading: Bool = false
     @Published var isGenerating: Bool = false
+    @Published var isDraftingMusicLyrics: Bool = false
     @Published var loadingMessage: String = ""
     @Published var streamingMessageId: UUID?
     @Published private(set) var modelDownloadRequest: DownloadableModel?
     @Published private(set) var pendingEngineDownloadModel: DownloadableModel?
     @Published private(set) var musicIntentState: MusicIntentState = .needsInstrumentalOrVocals
+    @Published var musicVocalMode: MusicVocalMode = .auto
+    @Published var musicLyricsText: String = "" {
+        didSet {
+            if musicLyricsText != oldValue {
+                musicLyricsApproved = false
+                if !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    musicComposerPrompt = .reviewLyrics
+                }
+            }
+        }
+    }
+    @Published var isMusicLyricsEditorVisible: Bool = false
+    @Published private(set) var musicLyricsApproved: Bool = false
+    @Published private(set) var musicComposerPrompt: MusicComposerPrompt?
     @Published private(set) var activeEngineModelName: String?
     @Published private(set) var activeEngineModelRole: LocalEngineModelRole = .chat
     @Published private(set) var freedEngineModelName: String?
@@ -489,6 +591,8 @@ class ChatViewModel: ObservableObject {
     private let maxAutoToolDepth = 4
     private var pendingDownloadMonitorTask: Task<Void, Never>?
     private var pendingEngineDownloadReason: PendingEngineDownloadReason?
+    private var lyricsDraftTask: Task<Void, Never>?
+    private var activeMusicGenerationDraft: MusicGenerationDraft?
 
     // MARK: - Computed Properties
     var hasSelectedImages: Bool {
@@ -504,7 +608,307 @@ class ChatViewModel: ObservableObject {
     }
 
     var isInputDisabled: Bool {
-        isPythonLoading || isModelLoading || isGenerating
+        isPythonLoading || isModelLoading || isGenerating || isDraftingMusicLyrics
+    }
+
+    var hasApprovedMusicLyrics: Bool {
+        musicLyricsApproved && !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var hasMusicDraftPrompt: Bool {
+        !musicPromptForCurrentDraft().isEmpty
+    }
+
+    private var musicPrimaryAction: MusicPrimaryAction? {
+        guard selectedTool == .music else { return nil }
+        let prompt = musicPromptForCurrentDraft()
+        guard !prompt.isEmpty else { return nil }
+
+        switch resolvedMusicVocalMode(for: prompt) {
+        case .instrumental:
+            return .createSong
+        case .vocals:
+            if hasApprovedMusicLyrics || promptContainsLyrics(prompt) {
+                return .createSong
+            }
+            return musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .writeLyrics
+                : .useLyrics
+        case .auto:
+            return .chooseVocals
+        }
+    }
+
+    var composerDraft: ComposerDraft {
+        let promptIsEmpty = inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let basePlaceholder: String
+        let title: String?
+        let icon: String
+        let help: String
+        let action: ComposerDraftPrimaryAction
+        let enabled: Bool
+        let showsMusicControls = selectedTool == .music
+        let slots: [ComposerDraftSlot]
+
+        switch selectedTool {
+        case .auto:
+            basePlaceholder = hasSelectedImages ? "Add a note..." : "Ask anything..."
+            title = nil
+            icon = "arrow.up"
+            help = "Send message"
+            action = .send
+            enabled = !isInputDisabled && (!promptIsEmpty || hasSelectedImages)
+            slots = []
+
+        case .chat:
+            basePlaceholder = hasSelectedImages ? "Add a note..." : "Ask anything..."
+            title = nil
+            icon = "arrow.up"
+            help = "Send message"
+            action = .send
+            enabled = !isInputDisabled && (!promptIsEmpty || hasSelectedImages)
+            slots = []
+
+        case .image:
+            basePlaceholder = "Describe the image you want..."
+            title = "Create image"
+            icon = "photo"
+            help = "Create image"
+            action = .send
+            enabled = !isInputDisabled && !promptIsEmpty
+            slots = imageComposerSlots
+
+        case .tts:
+            basePlaceholder = "Enter the text to speak..."
+            title = "Create speech"
+            icon = "waveform"
+            help = "Create speech"
+            action = .send
+            enabled = !isInputDisabled && !promptIsEmpty
+            slots = []
+
+        case .music:
+            basePlaceholder = "Describe the song you want..."
+            let primaryAction = musicPrimaryAction
+            title = composerTitle(for: primaryAction)
+            icon = composerSystemImage(for: primaryAction)
+            help = composerHelp(for: primaryAction)
+            action = composerPrimaryAction(for: primaryAction)
+            enabled = musicPrimaryActionIsEnabled(primaryAction) && !promptIsEmpty
+            slots = musicComposerSlots
+
+        case .research:
+            basePlaceholder = "What should I research on the web?"
+            title = "Research"
+            icon = "magnifyingglass"
+            help = "Research the web"
+            action = .send
+            enabled = !isInputDisabled && !promptIsEmpty
+            slots = [
+                ComposerDraftSlot(
+                    id: "research-web",
+                    title: "Web research",
+                    subtitle: "Searches live web sources before answering.",
+                    systemImage: "network",
+                    tone: .neutral,
+                    actions: []
+                )
+            ]
+        }
+
+        return ComposerDraft(
+            mode: selectedTool,
+            placeholder: basePlaceholder,
+            primaryTitle: title,
+            primarySystemImage: icon,
+            primaryHelp: help,
+            primaryAction: action,
+            isPrimaryEnabled: enabled,
+            showsMusicControls: showsMusicControls,
+            slots: slots
+        )
+    }
+
+    var composerPlaceholder: String {
+        composerDraft.placeholder
+    }
+
+    var shouldShowMusicComposerControls: Bool {
+        composerDraft.showsMusicControls
+    }
+
+    var composerPrimaryActionTitle: String? {
+        composerDraft.primaryTitle
+    }
+
+    var composerPrimaryActionSystemImage: String {
+        composerDraft.primarySystemImage
+    }
+
+    var composerPrimaryActionHelp: String {
+        composerDraft.primaryHelp
+    }
+
+    var isComposerPrimaryActionEnabled: Bool {
+        composerDraft.isPrimaryEnabled
+    }
+
+    private func composerTitle(for musicPrimaryAction: MusicPrimaryAction?) -> String? {
+        switch musicPrimaryAction {
+        case .chooseVocals:
+            return "Next"
+        case .writeLyrics:
+            return isDraftingMusicLyrics ? "Generating" : "Generate lyrics"
+        case .useLyrics:
+            return "Use lyrics"
+        case .createSong:
+            return "Create song"
+        case nil:
+            return nil
+        }
+    }
+
+    private func composerSystemImage(for musicPrimaryAction: MusicPrimaryAction?) -> String {
+        switch musicPrimaryAction {
+        case .chooseVocals:
+            return "arrow.right"
+        case .writeLyrics:
+            return "pencil.and.sparkles"
+        case .useLyrics:
+            return "checkmark.circle"
+        case .createSong:
+            return "music.note"
+        case nil:
+            return "arrow.up"
+        }
+    }
+
+    private func composerHelp(for musicPrimaryAction: MusicPrimaryAction?) -> String {
+        switch musicPrimaryAction {
+        case .chooseVocals:
+            return "Choose instrumental or vocals"
+        case .writeLyrics:
+            return "Generate lyrics from this song idea"
+        case .useLyrics:
+            return "Use these lyrics for the song"
+        case .createSong:
+            return "Create song"
+        case nil:
+            return "Send message"
+        }
+    }
+
+    private func composerPrimaryAction(for musicPrimaryAction: MusicPrimaryAction?) -> ComposerDraftPrimaryAction {
+        switch musicPrimaryAction {
+        case .chooseVocals:
+            return .chooseMusicVocals
+        case .writeLyrics:
+            return .generateMusicLyrics
+        case .useLyrics:
+            return .useMusicLyrics
+        case .createSong:
+            return .createSong
+        case nil:
+            return .send
+        }
+    }
+
+    private func musicPrimaryActionIsEnabled(_ musicPrimaryAction: MusicPrimaryAction?) -> Bool {
+        guard !isInputDisabled, let musicPrimaryAction else {
+            return false
+        }
+        switch musicPrimaryAction {
+        case .writeLyrics:
+            return !isDraftingMusicLyrics
+        case .useLyrics:
+            return !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .chooseVocals, .createSong:
+            return true
+        }
+    }
+
+    private var imageComposerSlots: [ComposerDraftSlot] {
+        guard selectedTool == .image else { return [] }
+
+        if hasSelectedImages {
+            return [
+                ComposerDraftSlot(
+                    id: "image-reference-attached",
+                    title: selectedImagePaths.count == 1 ? "Reference image attached" : "\(selectedImagePaths.count) reference images attached",
+                    subtitle: "The image model will use attached images as visual context.",
+                    systemImage: "paperclip",
+                    tone: .neutral,
+                    actions: []
+                )
+            ]
+        }
+
+        return [
+            ComposerDraftSlot(
+                id: "image-reference",
+                title: "Reference image optional",
+                subtitle: "Attach one if you want to guide style or composition.",
+                systemImage: "photo.on.rectangle",
+                tone: .neutral,
+                actions: [
+                    ComposerDraftSlotActionItem(
+                        action: .attachReference,
+                        title: "Attach image",
+                        systemImage: "paperclip"
+                    )
+                ]
+            )
+        ]
+    }
+
+    private var musicComposerSlots: [ComposerDraftSlot] {
+        switch musicComposerPrompt {
+        case .chooseVocals:
+            return [
+                ComposerDraftSlot(
+                    id: "music-vocals-choice",
+                    title: "Should it have vocals?",
+                    subtitle: nil,
+                    systemImage: "music.note",
+                    tone: .needed,
+                    actions: [
+                        ComposerDraftSlotActionItem(action: .chooseInstrumental, title: "Instrumental", systemImage: "music.note"),
+                        ComposerDraftSlotActionItem(action: .chooseVocals, title: "With vocals", systemImage: "waveform")
+                    ]
+                )
+            ]
+        case .needsLyrics:
+            return [
+                ComposerDraftSlot(
+                    id: "music-lyrics-needed",
+                    title: "Vocals need lyrics",
+                    subtitle: nil,
+                    systemImage: "text.quote",
+                    tone: .needed,
+                    actions: [
+                        ComposerDraftSlotActionItem(action: .showLyricsEditor, title: "Paste/type", systemImage: "text.quote"),
+                        ComposerDraftSlotActionItem(action: .chooseInstrumental, title: "Instrumental", systemImage: "music.note")
+                    ]
+                )
+            ]
+        case .reviewLyrics:
+            let lyricsAreEmpty = musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            guard !lyricsAreEmpty, !hasApprovedMusicLyrics else { return [] }
+            return [
+                ComposerDraftSlot(
+                    id: "music-lyrics-review",
+                    title: "Review lyrics, then use them.",
+                    subtitle: nil,
+                    systemImage: "checkmark.circle",
+                    tone: .needed,
+                    actions: [
+                        ComposerDraftSlotActionItem(action: .regenerateLyrics, title: "Regenerate", systemImage: "arrow.clockwise")
+                    ]
+                )
+            ]
+        case nil:
+            return []
+        }
     }
 
     var localEngineStatus: LocalEngineStatus {
@@ -690,6 +1094,10 @@ class ChatViewModel: ObservableObject {
         let trimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedInput.isEmpty || !selectedImagePaths.isEmpty else { return }
 
+        if selectedTool == .music, !prepareMusicGenerationIfNeeded(prompt: trimmedInput) {
+            return
+        }
+
         if selectedChatId == nil || !chats.contains(where: { $0.id == selectedChatId }) {
             createNewChat()
         }
@@ -733,6 +1141,41 @@ class ChatViewModel: ObservableObject {
         inputText = ""
         selectedImagePaths = []
 
+        startGeneration(for: messageText, images: images)
+    }
+
+    func performComposerPrimaryAction() {
+        let draft = composerDraft
+        guard draft.isPrimaryEnabled else { return }
+
+        switch draft.primaryAction {
+        case .chooseMusicVocals:
+            musicComposerPrompt = .chooseVocals
+        case .generateMusicLyrics:
+            draftMusicLyrics()
+        case .useMusicLyrics:
+            approveMusicLyrics()
+        case .createSong, .send:
+            sendMessage()
+        }
+    }
+
+    func performComposerSlotAction(_ action: ComposerDraftSlotAction) {
+        switch action {
+        case .attachReference:
+            break
+        case .chooseInstrumental:
+            selectMusicVocalMode(.instrumental)
+        case .chooseVocals:
+            selectMusicVocalMode(.vocals)
+        case .showLyricsEditor:
+            showMusicLyricsEditor()
+        case .regenerateLyrics:
+            rewriteMusicLyrics()
+        }
+    }
+
+    private func startGeneration(for messageText: String, images: [URL]) {
         // Start generation
         print("[ChatVM] Starting generation task for: \(messageText.prefix(50))...")
         generationTask = Task {
@@ -740,10 +1183,311 @@ class ChatViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    private func prepareMusicGenerationIfNeeded(prompt: String) -> Bool {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else { return true }
+        activeMusicGenerationDraft = nil
+
+        switch resolvedMusicVocalMode(for: trimmedPrompt) {
+        case .instrumental:
+            musicComposerPrompt = nil
+            isMusicLyricsEditorVisible = false
+            musicLyricsApproved = false
+            activeMusicGenerationDraft = MusicGenerationDraft(vocalMode: .instrumental, lyrics: "[Instrumental]")
+            return true
+
+        case .vocals:
+            if hasApprovedMusicLyrics || promptContainsLyrics(trimmedPrompt) {
+                musicLyricsApproved = true
+                musicComposerPrompt = nil
+                activeMusicGenerationDraft = currentMusicGenerationDraft(for: trimmedPrompt)
+                return true
+            }
+
+            isMusicLyricsEditorVisible = !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            musicComposerPrompt = musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .needsLyrics
+                : .reviewLyrics
+            return false
+
+        case .auto:
+            musicComposerPrompt = .chooseVocals
+            return false
+        }
+    }
+
+    func selectMusicVocalMode(_ mode: MusicVocalMode) {
+        musicVocalMode = mode
+        switch mode {
+        case .auto:
+            refreshMusicDraftGuidance()
+        case .instrumental:
+            musicLyricsApproved = false
+            isMusicLyricsEditorVisible = false
+            musicComposerPrompt = nil
+        case .vocals:
+            isMusicLyricsEditorVisible = !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            musicComposerPrompt = musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .needsLyrics
+                : .reviewLyrics
+        }
+    }
+
+    func showMusicLyricsEditor() {
+        musicVocalMode = .vocals
+        isMusicLyricsEditorVisible = true
+        musicComposerPrompt = musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .needsLyrics
+            : .reviewLyrics
+    }
+
+    func approveMusicLyrics() {
+        guard !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            musicComposerPrompt = .needsLyrics
+            return
+        }
+        musicVocalMode = .vocals
+        musicLyricsApproved = true
+        musicComposerPrompt = nil
+        isMusicLyricsEditorVisible = false
+    }
+
+    func rewriteMusicLyrics() {
+        musicLyricsApproved = false
+        draftMusicLyrics()
+    }
+
+    func draftMusicLyrics() {
+        let brief = musicPromptForCurrentDraft()
+        guard selectedTool == .music,
+              !brief.isEmpty,
+              !isInputDisabled,
+              !isDraftingMusicLyrics else {
+            return
+        }
+
+        musicVocalMode = .vocals
+        isMusicLyricsEditorVisible = true
+        musicLyricsApproved = false
+        musicComposerPrompt = .reviewLyrics
+
+        lyricsDraftTask?.cancel()
+        lyricsDraftTask = Task { [weak self] in
+            guard let self else { return }
+            await self.generateMusicLyricsDraft(for: brief)
+        }
+    }
+
+    private func musicPromptForCurrentDraft() -> String {
+        inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func refreshMusicDraftGuidance() {
+        guard selectedTool == .music else { return }
+        let prompt = musicPromptForCurrentDraft()
+        guard !prompt.isEmpty else {
+            musicComposerPrompt = nil
+            return
+        }
+
+        switch resolvedMusicVocalMode(for: prompt) {
+        case .instrumental:
+            musicComposerPrompt = nil
+            isMusicLyricsEditorVisible = false
+        case .vocals:
+            let hasLyrics = !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if hasApprovedMusicLyrics || promptContainsLyrics(prompt) {
+                musicComposerPrompt = nil
+            } else {
+                musicComposerPrompt = hasLyrics ? .reviewLyrics : .needsLyrics
+            }
+        case .auto:
+            musicComposerPrompt = nil
+        }
+    }
+
+    func cancelMusicLyricsDraft() {
+        lyricsDraftTask?.cancel()
+        lyricsDraftTask = nil
+        isDraftingMusicLyrics = false
+        loadingMessage = ""
+    }
+
+    private func currentMusicGenerationDraft(for prompt: String) -> MusicGenerationDraft {
+        let mode = resolvedMusicVocalMode(for: prompt)
+        switch mode {
+        case .instrumental:
+            return MusicGenerationDraft(vocalMode: .instrumental, lyrics: "[Instrumental]")
+        case .vocals:
+            let approvedLyrics = musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return MusicGenerationDraft(
+                vocalMode: .vocals,
+                lyrics: approvedLyrics.isEmpty ? nil : approvedLyrics
+            )
+        case .auto:
+            return MusicGenerationDraft(vocalMode: .auto, lyrics: nil)
+        }
+    }
+
+    private func resolvedMusicVocalMode(for prompt: String) -> MusicVocalMode {
+        if let activeMusicGenerationDraft {
+            return activeMusicGenerationDraft.vocalMode
+        }
+
+        if musicVocalMode != .auto {
+            return musicVocalMode
+        }
+
+        if promptSoundsInstrumental(prompt) {
+            return .instrumental
+        }
+        if promptSoundsVocal(prompt) || promptContainsLyrics(prompt) {
+            return .vocals
+        }
+        return .auto
+    }
+
+    private func promptSoundsInstrumental(_ prompt: String) -> Bool {
+        let normalized = prompt.lowercased()
+        return [
+            "instrumental",
+            "no vocals",
+            "without vocals",
+            "beat",
+            "backing track",
+            "background music"
+        ].contains { normalized.contains($0) }
+    }
+
+    private func promptSoundsVocal(_ prompt: String) -> Bool {
+        let normalized = prompt.lowercased()
+        return [
+            "lyrics",
+            "vocal",
+            "vocals",
+            "sing",
+            "sung",
+            "song"
+        ].contains { normalized.contains($0) }
+    }
+
+    private func promptContainsLyrics(_ prompt: String) -> Bool {
+        let normalized = prompt.lowercased()
+        return ["[verse]", "[chorus]", "[bridge]", "lyrics:"].contains { normalized.contains($0) }
+    }
+
+    private func generateMusicLyricsDraft(for brief: String) async {
+        isDraftingMusicLyrics = true
+        loadingMessage = "Generating lyrics..."
+
+        defer {
+            isDraftingMusicLyrics = false
+            lyricsDraftTask = nil
+            if !isGenerating && !isModelLoading && !isPythonLoading {
+                loadingMessage = ""
+            }
+        }
+
+        do {
+            let chatProfile = profile(for: .chat)
+            let chatModel = chatProfile.aiModel ?? selectedModel
+            guard await requireDownloadedModel(model: chatProfile.downloadableModel, operation: "Lyrics writing") else {
+                musicComposerPrompt = .needsLyrics
+                return
+            }
+
+            setActiveEngineModel(name: chatProfile.name, role: .chat)
+
+            if runtimeManager.state != .ready {
+                isPythonLoading = true
+                loadingMessage = "Initializing Python runtime..."
+                try await runtimeManager.initialize()
+                try await vlmExecutor.initialize()
+                isPythonLoading = false
+            }
+
+            if !vlmExecutor.isReady {
+                try await vlmExecutor.initialize()
+            }
+
+            loadingMessage = "Generating lyrics..."
+            let chatExecutionParameters = modelParameterStore.executionParameters(for: chatProfile)
+            let enableThinking = (chatExecutionParameters["enable_thinking"] as? Bool) ?? false
+            let chatTemplateKwargs: [String: Any]? = chatProfile.modelId.lowercased().contains("qwen")
+                ? ["enable_thinking": enableThinking]
+                : nil
+            let request = ExecutionRequest(
+                backend: .vlm,
+                modelId: chatProfile.modelId,
+                messages: [
+                    ExecutionMessage(
+                        role: .system,
+                        content: "Write song lyrics only. Use short section labels like [verse] and [chorus]. Do not include explanation, markdown fences, or production notes."
+                    ),
+                    ExecutionMessage(
+                        role: .user,
+                        content: "Song idea: \(brief)\n\nWrite concise, singable lyrics for this song."
+                    )
+                ],
+                maxTokens: min((chatExecutionParameters["max_tokens"] as? Int) ?? chatModel.defaultMaxTokens, 900),
+                temperature: max((chatExecutionParameters["temperature"] as? Double) ?? 0.8, 0.7),
+                topP: chatExecutionParameters["top_p"] as? Double ?? chatModel.topP,
+                topK: chatExecutionParameters["top_k"] as? Int ?? chatModel.topK,
+                minP: chatExecutionParameters["min_p"] as? Double ?? chatModel.minP,
+                repetitionPenalty: chatExecutionParameters["repetition_penalty"] as? Double ?? chatModel.repetitionPenalty,
+                chatTemplateKwargs: chatTemplateKwargs,
+                tools: nil
+            )
+
+            let stream = try await vlmExecutor.execute(request: request)
+            var draft = ""
+            for await event in stream {
+                if Task.isCancelled { return }
+
+                switch event {
+                case .token(let token):
+                    draft += token
+                case .complete(let response, _):
+                    draft = response
+                case .progress(let message):
+                    loadingMessage = message
+                case .error(let error):
+                    throw error
+                case .started, .image, .audio, .toolCalls:
+                    break
+                }
+            }
+
+            let cleanedDraft = cleanLyricsDraft(draft)
+            if !cleanedDraft.isEmpty {
+                musicLyricsText = cleanedDraft
+                musicLyricsApproved = false
+                musicComposerPrompt = .reviewLyrics
+                isMusicLyricsEditorVisible = true
+            } else {
+                musicComposerPrompt = .needsLyrics
+            }
+        } catch {
+            if Task.isCancelled { return }
+            musicComposerPrompt = .needsLyrics
+            localEngineErrorMessage = "Could not generate lyrics. Paste lyrics or try again."
+        }
+    }
+
+    private func cleanLyricsDraft(_ draft: String) -> String {
+        draft
+            .replacingOccurrences(of: "```lyrics", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func cancelGeneration() {
         print("[ChatVM] cancelGeneration called")
         generationTask?.cancel()
         generationTask = nil
+        cancelMusicLyricsDraft()
+        activeMusicGenerationDraft = nil
         
         if let messageId = streamingMessageId {
             markMessageStopped(messageId)
@@ -1021,7 +1765,7 @@ class ChatViewModel: ObservableObject {
         case .music:
             return "Music generation"
         case .research:
-            return "Deep Research"
+            return "Research"
         }
     }
 
@@ -1132,8 +1876,11 @@ class ChatViewModel: ObservableObject {
                 var systemContent = isDeepResearch ? deepResearchSystemPrompt : systemPrompt
 
                 if isMusicGeneration {
-                    musicIntentState = MusicIntentState.forPrompt(prompt)
+                    musicIntentState = musicIntentStateForCurrentComposer(prompt: prompt)
                     systemContent += "\n\n\(musicIntentState.systemInstruction)"
+                    if let composerInstruction = musicComposerInstruction(prompt: prompt) {
+                        systemContent += "\n\n\(composerInstruction)"
+                    }
                 }
 
                 messages.append(ExecutionMessage(role: .system, content: systemContent))
@@ -1287,6 +2034,64 @@ class ChatViewModel: ObservableObject {
         return parameters
     }
 
+    private func musicIntentStateForCurrentComposer(prompt: String, parameters: [String: Any]? = nil) -> MusicIntentState {
+        let mode = activeMusicGenerationDraft?.vocalMode ?? resolvedMusicVocalMode(for: prompt)
+        switch mode {
+        case .instrumental:
+            return .readyToGenerate
+        case .vocals:
+            let approvedLyrics = activeMusicGenerationDraft?.lyrics
+                ?? musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !approvedLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || promptContainsLyrics(prompt) {
+                return .readyToGenerate
+            }
+            return .needsLyrics
+        case .auto:
+            if let parameters {
+                return MusicIntentState.forToolCall(prompt: prompt, parameters: parameters)
+            }
+            return MusicIntentState.forPrompt(prompt)
+        }
+    }
+
+    private func musicComposerInstruction(prompt: String) -> String? {
+        let mode = activeMusicGenerationDraft?.vocalMode ?? resolvedMusicVocalMode(for: prompt)
+        switch mode {
+        case .instrumental:
+            return "The user selected instrumental music. If calling generate_music, set instrumental to true and lyrics to \"[Instrumental]\"."
+        case .vocals:
+            let approvedLyrics = activeMusicGenerationDraft?.lyrics
+                ?? musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !approvedLyrics.isEmpty else {
+                return "The user selected vocals, but lyrics are not approved yet. Ask for lyrics before calling generate_music."
+            }
+            return """
+            The user selected vocals and approved these lyrics. If calling generate_music, set instrumental to false and use these lyrics exactly:
+            \(approvedLyrics)
+            """
+        case .auto:
+            return nil
+        }
+    }
+
+    private func applyMusicComposerOverrides(to parameters: inout [String: Any], prompt: String) {
+        let mode = activeMusicGenerationDraft?.vocalMode ?? resolvedMusicVocalMode(for: prompt)
+        switch mode {
+        case .instrumental:
+            parameters["instrumental"] = true
+            parameters["lyrics"] = "[Instrumental]"
+        case .vocals:
+            let approvedLyrics = activeMusicGenerationDraft?.lyrics
+                ?? musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !approvedLyrics.isEmpty {
+                parameters["instrumental"] = false
+                parameters["lyrics"] = approvedLyrics
+            }
+        case .auto:
+            break
+        }
+    }
+
     private func executeWebSearchToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
         var searchQuery = prompt
         if let decoded = decodeToolArguments(toolCall),
@@ -1412,9 +2217,10 @@ class ChatViewModel: ObservableObject {
                 parameters["vocal_language"] = vocalLanguage
             }
         }
+        applyMusicComposerOverrides(to: &parameters, prompt: prompt)
 
         let musicPrompt = (parameters["caption"] as? String) ?? prompt
-        musicIntentState = MusicIntentState.forToolCall(prompt: prompt, parameters: parameters)
+        musicIntentState = musicIntentStateForCurrentComposer(prompt: prompt, parameters: parameters)
         if let blockedToolMessage = musicIntentState.blockedToolMessage {
             messages.append(ExecutionMessage(
                 role: .tool,
@@ -1651,6 +2457,9 @@ class ChatViewModel: ObservableObject {
                     usage: usage,
                     clearToolCall: isImageGeneration || isSpeechGeneration
                 )
+                if isMusicGeneration {
+                    activeMusicGenerationDraft = nil
+                }
                 isGenerating = false
                 streamingMessageId = nil
                 generationTask = nil
@@ -1682,6 +2491,9 @@ class ChatViewModel: ObservableObject {
                     }
                     isGenerating = false
                     isModelLoading = false
+                    if isMusicGeneration {
+                        activeMusicGenerationDraft = nil
+                    }
                     streamingMessageId = nil
                     generationTask = nil
                     loadingMessage = ""
@@ -1691,6 +2503,9 @@ class ChatViewModel: ObservableObject {
                 return
 
             case .error(let error):
+                if isMusicGeneration {
+                    activeMusicGenerationDraft = nil
+                }
                 handleGenerationError(error, replacingMessageId: messageId)
                 isGenerating = false
                 streamingMessageId = nil
@@ -1702,6 +2517,9 @@ class ChatViewModel: ObservableObject {
         }
 
         if Task.isCancelled {
+            if isMusicGeneration {
+                activeMusicGenerationDraft = nil
+            }
             isGenerating = false
             streamingMessageId = nil
             generationTask = nil
@@ -2066,6 +2884,11 @@ class ChatViewModel: ObservableObject {
         selectedTool = tool
         if tool == .music {
             musicIntentState = .needsInstrumentalOrVocals
+            musicVocalMode = .auto
+            refreshMusicDraftGuidance()
+        } else {
+            activeMusicGenerationDraft = nil
+            musicComposerPrompt = nil
         }
         isToolMenuOpen = false
         refreshLocalEngineDownloadStatus()

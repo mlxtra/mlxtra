@@ -12,8 +12,7 @@ struct ComposerView: View {
     }
 
     private var canSend: Bool {
-        !viewModel.isInputDisabled
-            && (!viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.hasSelectedImages)
+        viewModel.composerDraft.isPrimaryEnabled
     }
 
     private let acceptedDropTypes = [
@@ -29,6 +28,7 @@ struct ComposerView: View {
         VStack(spacing: 0) {
             attachmentTray
             textInput
+            modeDraftControls
             Divider().padding(.horizontal, 18)
             footerControls
         }
@@ -68,12 +68,12 @@ struct ComposerView: View {
                 isEditable: !viewModel.isInputDisabled,
                 onPasteImages: handlePasteboardImages,
                 onSubmit: {
-                    viewModel.sendMessage()
+                    viewModel.performComposerPrimaryAction()
                 }
             )
 
             if viewModel.inputText.isEmpty {
-                Text(viewModel.hasSelectedImages ? "Add a note..." : "Ask anything...")
+                Text(viewModel.composerPlaceholder)
                     .font(.system(size: 16))
                     .foregroundStyle(.tertiary)
                     .padding(.top, 6)
@@ -143,8 +143,11 @@ struct ComposerView: View {
                 ModelSelectorInline(viewModel: viewModel)
                 SendActionButton(
                     isEnabled: canSend,
+                    title: viewModel.composerPrimaryActionTitle,
+                    systemImage: viewModel.composerPrimaryActionSystemImage,
+                    help: viewModel.composerPrimaryActionHelp,
                     action: {
-                        viewModel.sendMessage()
+                        viewModel.performComposerPrimaryAction()
                     }
                 )
             }
@@ -153,6 +156,21 @@ struct ComposerView: View {
         .padding(.vertical, 8)
         .onAppear {
             viewModel.refreshLocalEngineDownloadStatus()
+        }
+    }
+
+    @ViewBuilder
+    private var modeDraftControls: some View {
+        let draft = viewModel.composerDraft
+        if draft.showsMusicControls || !draft.slots.isEmpty {
+            ModeDraftControls(
+                draft: draft,
+                viewModel: viewModel,
+                onAttachReference: showFilePicker
+            )
+                .padding(.horizontal, 18)
+                .padding(.top, 4)
+                .padding(.bottom, 10)
         }
     }
 
@@ -254,38 +272,236 @@ struct ComposerView: View {
     }
 }
 
+private struct ModeDraftControls: View {
+    let draft: ComposerDraft
+    @ObservedObject var viewModel: ChatViewModel
+    let onAttachReference: () -> Void
+
+    private var promptIsEmpty: Bool {
+        !viewModel.hasMusicDraftPrompt
+    }
+
+    private var lyricsAreEmpty: Bool {
+        viewModel.musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if draft.showsMusicControls {
+                musicSetupRow
+            }
+
+            ForEach(draft.slots) { slot in
+                ComposerDraftSlotRow(slot: slot) { action in
+                    perform(slotAction: action)
+                }
+            }
+
+            if viewModel.isMusicLyricsEditorVisible {
+                lyricsEditor
+            }
+        }
+    }
+
+    private var musicSetupRow: some View {
+        HStack(spacing: 10) {
+            Text("Vocals")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Picker("", selection: vocalModeBinding) {
+                ForEach(MusicVocalMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 300)
+
+            if viewModel.musicVocalMode != .instrumental {
+                Button {
+                    viewModel.showMusicLyricsEditor()
+                } label: {
+                    Label(
+                        lyricsAreEmpty ? "Paste/type lyrics" : "Edit lyrics",
+                        systemImage: "text.quote"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var vocalModeBinding: Binding<MusicVocalMode> {
+        Binding(
+            get: { viewModel.musicVocalMode },
+            set: { viewModel.selectMusicVocalMode($0) }
+        )
+    }
+
+    private func perform(slotAction: ComposerDraftSlotAction) {
+        if slotAction == .attachReference {
+            onAttachReference()
+        } else {
+            viewModel.performComposerSlotAction(slotAction)
+        }
+    }
+
+    private var lyricsEditor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $viewModel.musicLyricsText)
+                    .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(minHeight: 112, maxHeight: 150)
+
+                if viewModel.musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("Paste or type lyrics here.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 16)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(Color(NSColor.textBackgroundColor).opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(NSColor.separatorColor).opacity(0.55), lineWidth: 1)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    viewModel.rewriteMusicLyrics()
+                } label: {
+                    Label("Regenerate lyrics", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(promptIsEmpty || viewModel.isDraftingMusicLyrics)
+
+                Spacer()
+            }
+        }
+    }
+}
+
+private struct ComposerDraftSlotRow: View {
+    let slot: ComposerDraftSlot
+    let perform: (ComposerDraftSlotAction) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: slot.systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 22, height: 22)
+                .background(iconColor.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(slot.title)
+                    .font(.system(size: 12, weight: .semibold))
+
+                if let subtitle = slot.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            ForEach(slot.actions) { item in
+                Button {
+                    perform(item.action)
+                } label: {
+                    Label(item.title, systemImage: item.systemImage)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(backgroundColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(borderColor, lineWidth: 1)
+        }
+    }
+
+    private var iconColor: Color {
+        slot.tone == .needed ? Color.accentColor : Color.secondary
+    }
+
+    private var backgroundColor: Color {
+        switch slot.tone {
+        case .needed:
+            return Color.accentColor.opacity(0.07)
+        case .neutral:
+            return Color(NSColor.controlColor).opacity(0.48)
+        }
+    }
+
+    private var borderColor: Color {
+        switch slot.tone {
+        case .needed:
+            return Color.accentColor.opacity(0.14)
+        case .neutral:
+            return Color.primary.opacity(0.07)
+        }
+    }
+}
+
 private struct SendActionButton: View {
     let isEnabled: Bool
+    var title: String? = nil
+    var systemImage: String = "arrow.up"
+    var help: String = "Send message"
     let action: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            ZStack {
+            HStack(spacing: title == nil ? 0 : 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .bold))
+                if let title {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: title == nil ? 36 : nil, height: 34)
+            .padding(.horizontal, title == nil ? 0 : 12)
+            .foregroundStyle(isEnabled ? Color.white : Color.secondary.opacity(0.65))
+            .background {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .fill(background)
                     .overlay {
                         RoundedRectangle(cornerRadius: 11, style: .continuous)
                             .strokeBorder(borderColor, lineWidth: 1)
                     }
-                    .shadow(
-                        color: shadowColor,
-                        radius: isEnabled ? (isHovered ? 10 : 7) : 0,
-                        x: 0,
-                        y: isHovered ? 4 : 2
-                    )
-
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(isEnabled ? Color.white : Color.secondary.opacity(0.65))
             }
-            .frame(width: 36, height: 34)
+            .shadow(
+                color: shadowColor,
+                radius: isEnabled ? (isHovered ? 10 : 7) : 0,
+                x: 0,
+                y: isHovered ? 4 : 2
+            )
+            .fixedSize(horizontal: title != nil, vertical: false)
             .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
-        .help(isEnabled ? "Send message" : "Type a message to send")
-        .accessibilityLabel("Send message")
+        .help(isEnabled ? help : "Type a message to send")
+        .accessibilityLabel(help)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.14)) {
                 isHovered = hovering
@@ -528,7 +744,7 @@ struct AnimatedComposerBorder: View {
 
 struct ToolSelectorInline: View {
     @ObservedObject var viewModel: ChatViewModel
-    @StateObject private var downloadManager = ModelDownloadManager()
+    @StateObject private var downloadManager = ModelDownloadManager.shared
     @State private var isShowingPopover = false
 
     private var isActive: Bool {
@@ -692,7 +908,7 @@ struct ToolRow: View {
 
 struct ModelSelectorInline: View {
     @ObservedObject var viewModel: ChatViewModel
-    @StateObject private var downloadManager = ModelDownloadManager()
+    @StateObject private var downloadManager = ModelDownloadManager.shared
 
     var body: some View {
         Menu {

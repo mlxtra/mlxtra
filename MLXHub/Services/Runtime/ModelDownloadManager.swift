@@ -79,6 +79,8 @@ final class DownloadErrorTracker: @unchecked Sendable {
 
 @MainActor
 final class ModelDownloadManager: ObservableObject {
+    static let shared = ModelDownloadManager()
+
     struct DownloadProgress: Equatable {
         let status: String
         let description: String?
@@ -90,12 +92,12 @@ final class ModelDownloadManager: ObservableObject {
 
         var fractionCompleted: Double? {
             guard let percent else { return nil }
-            return max(0.0, min(percent / 100.0, 1.0))
+            return Self.clampedPercent(percent) / 100.0
         }
 
         var displayText: String {
             if let percent {
-                return "\(Int(percent.rounded()))%"
+                return "\(Int(Self.clampedPercent(percent).rounded()))%"
             }
             return status
         }
@@ -141,6 +143,10 @@ final class ModelDownloadManager: ObservableObject {
                 return total == 1 ? "item" : "items"
             }
             return unit
+        }
+
+        private static func clampedPercent(_ percent: Double) -> Double {
+            max(0.0, min(percent, 100.0))
         }
     }
 
@@ -563,7 +569,7 @@ final class ModelDownloadManager: ObservableObject {
                 progressKind: progressKind,
                 downloadedBytes: Self.int64Value(event["downloaded"]),
                 totalBytes: Self.int64Value(event["total"]),
-                percent: progressKind == "bytes" ? nil : Self.doubleValue(event["percent"])
+                percent: Self.reliableDownloadPercent(from: event, progressKind: progressKind)
             )
             lastProgress[modelId] = progress
             states[modelId] = .downloading(progress)
@@ -591,7 +597,15 @@ final class ModelDownloadManager: ObservableObject {
         }
     }
 
-    private static func int64Value(_ value: Any?) -> Int64? {
+    nonisolated static func reliableDownloadPercent(from event: [String: Any], progressKind: String?) -> Double? {
+        guard let percent = doubleValue(event["percent"]) else { return nil }
+
+        let isReliable = boolValue(event["percent_reliable"]) == true
+            || (progressKind == "bytes" && event["progress_scope"] as? String == "aggregate")
+        return isReliable ? percent : nil
+    }
+
+    private nonisolated static func int64Value(_ value: Any?) -> Int64? {
         if let value = value as? Int64 {
             return value
         }
@@ -604,7 +618,7 @@ final class ModelDownloadManager: ObservableObject {
         return nil
     }
 
-    private static func doubleValue(_ value: Any?) -> Double? {
+    private nonisolated static func doubleValue(_ value: Any?) -> Double? {
         if let value = value as? Double {
             return value
         }
@@ -613,6 +627,26 @@ final class ModelDownloadManager: ObservableObject {
         }
         if let value = value as? NSNumber {
             return value.doubleValue
+        }
+        return nil
+    }
+
+    private nonisolated static func boolValue(_ value: Any?) -> Bool? {
+        if let value = value as? Bool {
+            return value
+        }
+        if let value = value as? NSNumber {
+            return value.boolValue
+        }
+        if let value = value as? String {
+            switch value.lowercased() {
+            case "true", "1", "yes":
+                return true
+            case "false", "0", "no":
+                return false
+            default:
+                return nil
+            }
         }
         return nil
     }

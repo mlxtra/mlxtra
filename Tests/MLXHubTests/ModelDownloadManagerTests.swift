@@ -72,6 +72,55 @@ final class ModelDownloadManagerTests: XCTestCase {
         XCTAssertNotNil(progress.detailText)
     }
 
+    func testDownloadProgressClampsDisplayedPercent() {
+        let progress = ModelDownloadManager.DownloadProgress(
+            status: "downloading",
+            description: nil,
+            unit: "B",
+            progressKind: "bytes",
+            downloadedBytes: nil,
+            totalBytes: nil,
+            percent: 142.0
+        )
+
+        XCTAssertEqual(progress.displayText, "100%")
+        XCTAssertEqual(progress.fractionCompleted, 1.0)
+    }
+
+    func testDownloadManagerIgnoresUntrustedProgressPercent() {
+        let event: [String: Any] = [
+            "percent": 100.0,
+            "percent_reliable": false
+        ]
+
+        XCTAssertNil(ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "files"))
+        XCTAssertNil(ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "bytes"))
+    }
+
+    func testDownloadManagerAcceptsReliableAggregateBytePercent() {
+        let event: [String: Any] = [
+            "percent": 42.5,
+            "progress_scope": "aggregate"
+        ]
+
+        XCTAssertEqual(
+            ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "bytes"),
+            42.5
+        )
+    }
+
+    func testDownloadManagerAcceptsExplicitReliablePercent() {
+        let event: [String: Any] = [
+            "percent": 12,
+            "percent_reliable": true
+        ]
+
+        XCTAssertEqual(
+            ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "activity"),
+            12.0
+        )
+    }
+
     func testDownloadErrorTrackerCanClearStaleErrorForRetry() {
         let tracker = DownloadErrorTracker()
         let modelId = "org/model"
