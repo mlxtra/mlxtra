@@ -121,6 +121,62 @@ final class ModelDownloadManagerTests: XCTestCase {
         )
     }
 
+    func testDownloadManagerClampsReliablePercent() {
+        XCTAssertEqual(
+            ModelDownloadManager.reliableDownloadPercent(
+                from: ["percent": 142.0, "percent_reliable": true],
+                progressKind: "activity"
+            ),
+            100.0
+        )
+        XCTAssertEqual(
+            ModelDownloadManager.reliableDownloadPercent(
+                from: ["percent": -12.0, "percent_reliable": true],
+                progressKind: "activity"
+            ),
+            0.0
+        )
+    }
+
+    @MainActor
+    func testDownloadProgressDoesNotMoveBackward() {
+        let manager = ModelDownloadManager()
+        let modelId = "test-model"
+
+        manager.handleDownloadEventLine(
+            #"{"type":"download.progress","status":"Downloading","progress_kind":"activity","percent":60,"percent_reliable":true}"#,
+            modelId: modelId
+        )
+        manager.handleDownloadEventLine(
+            #"{"type":"download.progress","status":"Downloading","progress_kind":"activity","percent":20,"percent_reliable":true}"#,
+            modelId: modelId
+        )
+
+        XCTAssertEqual(manager.states[modelId]?.progress?.percent, 60.0)
+        XCTAssertEqual(manager.states[modelId]?.progress?.displayText, "60%")
+    }
+
+    @MainActor
+    func testDownloadCancelClearsPausedOrPartialProgress() {
+        let manager = ModelDownloadManager()
+        let model = DownloadableModel(
+            id: "test-download",
+            name: "Test Download",
+            subtitle: "Test model",
+            modelId: "test/download",
+            modality: .vision,
+            downloadSizeGB: 1.0
+        )
+
+        manager.handleDownloadEventLine(
+            #"{"type":"download.progress","status":"Downloading","progress_kind":"activity","percent":40,"percent_reliable":true}"#,
+            modelId: model.id
+        )
+        manager.cancel(model)
+
+        XCTAssertEqual(manager.state(for: model), .notDownloaded)
+    }
+
     func testDownloadErrorTrackerCanClearStaleErrorForRetry() {
         let tracker = DownloadErrorTracker()
         let modelId = "org/model"

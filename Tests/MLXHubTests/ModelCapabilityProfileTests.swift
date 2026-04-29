@@ -72,6 +72,52 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(store.storedValues()[qwen.modelId]?["future_parameter"], "keep")
     }
 
+    func testResetOnlyClearsCurrentModelParameters() {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelParameterStore(userDefaults: defaults)
+        let qwen = ModelCapabilityProfile.embeddedProfile(modelId: AIModel.qwen35.modelId)!
+        let gemma = ModelCapabilityProfile.embeddedProfile(modelId: AIModel.gemma4.modelId)!
+
+        store.setValue("0.2", for: "temperature", modelId: qwen.modelId)
+        store.setValue("0.4", for: "temperature", modelId: gemma.modelId)
+        store.reset(profile: qwen)
+
+        XCTAssertEqual(store.values(for: qwen)["temperature"], qwen.parameterDefinition(key: "temperature")?.defaultValue)
+        XCTAssertEqual(store.values(for: gemma)["temperature"], "0.4")
+    }
+
+    func testExecutionParametersAreScopedToProfile() {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelParameterStore(userDefaults: defaults)
+        let image = ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B")!
+        let speech = ModelCapabilityProfile.embeddedProfile(modelId: "kugelaudio/kugelaudio-0-open")!
+        let music = ModelCapabilityProfile.embeddedProfile(modelId: "ACE-Step/acestep-v15-turbo-continuous")!
+
+        store.setValue("1536", for: "width", modelId: image.modelId)
+        store.setValue("4.5", for: "cfg_scale", modelId: speech.modelId)
+        store.setValue("45", for: "duration", modelId: music.modelId)
+
+        let imageParameters = store.executionParameters(for: image)
+        let speechParameters = store.executionParameters(for: speech)
+        let musicParameters = store.executionParameters(for: music)
+
+        XCTAssertEqual(imageParameters["width"] as? Int, 1536)
+        XCTAssertNil(imageParameters["cfg_scale"])
+        XCTAssertNil(imageParameters["duration"])
+
+        XCTAssertEqual(speechParameters["cfg_scale"] as? Double, 4.5)
+        XCTAssertNil(speechParameters["width"])
+        XCTAssertNil(speechParameters["duration"])
+
+        XCTAssertEqual(musicParameters["duration"] as? Int, 45)
+        XCTAssertNil(musicParameters["width"])
+        XCTAssertNil(musicParameters["cfg_scale"])
+    }
+
     private var defaultsSuiteName: String {
         "MLXHubTests.ModelCapabilityProfileTests"
     }

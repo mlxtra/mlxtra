@@ -31,6 +31,12 @@
 		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
 		8A010001000000000000001B /* LocalEngineStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101B /* LocalEngineStatus.swift */; };
 		8A010001000000000000001C /* PromptConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101C /* PromptConfiguration.swift */; };
+		8A010001000000000000001D /* ChatComposerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101D /* ChatComposerModels.swift */; };
+		8A010001000000000000001E /* ChatServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101E /* ChatServices.swift */; };
+		8A010001000000000000001F /* ChatViewModel+Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101F /* ChatViewModel+Composer.swift */; };
+		8A0100010000000000000020 /* ChatViewModel+Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001020 /* ChatViewModel+Models.swift */; };
+		8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001021 /* ChatViewModel+Messages.swift */; };
+		8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001022 /* ChatViewModel+Tooling.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +67,12 @@
 		8A010001000000000000101A /* bridge_utils.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = bridge_utils.py; sourceTree = "<group>"; };
 		8A010001000000000000101B /* LocalEngineStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalEngineStatus.swift; sourceTree = "<group>"; };
 		8A010001000000000000101C /* PromptConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptConfiguration.swift; sourceTree = "<group>"; };
+		8A010001000000000000101D /* ChatComposerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposerModels.swift; sourceTree = "<group>"; };
+		8A010001000000000000101E /* ChatServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatServices.swift; sourceTree = "<group>"; };
+		8A010001000000000000101F /* ChatViewModel+Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Composer.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001020 /* ChatViewModel+Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Models.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001021 /* ChatViewModel+Messages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Messages.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001022 /* ChatViewModel+Tooling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Tooling.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -115,6 +127,12 @@
 			isa = PBXGroup;
 			children = (
 				8A0100010000000000001009 /* ChatViewModel.swift */,
+				8A010001000000000000101F /* ChatViewModel+Composer.swift */,
+				8A0100010000000000001020 /* ChatViewModel+Models.swift */,
+				8A0100010000000000001021 /* ChatViewModel+Messages.swift */,
+				8A0100010000000000001022 /* ChatViewModel+Tooling.swift */,
+				8A010001000000000000101D /* ChatComposerModels.swift */,
+				8A010001000000000000101E /* ChatServices.swift */,
 				8A010001000000000000101B /* LocalEngineStatus.swift */,
 			);
 			path = ViewModels;
@@ -313,6 +331,12 @@
 				8A0100010000000000000019 /* ComposerView.swift in Sources */,
 				8A0100010000000000000008 /* MessageBubbleView.swift in Sources */,
 				8A0100010000000000000009 /* ChatViewModel.swift in Sources */,
+				8A010001000000000000001F /* ChatViewModel+Composer.swift in Sources */,
+				8A0100010000000000000020 /* ChatViewModel+Models.swift in Sources */,
+				8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */,
+				8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */,
+				8A010001000000000000001D /* ChatComposerModels.swift in Sources */,
+				8A010001000000000000001E /* ChatServices.swift in Sources */,
 				8A010001000000000000001B /* LocalEngineStatus.swift in Sources */,
 				8A0100010000000000000013 /* SettingsView.swift in Sources */,
 				8A010001000000000000000A /* Chat.swift in Sources */,

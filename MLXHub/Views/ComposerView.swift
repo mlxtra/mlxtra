@@ -15,6 +15,18 @@ struct ComposerView: View {
         viewModel.composerDraft.isPrimaryEnabled
     }
 
+    private var attachmentHelp: String {
+        viewModel.selectedTool == .image ? "Add reference image" : "Attach image"
+    }
+
+    private var filePickerMessage: String {
+        viewModel.selectedTool == .image ? "Select a reference image" : "Select images to attach"
+    }
+
+    private var filePickerPrompt: String {
+        viewModel.selectedTool == .image ? "Add Reference" : "Attach"
+    }
+
     private let acceptedDropTypes = [
         UTType.fileURL.identifier,
         UTType.image.identifier,
@@ -108,7 +120,7 @@ struct ComposerView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Attach file")
+            .help(attachmentHelp)
 
             ToolSelectorInline(viewModel: viewModel)
 
@@ -146,6 +158,7 @@ struct ComposerView: View {
                     title: viewModel.composerPrimaryActionTitle,
                     systemImage: viewModel.composerPrimaryActionSystemImage,
                     help: viewModel.composerPrimaryActionHelp,
+                    disabledHelp: viewModel.composerPrimaryActionDisabledHelp,
                     action: {
                         viewModel.performComposerPrimaryAction()
                     }
@@ -193,8 +206,8 @@ struct ComposerView: View {
         openPanel.canChooseDirectories = false
         openPanel.allowsMultipleSelection = true
         openPanel.allowedContentTypes = [.image, .png, .jpeg, .tiff, .gif, .bmp]
-        openPanel.message = "Select images to attach"
-        openPanel.prompt = "Attach"
+        openPanel.message = filePickerMessage
+        openPanel.prompt = filePickerPrompt
 
         if openPanel.runModal() == .OK {
             appendImageAttachments(openPanel.urls)
@@ -285,6 +298,17 @@ private struct ModeDraftControls: View {
         viewModel.musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var shouldShowLyricsEditor: Bool {
+        draft.showsMusicControls
+            && viewModel.musicVocalMode != .instrumental
+            && (
+                !promptIsEmpty
+                    || !lyricsAreEmpty
+                    || viewModel.isMusicLyricsEditorVisible
+                    || viewModel.musicComposerPrompt == .needsLyrics
+            )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if draft.showsMusicControls {
@@ -297,7 +321,7 @@ private struct ModeDraftControls: View {
                 }
             }
 
-            if viewModel.isMusicLyricsEditorVisible {
+            if shouldShowLyricsEditor {
                 lyricsEditor
             }
         }
@@ -317,20 +341,18 @@ private struct ModeDraftControls: View {
             .pickerStyle(.segmented)
             .frame(width: 300)
 
-            if viewModel.musicVocalMode != .instrumental {
+            Spacer(minLength: 0)
+
+            if shouldShowLyricsEditor {
                 Button {
-                    viewModel.showMusicLyricsEditor()
+                    viewModel.rewriteMusicLyrics()
                 } label: {
-                    Label(
-                        lyricsAreEmpty ? "Paste/type lyrics" : "Edit lyrics",
-                        systemImage: "text.quote"
-                    )
+                    Label(lyricsButtonTitle, systemImage: "pencil.and.sparkles")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .disabled(promptIsEmpty || viewModel.isDraftingMusicLyrics)
             }
-
-            Spacer(minLength: 0)
         }
     }
 
@@ -356,10 +378,10 @@ private struct ModeDraftControls: View {
                     .font(.system(size: 13))
                     .scrollContentBackground(.hidden)
                     .padding(8)
-                    .frame(minHeight: 112, maxHeight: 150)
+                    .frame(minHeight: 78, maxHeight: 110)
 
                 if viewModel.musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Paste or type lyrics here.")
+                    Text("Paste lyrics here.")
                         .font(.system(size: 13))
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 13)
@@ -373,20 +395,14 @@ private struct ModeDraftControls: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color(NSColor.separatorColor).opacity(0.55), lineWidth: 1)
             }
-
-            HStack(spacing: 8) {
-                Button {
-                    viewModel.rewriteMusicLyrics()
-                } label: {
-                    Label("Regenerate lyrics", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(promptIsEmpty || viewModel.isDraftingMusicLyrics)
-
-                Spacer()
-            }
         }
+    }
+
+    private var lyricsButtonTitle: String {
+        if viewModel.isDraftingMusicLyrics {
+            return "Generating..."
+        }
+        return lyricsAreEmpty ? "Generate from idea" : "Regenerate"
     }
 }
 
@@ -464,6 +480,7 @@ private struct SendActionButton: View {
     var title: String? = nil
     var systemImage: String = "arrow.up"
     var help: String = "Send message"
+    var disabledHelp: String = "Type a message to send"
     let action: () -> Void
     @State private var isHovered = false
 
@@ -500,7 +517,7 @@ private struct SendActionButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
-        .help(isEnabled ? help : "Type a message to send")
+        .help(isEnabled ? help : disabledHelp)
         .accessibilityLabel(help)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.14)) {

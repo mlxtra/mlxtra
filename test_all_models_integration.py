@@ -11,22 +11,44 @@ Tests the full end-to-end pipeline using the Python bridge subprocess.
 
 import json
 import os
+import struct
 import subprocess
 import sys
 import time
+import wave
 from pathlib import Path
 from typing import Optional
 
 # Setup paths
-APP_BUNDLE = Path(
+DEFAULT_APP_BUNDLE = Path(
     "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXHub-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXHub.app"
 )
+
+
+def resolve_app_bundle() -> Path:
+    override = os.environ.get("MLXHUB_APP_BUNDLE")
+    if override:
+        return Path(override)
+
+    derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
+    candidates = list(derived_data.glob("MLXHub-*/Build/Products/Debug/MLXHub.app"))
+    if candidates:
+        return max(candidates, key=lambda path: path.stat().st_mtime)
+
+    return DEFAULT_APP_BUNDLE
+
+
+APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
 RUNTIME = RESOURCES / "runtime/macos-arm64"
 VENV_PYTHON = RUNTIME / "venv/bin/python"
 ACESTEP_PYTHON = RUNTIME / "acestep-venv/bin/python"
 BRIDGE_SCRIPT = RESOURCES / "python_bridge.py"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
+APP_SUPPORT = Path.home() / "Library/Application Support/MLXHub"
+GENERATED_IMAGES_DIR = APP_SUPPORT / "GeneratedImages"
+GENERATED_SPEECH_DIR = APP_SUPPORT / "GeneratedSpeech"
+GENERATED_MUSIC_DIR = APP_SUPPORT / "GeneratedMusic"
 
 
 class MLXHubIntegrationTest:
@@ -60,11 +82,17 @@ class MLXHubIntegrationTest:
         # Set critical env vars
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONHOME"] = str(
+            APP_BUNDLE
+            / "Contents/Resources/runtime/macos-arm64/python/Frameworks/Versions/3.12"
+        )
         env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
         env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
         env["ACESTEP_CHECKPOINTS_DIR"] = str(
             Path.home() / "Library/Application Support/MLXHub/checkpoints"
         )
+        env["MTL_DEBUG_LAYER"] = "0"
+        env["MTL_SHADER_VALIDATION"] = "0"
 
         return env
 
@@ -94,8 +122,8 @@ class MLXHubIntegrationTest:
                 timeout=timeout,
             )
 
-            # Parse stdout
             messages = []
+            non_json_stdout = []
             for line in proc.stdout.splitlines():
                 line = line.strip()
                 if not line:
@@ -104,10 +132,20 @@ class MLXHubIntegrationTest:
                     msg = json.loads(line)
                     messages.append(msg)
                 except json.JSONDecodeError:
-                    pass
+                    non_json_stdout.append(line)
 
-            success = proc.returncode == 0 and not any(
-                m.get("type") == "error" for m in messages
+            for line in non_json_stdout[:5]:
+                self.log(f"  [non-json stdout] {line[:150]}", "ERROR")
+
+            if proc.returncode != 0:
+                self.log(f"Process exited with code {proc.returncode}", "ERROR")
+                for line in proc.stderr.splitlines()[-20:]:
+                    self.log(f"  [stderr] {line[:150]}", "ERROR")
+
+            success = (
+                proc.returncode == 0
+                and not non_json_stdout
+                and not any(m.get("type") == "error" for m in messages)
             )
 
             return messages, success
@@ -206,6 +244,119 @@ class MLXHubIntegrationTest:
             self.log(f"Exception in session: {e}", "ERROR")
             return [], False
 
+    def route_errors(self, messages: list[dict]) -> list[dict]:
+        return [m for m in messages if m.get("type") == "error"]
+
+    def require_no_error(self, messages: list[dict]) -> bool:
+        errors = self.route_errors(messages)
+        if errors:
+            self.log(f"✗ FAILED: {errors[0].get('message')}", "ERROR")
+            return False
+        return True
+
+    def require_completion(self, messages: list[dict], request_id: str) -> bool:
+        completions = [
+            m
+            for m in messages
+            if m.get("type") == "chat.completion.complete"
+            and m.get("request_id") == request_id
+        ]
+        if not completions:
+            self.log("✗ FAILED: No chat.completion.complete message received", "ERROR")
+            return False
+        return True
+
+    def require_message(
+        self, messages: list[dict], message_type: str, request_id: str
+    ) -> Optional[dict]:
+        matches = [
+            m
+            for m in messages
+            if m.get("type") == message_type and m.get("request_id") == request_id
+        ]
+        if not matches:
+            self.log(f"✗ FAILED: No {message_type} message received", "ERROR")
+            return None
+        return matches[0]
+
+    def validate_png(self, path: str, expected_width: int, expected_height: int) -> bool:
+        image_path = Path(path)
+        if not image_path.exists():
+            self.log(f"✗ FAILED: Image file does not exist: {image_path}", "ERROR")
+            return False
+
+        if image_path.stat().st_size <= 0:
+            self.log(f"✗ FAILED: Image file is empty: {image_path}", "ERROR")
+            return False
+
+        with image_path.open("rb") as file:
+            header = file.read(24)
+
+        if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+            self.log(f"✗ FAILED: Image is not a PNG: {image_path}", "ERROR")
+            return False
+
+        width, height = struct.unpack(">II", header[16:24])
+        if (width, height) != (expected_width, expected_height):
+            self.log(
+                f"✗ FAILED: PNG dimensions are {width}x{height}, expected {expected_width}x{expected_height}",
+                "ERROR",
+            )
+            return False
+
+        file_size = image_path.stat().st_size / 1024
+        self.log(f"✓ PNG validated: {image_path} ({width}x{height}, {file_size:.1f} KB)")
+        return True
+
+    def validate_wav(
+        self, path: str, minimum_duration: float = 0.1, expected_sample_rate: Optional[int] = None
+    ) -> bool:
+        audio_path = Path(path)
+        if not audio_path.exists():
+            self.log(f"✗ FAILED: Audio file does not exist: {audio_path}", "ERROR")
+            return False
+
+        if audio_path.stat().st_size <= 0:
+            self.log(f"✗ FAILED: Audio file is empty: {audio_path}", "ERROR")
+            return False
+
+        try:
+            with wave.open(str(audio_path), "rb") as wav_file:
+                channels = wav_file.getnchannels()
+                sample_rate = wav_file.getframerate()
+                frames = wav_file.getnframes()
+        except wave.Error as e:
+            self.log(f"✗ FAILED: Invalid WAV file: {e}", "ERROR")
+            return False
+
+        if channels <= 0 or frames <= 0 or sample_rate <= 0:
+            self.log(
+                f"✗ FAILED: Invalid WAV metadata channels={channels}, frames={frames}, sample_rate={sample_rate}",
+                "ERROR",
+            )
+            return False
+
+        duration = frames / sample_rate
+        if duration < minimum_duration:
+            self.log(
+                f"✗ FAILED: WAV duration {duration:.2f}s is shorter than {minimum_duration:.2f}s",
+                "ERROR",
+            )
+            return False
+
+        if expected_sample_rate is not None and sample_rate != expected_sample_rate:
+            self.log(
+                f"✗ FAILED: WAV sample rate {sample_rate}, expected {expected_sample_rate}",
+                "ERROR",
+            )
+            return False
+
+        file_size = audio_path.stat().st_size / (1024 * 1024)
+        self.log(
+            f"✓ WAV validated: {audio_path} ({sample_rate} Hz, {duration:.2f}s, {file_size:.2f} MB)"
+        )
+        return True
+
     # ==========================================================================
     # TEST 1: Setup Verification
     # ==========================================================================
@@ -233,6 +384,10 @@ class MLXHubIntegrationTest:
 
         if not all_good:
             return False
+
+        for output_dir in (GENERATED_IMAGES_DIR, GENERATED_SPEECH_DIR, GENERATED_MUSIC_DIR):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self.log(f"  ✓ Output directory: {output_dir}")
 
         # Check model directories
         checkpoints_dir = Path.home() / "Library/Application Support/MLXHub/checkpoints"
@@ -264,9 +419,11 @@ class MLXHubIntegrationTest:
         # Read normalization function from acestep_bridge.py
         try:
             bridge_code = ACESTEP_BRIDGE.read_text()
-            namespace = {}
+            namespace = {"__file__": str(ACESTEP_BRIDGE)}
+            if str(RESOURCES) not in sys.path:
+                sys.path.insert(0, str(RESOURCES))
             exec(bridge_code.split("def generate_music_once")[0], namespace)
-            normalize_fn = namespace.get("_normalize_music_model_id")
+            normalize_fn = namespace.get("normalize_music_model_id")
 
             if not normalize_fn:
                 self.log("Could not extract normalization function", "ERROR")
@@ -430,14 +587,21 @@ class MLXHubIntegrationTest:
         self.log("TEST 4: Image Generation (FLUX)")
         self.log("=" * 70)
 
+        request_id = "integration-image-generate"
         request = {
             "type": "image.generate",
             "model": "black-forest-labs/FLUX.2-klein-4B",
-            "prompt": "A simple red circle on white background",
-            "width": 512,
-            "height": 512,
-            "steps": 4,
-            "seed": 42,
+            "request_id": request_id,
+            "messages": [
+                {"role": "user", "content": "A simple red circle on white background"}
+            ],
+            "output_dir": str(GENERATED_IMAGES_DIR),
+            "parameters": {
+                "width": 512,
+                "height": 512,
+                "steps": 4,
+                "seed": 42,
+            },
         }
 
         self.log(f"Request: {json.dumps(request, indent=2)}")
@@ -445,26 +609,48 @@ class MLXHubIntegrationTest:
 
         messages, success = self.send_request_to_bridge(request, timeout=120)
 
-        if not success:
-            errors = [m for m in messages if m.get("type") == "error"]
-            if errors:
-                self.log(f"✗ FAILED: {errors[0].get('message')}", "ERROR")
-            else:
-                self.log("✗ FAILED: Generation failed", "ERROR")
+        if not success or not self.require_no_error(messages):
             return False
 
-        # Check for generated image
-        images = [m for m in messages if m.get("type") == "image.generated"]
-        if images:
-            path = images[0].get("path")
-            self.generated_files.append(path)
-            file_size = Path(path).stat().st_size / 1024 if Path(path).exists() else 0
-            self.log(f"✓ SUCCESS: Image generated at {path}")
-            self.log(f"  Size: {file_size:.1f} KB")
-            return True
+        image_message = self.require_message(messages, "image.generated", request_id)
+        if not image_message or not self.require_completion(messages, request_id):
+            return False
 
-        self.log("✗ FAILED: No image.generated message received", "ERROR")
-        return False
+        path = image_message.get("path")
+        if not path:
+            self.log("✗ FAILED: image.generated did not include a path", "ERROR")
+            return False
+
+        self.generated_files.append(path)
+        return self.validate_png(path, expected_width=512, expected_height=512)
+
+    def test_image_missing_prompt_returns_error(self) -> bool:
+        """Invalid image generation request returns JSON error without loading a model."""
+        self.log("\n" + "=" * 70)
+        self.log("TEST 5: Image Missing Prompt Error")
+        self.log("=" * 70)
+
+        request_id = "integration-image-missing-prompt"
+        request = {
+            "type": "image.generate",
+            "model": "black-forest-labs/FLUX.2-klein-4B",
+            "request_id": request_id,
+            "messages": [{"role": "user", "content": ""}],
+            "output_dir": str(GENERATED_IMAGES_DIR),
+        }
+
+        messages, _ = self.send_request_to_bridge(request, timeout=30)
+        errors = [
+            m
+            for m in messages
+            if m.get("type") == "error" and m.get("request_id") == request_id
+        ]
+        if not errors:
+            self.log("✗ FAILED: Missing image prompt did not return an error", "ERROR")
+            return False
+
+        self.log(f"✓ Error returned: {errors[0].get('message')}")
+        return "No prompt provided" in errors[0].get("message", "")
 
     # ==========================================================================
     # TEST 5: Audio/Speech (TTS)
@@ -472,16 +658,21 @@ class MLXHubIntegrationTest:
     def test_audio_speech(self) -> bool:
         """Test text-to-speech with KugelAudio."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 5: Audio/Speech (TTS)")
+        self.log("TEST 6: Audio/Speech (TTS)")
         self.log("=" * 70)
 
+        request_id = "integration-audio-speech"
         request = {
             "type": "audio.speech",
             "model": "kugelaudio/kugelaudio-0-open",
-            "input": "Hello world. This is a test.",
-            "voice": "default",
-            "ddpm_steps": 10,
-            "cfg_scale": 3.0,
+            "request_id": request_id,
+            "messages": [{"role": "user", "content": "Hello world. This is a test."}],
+            "output_dir": str(GENERATED_SPEECH_DIR),
+            "parameters": {
+                "voice": "default",
+                "ddpm_steps": 4,
+                "cfg_scale": 3.0,
+            },
         }
 
         self.log(f"Request: {json.dumps(request, indent=2)}")
@@ -489,26 +680,51 @@ class MLXHubIntegrationTest:
 
         messages, success = self.send_request_to_bridge(request, timeout=90)
 
-        if not success:
-            errors = [m for m in messages if m.get("type") == "error"]
-            if errors:
-                self.log(f"✗ FAILED: {errors[0].get('message')}", "ERROR")
-            else:
-                self.log("✗ FAILED: Generation failed", "ERROR")
+        if not success or not self.require_no_error(messages):
             return False
 
-        # Check for generated audio
-        audio_msgs = [m for m in messages if m.get("type") == "audio.generated"]
-        if audio_msgs:
-            path = audio_msgs[0].get("path")
-            self.generated_files.append(path)
-            sample_rate = audio_msgs[0].get("sample_rate", "unknown")
-            self.log(f"✓ SUCCESS: Audio generated at {path}")
-            self.log(f"  Sample rate: {sample_rate} Hz")
-            return True
+        audio_message = self.require_message(messages, "audio.generated", request_id)
+        if not audio_message or not self.require_completion(messages, request_id):
+            return False
 
-        self.log("✗ FAILED: No audio.generated message received", "ERROR")
-        return False
+        path = audio_message.get("path")
+        if not path:
+            self.log("✗ FAILED: audio.generated did not include a path", "ERROR")
+            return False
+
+        self.generated_files.append(path)
+        expected_sample_rate = audio_message.get("sample_rate")
+        if not isinstance(expected_sample_rate, int):
+            expected_sample_rate = None
+        return self.validate_wav(path, expected_sample_rate=expected_sample_rate)
+
+    def test_audio_missing_text_returns_error(self) -> bool:
+        """Invalid speech request returns JSON error without loading a model."""
+        self.log("\n" + "=" * 70)
+        self.log("TEST 7: Audio Missing Text Error")
+        self.log("=" * 70)
+
+        request_id = "integration-audio-missing-text"
+        request = {
+            "type": "audio.speech",
+            "model": "kugelaudio/kugelaudio-0-open",
+            "request_id": request_id,
+            "messages": [{"role": "user", "content": ""}],
+            "output_dir": str(GENERATED_SPEECH_DIR),
+        }
+
+        messages, _ = self.send_request_to_bridge(request, timeout=30)
+        errors = [
+            m
+            for m in messages
+            if m.get("type") == "error" and m.get("request_id") == request_id
+        ]
+        if not errors:
+            self.log("✗ FAILED: Missing speech text did not return an error", "ERROR")
+            return False
+
+        self.log(f"✓ Error returned: {errors[0].get('message')}")
+        return "No text provided" in errors[0].get("message", "")
 
     # ==========================================================================
     # TEST 6: Music Generation (ACE-Step)
@@ -516,14 +732,20 @@ class MLXHubIntegrationTest:
     def test_music_generation(self) -> bool:
         """Test music generation with ACE-Step."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 6: Music Generation (ACE-Step)")
+        self.log("TEST 8: Music Generation (ACE-Step)")
         self.log("=" * 70)
 
+        request_id = "integration-music-generate"
         request = {
+            "type": "music.generate",
             "model": "ACE-Step/acestep-v15-turbo-continuous",
+            "request_id": request_id,
             "messages": [{"role": "user", "content": "upbeat electronic dance music"}],
+            "output_dir": str(GENERATED_MUSIC_DIR),
             "parameters": {
                 "caption": "upbeat electronic dance music",
+                "lyrics": "[Instrumental]",
+                "instrumental": True,
                 "duration": 10,
                 "inference_steps": 4,
                 "seed": 42,
@@ -531,34 +753,68 @@ class MLXHubIntegrationTest:
         }
 
         self.log(f"Request: {json.dumps(request, indent=2)}")
-        self.log("Generating music via acestep_bridge...")
+        self.log("Generating music via main bridge music.generate route...")
 
-        messages, success = self.send_request_to_bridge(
-            request, timeout=120, use_acestep=True
-        )
+        messages, success = self.send_request_to_bridge(request, timeout=180)
 
-        if not success:
-            errors = [m for m in messages if m.get("type") == "error"]
-            if errors:
-                self.log(f"✗ FAILED: {errors[0].get('message')}", "ERROR")
-            else:
-                self.log("✗ FAILED: Generation failed", "ERROR")
+        if not success or not self.require_no_error(messages):
             return False
 
-        # Check for generated audio
-        audio_msgs = [m for m in messages if m.get("type") == "audio.generated"]
-        if audio_msgs:
-            path = audio_msgs[0].get("path")
-            self.generated_files.append(path)
-            file_size = (
-                Path(path).stat().st_size / (1024 * 1024) if Path(path).exists() else 0
-            )
-            self.log(f"✓ SUCCESS: Music generated at {path}")
-            self.log(f"  File size: {file_size:.2f} MB")
-            return True
+        audio_message = self.require_message(messages, "audio.generated", request_id)
+        if not audio_message or not self.require_completion(messages, request_id):
+            return False
 
-        self.log("✗ FAILED: No audio.generated message received", "ERROR")
-        return False
+        path = audio_message.get("path")
+        if not path:
+            self.log("✗ FAILED: audio.generated did not include a path", "ERROR")
+            return False
+
+        self.generated_files.append(path)
+        expected_sample_rate = audio_message.get("sample_rate")
+        if not isinstance(expected_sample_rate, int):
+            expected_sample_rate = None
+        return self.validate_wav(path, minimum_duration=1.0, expected_sample_rate=expected_sample_rate)
+
+    def test_control_routes(self) -> bool:
+        """Test lightweight bridge control routes."""
+        self.log("\n" + "=" * 70)
+        self.log("TEST 9: Bridge Control Routes")
+        self.log("=" * 70)
+
+        ping_id = "integration-ping"
+        ping_messages, ping_success = self.send_request_to_bridge(
+            {"type": "ping", "request_id": ping_id},
+            timeout=30,
+        )
+        if not ping_success or not self.require_message(ping_messages, "pong", ping_id):
+            return False
+
+        unload_id = "integration-unload"
+        unload_messages, unload_success = self.send_request_to_bridge(
+            {"type": "unload", "request_id": unload_id},
+            timeout=30,
+        )
+        if not unload_success or not self.require_message(
+            unload_messages, "model.unloaded", unload_id
+        ):
+            return False
+
+        unknown_id = "integration-unknown"
+        unknown_messages, _ = self.send_request_to_bridge(
+            {"type": "not.a.real.route", "request_id": unknown_id},
+            timeout=30,
+        )
+        errors = [
+            m
+            for m in unknown_messages
+            if m.get("type") == "error" and m.get("request_id") == unknown_id
+        ]
+        if not errors:
+            self.log("✗ FAILED: Unknown route did not return an error", "ERROR")
+            return False
+
+        self.log("✓ Control routes validated")
+        return True
 
     # ==========================================================================
     # Run All Tests
@@ -578,8 +834,11 @@ class MLXHubIntegrationTest:
             ("Model Normalization", self.test_model_normalization, False),
             ("Chat/Completion (VLM)", self.test_chat_completion, True),
             ("Image Generation (FLUX)", self.test_image_generation, True),
+            ("Image Missing Prompt Error", self.test_image_missing_prompt_returns_error, False),
             ("Audio/Speech (TTS)", self.test_audio_speech, True),
+            ("Audio Missing Text Error", self.test_audio_missing_text_returns_error, False),
             ("Music Generation (ACE-Step)", self.test_music_generation, True),
+            ("Bridge Control Routes", self.test_control_routes, False),
         ]
 
         results = []

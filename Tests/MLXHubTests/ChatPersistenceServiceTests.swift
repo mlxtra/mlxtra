@@ -76,6 +76,56 @@ final class ChatPersistenceServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: persistedURLs[0].deletingLastPathComponent().path))
     }
 
+    func testGeneratedMediaURLsRoundTripEvenWhenFilesAreMissing() throws {
+        let storageDirectory = try makeTemporaryDirectory()
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
+
+        let service = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+        let imageURL = storageDirectory.appendingPathComponent("missing-image.png")
+        let audioURL = storageDirectory.appendingPathComponent("missing-audio.wav")
+        let chat = Chat(
+            title: "Generated media",
+            messages: [
+                Message(
+                    content: "Generated output",
+                    isUser: false,
+                    timestamp: Date(timeIntervalSince1970: 1_234),
+                    imageURLs: [imageURL],
+                    audioURLs: [audioURL]
+                )
+            ],
+            timestamp: Date(timeIntervalSince1970: 5_678),
+            icon: "message"
+        )
+
+        service.saveChats([chat])
+
+        let loadedChats = service.loadChats()
+        XCTAssertEqual(loadedChats.first?.messages.first?.imageURLs, [imageURL])
+        XCTAssertEqual(loadedChats.first?.messages.first?.audioURLs, [audioURL])
+    }
+
+    func testCorruptedConversationHistoryLoadsAsEmpty() throws {
+        let storageDirectory = try makeTemporaryDirectory()
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
+
+        try FileManager.default.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
+        try Data("{ invalid json".utf8)
+            .write(to: storageDirectory.appendingPathComponent("conversations.json"))
+
+        let service = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+
+        XCTAssertEqual(service.loadChats(), [])
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MLXHubTests")

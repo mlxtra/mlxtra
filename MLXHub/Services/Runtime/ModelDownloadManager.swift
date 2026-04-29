@@ -528,7 +528,7 @@ final class ModelDownloadManager: ObservableObject {
         }
     }
 
-    private func handleDownloadEventLines(_ output: String, modelId: String) {
+    func handleDownloadEventLines(_ output: String, modelId: String) {
         for line in output.components(separatedBy: .newlines) {
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedLine.isEmpty else { continue }
@@ -536,7 +536,7 @@ final class ModelDownloadManager: ObservableObject {
         }
     }
 
-    private func handleDownloadEventLine(_ line: String, modelId: String) {
+    func handleDownloadEventLine(_ line: String, modelId: String) {
         guard stopReasons[modelId] == nil else { return }
 
         guard let data = line.data(using: .utf8),
@@ -562,6 +562,10 @@ final class ModelDownloadManager: ObservableObject {
         case "download.progress":
             guard states[modelId]?.isTerminal != true else { return }
             let progressKind = event["progress_kind"] as? String
+            let percent = Self.monotonicPercent(
+                Self.reliableDownloadPercent(from: event, progressKind: progressKind),
+                previous: lastProgress[modelId]?.percent
+            )
             let progress = DownloadProgress(
                 status: event["status"] as? String ?? "Downloading",
                 description: event["description"] as? String,
@@ -569,7 +573,7 @@ final class ModelDownloadManager: ObservableObject {
                 progressKind: progressKind,
                 downloadedBytes: Self.int64Value(event["downloaded"]),
                 totalBytes: Self.int64Value(event["total"]),
-                percent: Self.reliableDownloadPercent(from: event, progressKind: progressKind)
+                percent: percent
             )
             lastProgress[modelId] = progress
             states[modelId] = .downloading(progress)
@@ -602,7 +606,17 @@ final class ModelDownloadManager: ObservableObject {
 
         let isReliable = boolValue(event["percent_reliable"]) == true
             || (progressKind == "bytes" && event["progress_scope"] as? String == "aggregate")
-        return isReliable ? percent : nil
+        return isReliable ? clampedPercent(percent) : nil
+    }
+
+    private nonisolated static func monotonicPercent(_ percent: Double?, previous: Double?) -> Double? {
+        guard let percent else { return nil }
+        guard let previous else { return percent }
+        return max(percent, previous)
+    }
+
+    private nonisolated static func clampedPercent(_ percent: Double) -> Double {
+        max(0.0, min(percent, 100.0))
     }
 
     private nonisolated static func int64Value(_ value: Any?) -> Int64? {

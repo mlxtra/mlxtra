@@ -127,6 +127,68 @@ final class PromptConfigurationTests: XCTestCase {
         XCTAssertNotNil(PromptConfiguration.toolDefinitionsValidationMessage(text))
     }
 
+    func testCustomToolDefinitionsRejectRequiredKeysMissingFromProperties() {
+        let text = """
+        [
+          {
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string" }
+                },
+                "required": ["query", "extra"]
+              }
+            }
+          }
+        ]
+        """
+
+        XCTAssertNotNil(PromptConfiguration.toolDefinitionsValidationMessage(text))
+    }
+
+    func testRestoreToolsDefaultContainsAllBuiltInToolNames() {
+        let text = PromptConfiguration.defaultToolDefinitionsJSON
+        XCTAssertNil(PromptConfiguration.toolDefinitionsValidationMessage(text))
+
+        let tools = PromptConfiguration.toolDefinitions(userDefaults: makeDefaults())
+        let names = tools.compactMap { tool -> String? in
+            (tool["function"] as? [String: Any])?["name"] as? String
+        }
+
+        XCTAssertEqual(Set(names), ["web_search", "generate_image", "create_speech", "generate_music"])
+    }
+
+    func testToolDefinitionFallsBackToBuiltInWhenCustomListOmitsTool() {
+        let defaults = makeDefaults()
+        defaults.set(
+            """
+            [
+              {
+                "type": "function",
+                "function": {
+                  "name": "web_search",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "query": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            ]
+            """,
+            forKey: PromptConfiguration.toolDefinitionsKey
+        )
+
+        let imageTool = PromptConfiguration.toolDefinition(named: "generate_image", userDefaults: defaults)
+        let function = imageTool?["function"] as? [String: Any]
+
+        XCTAssertEqual(function?["name"] as? String, "generate_image")
+    }
+
     func testMusicToolRequiresExplicitInstrumentalFlag() {
         let function = PromptConfiguration.musicGenerationTool["function"] as? [String: Any]
         let parameters = function?["parameters"] as? [String: Any]

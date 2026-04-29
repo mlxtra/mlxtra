@@ -142,6 +142,35 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
     }
 
+    func testSendMessageBuildsSpeechGenerationRequestThroughInjectedExecutor() async {
+        let assetURL = URL(fileURLWithPath: "/tmp/generated.wav")
+        let executor = MockChatModelExecutor(events: [
+            .audio(assetURL),
+            .complete("Generated speech.", usage: TokenUsage(promptTokens: 0, completionTokens: 0))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["kugelaudio/kugelaudio-0-open"])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.tts)
+        viewModel.inputText = "Superman is here"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(executor.receivedRequests[0].backend, .audio)
+        XCTAssertEqual(executor.receivedRequests[0].modelId, "kugelaudio/kugelaudio-0-open")
+        XCTAssertEqual(executor.receivedRequests[0].messages.first?.content, "Superman is here")
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.audioURLs, [assetURL])
+        XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
+    }
+
     func testChatModeSendsPlainVLMRequestWithoutTools() async {
         let executor = MockChatModelExecutor(events: [
             .complete("Plain answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
@@ -358,6 +387,8 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             toolExecutor: MockChatToolExecutionService()
         )
 
+        viewModel.inputText = ""
+        viewModel.inputText = ""
         viewModel.selectTool(.music)
         await waitUntil { viewModel.localEngineStatus.state == .needsDownload }
 
@@ -390,7 +421,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(viewModel.chats.first?.messages.count, 1)
     }
 
-    func testAmbiguousMusicPromptStaysInComposerAndAsksForVocalsBeforeGenerating() async {
+    func testAmbiguousMusicPromptRequestsMusicDownloadWithoutGettingStuckInComposer() async {
         let executor = MockChatModelExecutor()
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
@@ -404,14 +435,16 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.inputText = "Make a moody cyberpunk track"
 
         viewModel.sendMessage()
+        await waitUntil { viewModel.modelDownloadRequest?.modelId == "ACE-Step/acestep-v15-turbo-continuous" }
 
-        XCTAssertEqual(viewModel.musicComposerPrompt, .chooseVocals)
-        XCTAssertEqual(viewModel.inputText, "Make a moody cyberpunk track")
+        XCTAssertNil(viewModel.musicComposerPrompt)
+        XCTAssertEqual(viewModel.inputText, "")
+        XCTAssertEqual(viewModel.modelDownloadRequest?.modelId, "ACE-Step/acestep-v15-turbo-continuous")
         XCTAssertEqual(executor.receivedRequests.count, 0)
-        XCTAssertEqual(viewModel.chats.first?.messages.count, 0)
+        XCTAssertEqual(viewModel.chats.first?.messages.count, 1)
     }
 
-    func testVocalMusicPromptStaysInComposerAndAsksForLyricsBeforeGenerating() async {
+    func testVocalMusicPromptStaysInComposerWithInlineLyricsEditorBeforeGenerating() async {
         let executor = MockChatModelExecutor()
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
@@ -428,9 +461,97 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.sendMessage()
 
         XCTAssertEqual(viewModel.musicComposerPrompt, .needsLyrics)
-        XCTAssertFalse(viewModel.isMusicLyricsEditorVisible)
-        XCTAssertEqual(viewModel.composerPrimaryActionTitle, "Generate lyrics")
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+        XCTAssertEqual(viewModel.composerPrimaryActionTitle, "Create music")
+        XCTAssertFalse(viewModel.isComposerPrimaryActionEnabled)
         XCTAssertEqual(viewModel.inputText, "Make a warm pop song about London")
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+        XCTAssertEqual(viewModel.chats.first?.messages.count, 0)
+    }
+
+    func testSelectingVocalMusicWithoutPromptKeepsComposerCompact() {
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: MockChatModelExecutor(),
+            runtimeManager: MockChatRuntimeManager(downloadedModelIds: []),
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.music)
+
+        viewModel.selectMusicVocalMode(.vocals)
+
+        XCTAssertFalse(viewModel.isMusicLyricsEditorVisible)
+        XCTAssertNil(viewModel.musicComposerPrompt)
+        XCTAssertNil(viewModel.composerPrimaryActionTitle)
+        XCTAssertFalse(viewModel.isComposerPrimaryActionEnabled)
+    }
+
+    func testEditingLyricsAfterApprovalKeepsMusicReadyForCreateAction() {
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: MockChatModelExecutor(),
+            runtimeManager: MockChatRuntimeManager(downloadedModelIds: []),
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.music)
+        viewModel.selectMusicVocalMode(.vocals)
+        viewModel.inputText = "Make a warm pop song about London"
+        viewModel.musicLyricsText = "[verse]\nOriginal line"
+        viewModel.approveMusicLyrics()
+
+        XCTAssertTrue(viewModel.hasApprovedMusicLyrics)
+
+        viewModel.musicLyricsText = "[verse]\nEdited line"
+
+        XCTAssertFalse(viewModel.hasApprovedMusicLyrics)
+        XCTAssertNil(viewModel.musicComposerPrompt)
+        XCTAssertEqual(viewModel.composerPrimaryActionTitle, "Create music")
+        XCTAssertTrue(viewModel.isComposerPrimaryActionEnabled)
+    }
+
+    func testSwitchingMusicVocalModeClearsOppositeRequirements() {
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: MockChatModelExecutor(),
+            runtimeManager: MockChatRuntimeManager(downloadedModelIds: []),
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.music)
+        viewModel.inputText = "Make a warm pop song about London"
+        viewModel.selectMusicVocalMode(.vocals)
+        viewModel.musicLyricsText = "[verse]\nA line"
+        viewModel.approveMusicLyrics()
+
+        viewModel.selectMusicVocalMode(.instrumental)
+
+        XCTAssertFalse(viewModel.hasApprovedMusicLyrics)
+        XCTAssertFalse(viewModel.isMusicLyricsEditorVisible)
+        XCTAssertNil(viewModel.musicComposerPrompt)
+        XCTAssertEqual(viewModel.composerPrimaryActionTitle, "Create music")
+
+        viewModel.selectMusicVocalMode(.vocals)
+
+        XCTAssertNil(viewModel.musicComposerPrompt)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+        XCTAssertEqual(viewModel.composerPrimaryActionTitle, "Create music")
+        XCTAssertTrue(viewModel.isComposerPrimaryActionEnabled)
+    }
+
+    func testEmptyMusicPromptWithLyricsDoesNotSendMessage() {
+        let executor = MockChatModelExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: executor,
+            runtimeManager: MockChatRuntimeManager(downloadedModelIds: []),
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.music)
+        viewModel.selectMusicVocalMode(.vocals)
+        viewModel.musicLyricsText = "[verse]\nA line"
+        viewModel.approveMusicLyrics()
+
+        viewModel.sendMessage()
+
         XCTAssertEqual(executor.receivedRequests.count, 0)
         XCTAssertEqual(viewModel.chats.first?.messages.count, 0)
     }
@@ -446,38 +567,40 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.selectTool(.image)
         XCTAssertEqual(viewModel.composerDraft.placeholder, "Describe the image you want...")
         XCTAssertEqual(viewModel.composerDraft.primaryTitle, "Create image")
+        XCTAssertEqual(viewModel.composerDraft.disabledHelp, "Describe the image you want")
         XCTAssertFalse(viewModel.composerDraft.isPrimaryEnabled)
-        XCTAssertTrue(viewModel.composerDraft.slots.contains { $0.id == "image-reference" })
+        XCTAssertTrue(viewModel.composerDraft.slots.isEmpty)
 
         viewModel.inputText = "A quiet studio desk"
         XCTAssertTrue(viewModel.composerDraft.isPrimaryEnabled)
 
         viewModel.selectTool(.tts)
-        XCTAssertEqual(viewModel.composerDraft.placeholder, "Enter the text to speak...")
+        XCTAssertEqual(viewModel.composerDraft.placeholder, "Type what you want spoken...")
         XCTAssertEqual(viewModel.composerDraft.primaryTitle, "Create speech")
+        XCTAssertEqual(viewModel.composerDraft.disabledHelp, "Type what you want spoken")
 
         viewModel.selectTool(.research)
-        XCTAssertEqual(viewModel.composerDraft.placeholder, "What should I research on the web?")
+        XCTAssertEqual(viewModel.composerDraft.placeholder, "What should I research?")
         XCTAssertEqual(viewModel.composerDraft.primaryTitle, "Research")
-        XCTAssertTrue(viewModel.composerDraft.slots.contains { $0.id == "research-web" })
+        XCTAssertEqual(viewModel.composerDraft.disabledHelp, "Enter what you want researched")
+        XCTAssertTrue(viewModel.composerDraft.slots.isEmpty)
+
+        viewModel.inputText = ""
+        viewModel.selectTool(.music)
+        XCTAssertEqual(viewModel.composerDraft.placeholder, "Describe the music you want...")
+        XCTAssertNil(viewModel.composerDraft.primaryTitle)
+        XCTAssertEqual(viewModel.composerDraft.disabledHelp, "Describe the music you want")
+        XCTAssertTrue(viewModel.composerDraft.slots.isEmpty)
+
+        viewModel.inputText = "A moody cyberpunk track"
+        XCTAssertEqual(viewModel.composerDraft.primaryTitle, "Create music")
+        XCTAssertTrue(viewModel.composerDraft.slots.isEmpty)
     }
 
-    func testMusicInstrumentalChoiceRequiresFinalCreateSongSend() async {
+    func testExplicitMusicModeGeneratesDirectlyWithInstrumentalParameters() async {
         let musicModelId = "ACE-Step/acestep-v15-turbo-continuous"
-        let toolCall = ExecutionToolCall(
-            id: "music-1",
-            function: ExecutionToolCallFunction(
-                name: "generate_music",
-                arguments: """
-                {"caption":"moody cyberpunk track"}
-                """
-            )
-        )
-        let executor = MockChatModelExecutor(events: [
-            .toolCalls([toolCall])
-        ])
+        let executor = MockChatModelExecutor()
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [
-            AIModel.defaultForCurrentHardware.modelId,
             musicModelId
         ])
         let toolExecutor = MockChatToolExecutionService()
@@ -492,13 +615,9 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.inputText = "Make a moody cyberpunk track"
         viewModel.sendMessage()
 
-        viewModel.selectMusicVocalMode(.instrumental)
-        XCTAssertEqual(executor.receivedRequests.count, 0)
-
-        viewModel.sendMessage()
         await waitUntil { toolExecutor.mediaPlans.count == 1 }
 
-        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
         let userMessages = viewModel.chats.first?.messages.filter(\.isUser) ?? []
         XCTAssertEqual(userMessages.count, 1)
         XCTAssertEqual(userMessages.first?.content, "Make a moody cyberpunk track")
@@ -611,6 +730,220 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertFalse(viewModel.chats.first?.messages.contains { $0.content.contains("create_music(") } ?? true)
     }
 
+    func testAutoModeExecutesPlainTextImageFunctionCallAlias() async {
+        resetPromptConfigurationDefaults()
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                #"create_image(prompt="Draw a quiet studio desk")"#,
+                usage: TokenUsage(promptTokens: 1, completionTokens: 2)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+        guard toolExecutor.mediaPlans.count == 1 else {
+            let messageContents = viewModel.chats.first?.messages.map { $0.content } ?? []
+            XCTFail("Expected one media plan, got \(toolExecutor.mediaPlans.count). Messages: \(messageContents)")
+            return
+        }
+
+        let plan = toolExecutor.mediaPlans[0]
+        XCTAssertEqual(plan.functionName, "generate_image")
+        XCTAssertEqual(plan.request.backend, .image)
+        XCTAssertEqual(plan.request.modelId, "black-forest-labs/FLUX.2-klein-4B")
+        XCTAssertEqual(plan.request.messages.first?.content, "Draw a quiet studio desk")
+        XCTAssertFalse(viewModel.chats.first?.messages.contains { $0.content.contains("create_image(") } ?? true)
+    }
+
+    func testAutoModeExecutesPlainTextSpeechFunctionCallAlias() async {
+        resetPromptConfigurationDefaults()
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                #"generate_speech(text="Superman is here")"#,
+                usage: TokenUsage(promptTokens: 1, completionTokens: 2)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Say Superman is here"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+        guard toolExecutor.mediaPlans.count == 1 else {
+            let messageContents = viewModel.chats.first?.messages.map { $0.content } ?? []
+            XCTFail("Expected one media plan, got \(toolExecutor.mediaPlans.count). Messages: \(messageContents)")
+            return
+        }
+
+        let plan = toolExecutor.mediaPlans[0]
+        XCTAssertEqual(plan.functionName, "create_speech")
+        XCTAssertEqual(plan.request.backend, .audio)
+        XCTAssertEqual(plan.request.modelId, "kugelaudio/kugelaudio-0-open")
+        XCTAssertEqual(plan.request.messages.first?.content, "Superman is here")
+        XCTAssertFalse(viewModel.chats.first?.messages.contains { $0.content.contains("generate_speech(") } ?? true)
+    }
+
+    func testAutoModeExecutesStructuredMusicFunctionCallAlias() async {
+        resetPromptConfigurationDefaults()
+        let toolCall = ExecutionToolCall(
+            id: "music-alias",
+            function: ExecutionToolCallFunction(
+                name: "create_music",
+                arguments: #"{"caption":"instrumental synthwave loop","instrumental":true}"#
+            )
+        )
+        let executor = MockChatModelExecutor(events: [
+            .toolCalls([toolCall])
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Make an instrumental synthwave loop"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+        guard toolExecutor.mediaPlans.count == 1 else {
+            let messageContents = viewModel.chats.first?.messages.map { $0.content } ?? []
+            XCTFail("Expected one media plan, got \(toolExecutor.mediaPlans.count). Messages: \(messageContents)")
+            return
+        }
+
+        let plan = toolExecutor.mediaPlans[0]
+        let parameters = plan.request.parameters ?? [:]
+        XCTAssertEqual(plan.functionName, "generate_music")
+        XCTAssertEqual(plan.request.backend, .music)
+        XCTAssertEqual(parameters["caption"] as? String, "instrumental synthwave loop")
+        XCTAssertEqual(parameters["instrumental"] as? Bool, true)
+    }
+
+    func testAutoModeDefaultsAmbiguousMusicToolCallToInstrumental() async {
+        resetPromptConfigurationDefaults()
+        let musicModelId = "ACE-Step/acestep-v15-turbo-continuous"
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                #"generate_music(caption="moody cyberpunk track")"#,
+                usage: TokenUsage(promptTokens: 1, completionTokens: 2)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [
+            AIModel.defaultForCurrentHardware.modelId,
+            musicModelId
+        ])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Make a moody cyberpunk track"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        let parameters = toolExecutor.mediaPlans[0].request.parameters ?? [:]
+        XCTAssertEqual(parameters["caption"] as? String, "moody cyberpunk track")
+        XCTAssertEqual(parameters["instrumental"] as? Bool, true)
+        XCTAssertEqual(parameters["lyrics"] as? String, "[Instrumental]")
+    }
+
+    func testMalformedPlainTextFunctionCallStaysVisibleAndDoesNotExecute() async {
+        resetPromptConfigurationDefaults()
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                #"generate_image(prompt="Draw a quiet studio desk""#,
+                usage: TokenUsage(promptTokens: 1, completionTokens: 2)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertTrue(toolExecutor.mediaPlans.isEmpty)
+        XCTAssertEqual(
+            viewModel.chats.first?.messages.last?.content,
+            #"generate_image(prompt="Draw a quiet studio desk""#
+        )
+    }
+
+    func testMixedStructuredToolCallsExecuteOnlyAvailableTools() async {
+        resetPromptConfigurationDefaults()
+        let allowedToolCall = ExecutionToolCall(
+            id: "image-1",
+            function: ExecutionToolCallFunction(
+                name: "generate_image",
+                arguments: #"{"prompt":"Draw a quiet studio desk"}"#
+            )
+        )
+        let unsupportedToolCall = ExecutionToolCall(
+            id: "delete-1",
+            function: ExecutionToolCallFunction(
+                name: "delete_file",
+                arguments: #"{"path":"/tmp/file"}"#
+            )
+        )
+        let executor = MockChatModelExecutor(events: [
+            .toolCalls([allowedToolCall, unsupportedToolCall])
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        XCTAssertEqual(toolExecutor.mediaPlans.first?.functionName, "generate_image")
+        XCTAssertFalse(viewModel.chats.first?.messages.contains { $0.content.contains("delete_file") } ?? true)
+    }
+
     func testResearchSeedsWebSearchAndLimitsToolsToSearch() async {
         resetPromptConfigurationDefaults()
         let executor = MockChatModelExecutor(events: [
@@ -640,6 +973,48 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             (tool["function"] as? [String: Any])?["name"] as? String
         }
         XCTAssertEqual(toolNames, ["web_search"])
+    }
+
+    func testResearchModeExecutesPlainTextWebSearchFunctionCall() async {
+        resetPromptConfigurationDefaults()
+        let executor = MockChatModelExecutor(eventBatches: [
+            [
+                .complete(
+                    #"web_search(query="Swift concurrency updates")"#,
+                    usage: TokenUsage(promptTokens: 1, completionTokens: 2)
+                )
+            ],
+            [
+                .complete(
+                    "Swift concurrency update summary.",
+                    usage: TokenUsage(promptTokens: 3, completionTokens: 4)
+                )
+            ]
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService(webSearchResult: "Source context")
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.research)
+        viewModel.inputText = "What changed in Swift concurrency recently?"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 2 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertEqual(
+            toolExecutor.webSearchQueries,
+            [
+                "What changed in Swift concurrency recently?",
+                "Swift concurrency updates"
+            ]
+        )
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.content, "Swift concurrency update summary.")
     }
 
     func testResearchModeBlocksPlainTextMediaToolCall() async {
@@ -756,21 +1131,27 @@ private final class MockChatModelExecutor: ChatModelExecuting {
     var currentModelId: String?
     var currentModelBackend: RuntimeBackend?
     weak var delegate: VLMExecutionDelegate?
-    private let events: [ExecutionEvent]
+    private let eventBatches: [[ExecutionEvent]]
     private(set) var receivedRequests: [ExecutionRequest] = []
     private(set) var terminateCount = 0
 
     init(events: [ExecutionEvent] = []) {
-        self.events = events
+        self.eventBatches = [events]
+    }
+
+    init(eventBatches: [[ExecutionEvent]]) {
+        self.eventBatches = eventBatches.isEmpty ? [[]] : eventBatches
     }
 
     func initialize() async throws {}
 
     func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
+        let requestIndex = receivedRequests.count
         receivedRequests.append(request)
         currentModelId = request.modelId
         currentModelBackend = request.backend
         isModelLoaded = true
+        let events = eventBatches[min(requestIndex, eventBatches.count - 1)]
         return AsyncStream { continuation in
             for event in events {
                 continuation.yield(event)

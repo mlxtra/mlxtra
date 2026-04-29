@@ -25,6 +25,8 @@ swift test
 ```
 
 **Python Bridge Tests (18 tests):**
+These bridge tests can exercise runtime imports, local caches, and subprocess behavior. In Codex, run all bridge tests outside the sandbox with escalation; sandboxed runs can report false failures for non-code reasons.
+
 ```bash
 cd Tests/PythonTests
 PYTHONPATH=../../../MLXHub/Resources python3 test_python_bridge.py -v
@@ -32,6 +34,8 @@ PYTHONPATH=../../../MLXHub/Resources python3 test_acestep_bridge.py -v
 ```
 
 **Integration Tests (end-to-end):**
+These tests exercise the bundled app runtime, Metal, local model files, and output directories under `~/Music` / `~/Pictures`. In Codex, run them outside the sandbox with escalation; sandboxed runs can report false MLX/Metal crashes.
+
 ```bash
 # Music generation only (fast - ~15s)
 python3 test_music_integration.py
@@ -53,6 +57,8 @@ ls ~/Library/Application\ Support/MLXHub/checkpoints/
 ```
 
 **2. Run integration test:**
+Run this outside the Codex sandbox with escalation so ACE-Step can access Metal and write generated audio.
+
 ```bash
 python3 test_music_integration.py
 ```
@@ -185,7 +191,15 @@ EOF
 # Swift tests
 swift test --filter TestName
 
+# Python bridge tests for bridge changes
+# In Codex, run these outside the sandbox with escalation.
+cd Tests/PythonTests
+PYTHONPATH=../../../MLXHub/Resources python3 test_python_bridge.py -v
+PYTHONPATH=../../../MLXHub/Resources python3 test_acestep_bridge.py -v
+cd ../..
+
 # Integration test for the feature
+# In Codex, run this outside the sandbox with escalation.
 python3 test_music_integration.py  # or test_all_models_integration.py
 ```
 

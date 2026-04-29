@@ -1,0 +1,298 @@
+import Foundation
+
+@MainActor
+protocol ChatPersistenceServicing: AnyObject {
+    func loadChats() -> [Chat]
+    func saveChats(_ chats: [Chat])
+    func loadSelectedChatId() -> UUID?
+    func saveSelectedChatId(_ selectedChatId: UUID?)
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL]
+    func deleteAttachments(for chatId: UUID)
+}
+
+@MainActor
+protocol ChatModelExecuting: ModelExecutor {
+    var isModelLoaded: Bool { get }
+    var currentModelId: String? { get }
+    var currentModelBackend: RuntimeBackend? { get }
+    var delegate: VLMExecutionDelegate? { get set }
+}
+
+@MainActor
+protocol ChatRuntimeManaging: AnyObject {
+    var state: RuntimeManager.RuntimeState { get }
+    func initialize() async throws
+    func estimatedModelSize(modelId: String) -> Double
+    func isModelDownloadedOffMain(modelId: String) async -> Bool
+}
+
+@MainActor
+protocol ChatWebSearching: AnyObject {
+    func searchContext(for query: String) async throws -> String?
+}
+
+enum ChatGeneratedAssetKind: Equatable {
+    case image
+    case audio
+}
+
+struct ChatMediaToolExecutionPlan {
+    let functionName: String
+    let toolName: String
+    let status: String
+    let icon: String
+    let details: [ToolCallDetail]
+    let model: DownloadableModel
+    let request: ExecutionRequest
+    let loadingStatus: String
+    let operationName: String
+    let unavailablePrefix: String
+    let noOutputMessage: String
+    let completionHint: String
+    let attachmentKind: ChatGeneratedAssetKind
+}
+
+enum ChatToolExecutionUpdate: Equatable {
+    case progress(String)
+    case generatedAsset(URL, kind: ChatGeneratedAssetKind)
+}
+
+enum ChatToolExecutionOutcome: Equatable {
+    case toolMessage(String)
+    case downloadRequired(DownloadableModel)
+}
+
+enum PendingEngineDownloadReason {
+    case generation
+    case preflight
+}
+
+@MainActor
+protocol ChatToolExecutionServicing: AnyObject {
+    func executeWebSearch(query: String) async -> String
+    func executeMediaTool(
+        plan: ChatMediaToolExecutionPlan,
+        onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
+    ) async -> ChatToolExecutionOutcome
+}
+
+@MainActor
+final class LocalChatPersistenceService: ChatPersistenceServicing {
+    private let fileManager: FileManager
+    private let userDefaults: UserDefaults
+    private let selectedChatKey: String
+    private let storageDirectory: URL
+
+    init(
+        fileManager: FileManager = .default,
+        userDefaults: UserDefaults = .standard,
+        storageDirectory: URL? = nil,
+        selectedChatKey: String = "MLXHub.selectedChatId"
+    ) {
+        self.fileManager = fileManager
+        self.userDefaults = userDefaults
+        self.selectedChatKey = selectedChatKey
+        self.storageDirectory = storageDirectory ?? (
+            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? fileManager.homeDirectoryForCurrentUser
+        )
+        .appendingPathComponent("MLXHub", isDirectory: true)
+    }
+
+    private var conversationsURL: URL {
+        storageDirectory.appendingPathComponent("conversations.json")
+    }
+
+    private var attachmentsDirectory: URL {
+        storageDirectory.appendingPathComponent("Attachments", isDirectory: true)
+    }
+
+    func loadChats() -> [Chat] {
+        guard fileManager.fileExists(atPath: conversationsURL.path) else {
+            return []
+        }
+
+        do {
+            let data = try Data(contentsOf: conversationsURL)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode([Chat].self, from: data)
+        } catch {
+            print("Failed to load conversation history: \(error)")
+            return []
+        }
+    }
+
+    func saveChats(_ chats: [Chat]) {
+        do {
+            try fileManager.createDirectory(
+                at: storageDirectory,
+                withIntermediateDirectories: true
+            )
+
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+            let data = try encoder.encode(chats)
+            try data.write(to: conversationsURL, options: [.atomic])
+        } catch {
+            print("Failed to save conversation history: \(error)")
+        }
+    }
+
+    func loadSelectedChatId() -> UUID? {
+        guard let storedValue = userDefaults.string(forKey: selectedChatKey) else {
+            return nil
+        }
+
+        return UUID(uuidString: storedValue)
+    }
+
+    func saveSelectedChatId(_ selectedChatId: UUID?) {
+        if let selectedChatId {
+            userDefaults.set(selectedChatId.uuidString, forKey: selectedChatKey)
+        } else {
+            userDefaults.removeObject(forKey: selectedChatKey)
+        }
+    }
+
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL] {
+        guard !urls.isEmpty else { return [] }
+
+        let messageAttachmentsDirectory = attachmentsDirectory
+            .appendingPathComponent(chatId.uuidString, isDirectory: true)
+            .appendingPathComponent(messageId.uuidString, isDirectory: true)
+
+        do {
+            try fileManager.createDirectory(
+                at: messageAttachmentsDirectory,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            print("Failed to create attachment directory: \(error)")
+            return urls
+        }
+
+        return urls.enumerated().map { index, sourceURL in
+            let destinationURL = messageAttachmentsDirectory
+                .appendingPathComponent("\(index)-\(sourceURL.lastPathComponent)")
+
+            do {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                return destinationURL
+            } catch {
+                print("Failed to copy attachment \(sourceURL.path): \(error)")
+                return sourceURL
+            }
+        }
+    }
+
+    func deleteAttachments(for chatId: UUID) {
+        let chatAttachmentsDirectory = attachmentsDirectory
+            .appendingPathComponent(chatId.uuidString, isDirectory: true)
+
+        guard fileManager.fileExists(atPath: chatAttachmentsDirectory.path) else { return }
+
+        do {
+            try fileManager.removeItem(at: chatAttachmentsDirectory)
+        } catch {
+            print("Failed to delete attachments for chat \(chatId): \(error)")
+        }
+    }
+}
+
+@MainActor
+final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
+    private let modelExecutor: ChatModelExecuting
+    private let runtimeManager: ChatRuntimeManaging
+    private let webSearchService: ChatWebSearching
+
+    init(
+        modelExecutor: ChatModelExecuting,
+        runtimeManager: ChatRuntimeManaging,
+        webSearchService: ChatWebSearching
+    ) {
+        self.modelExecutor = modelExecutor
+        self.runtimeManager = runtimeManager
+        self.webSearchService = webSearchService
+    }
+
+    func executeWebSearch(query: String) async -> String {
+        do {
+            guard let context = try await webSearchService.searchContext(for: query) else {
+                return "No results found."
+            }
+
+            return context
+        } catch {
+            return "Web search unavailable: \(error.localizedDescription)"
+        }
+    }
+
+    func executeMediaTool(
+        plan: ChatMediaToolExecutionPlan,
+        onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
+    ) async -> ChatToolExecutionOutcome {
+        guard await runtimeManager.isModelDownloadedOffMain(modelId: plan.model.modelId) else {
+            return .downloadRequired(plan.model)
+        }
+
+        do {
+            let stream = try await modelExecutor.execute(request: plan.request)
+            var generatedAssetURL: URL?
+            var generationSummary = "\(plan.operationName) completed."
+
+            for await event in stream {
+                if Task.isCancelled {
+                    break
+                }
+
+                switch event {
+                case .progress(let message):
+                    onUpdate(.progress(message))
+                case .image(let imageURL) where plan.attachmentKind == .image:
+                    generatedAssetURL = imageURL
+                    onUpdate(.generatedAsset(imageURL, kind: .image))
+                case .audio(let audioURL) where plan.attachmentKind == .audio:
+                    generatedAssetURL = audioURL
+                    onUpdate(.generatedAsset(audioURL, kind: .audio))
+                case .complete(let response, _):
+                    if !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        generationSummary = response
+                    }
+                case .error(let error):
+                    throw error
+                case .started, .token, .toolCalls, .image, .audio:
+                    break
+                }
+            }
+
+            if generatedAssetURL != nil {
+                return .toolMessage("\(generationSummary)\n\(plan.completionHint)")
+            }
+
+            return .toolMessage(plan.noOutputMessage)
+        } catch {
+            return .toolMessage("\(plan.unavailablePrefix): \(error.localizedDescription)")
+        }
+    }
+}
+
+extension VLMExecutor: ChatModelExecuting {}
+
+extension RuntimeManager: ChatRuntimeManaging {
+    func isModelDownloadedOffMain(modelId: String) async -> Bool {
+        let checkpointsPath = checkpointsPath
+        return await Task.detached(priority: .utility) {
+            RuntimeManager.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
+        }.value
+    }
+}
+
+extension MCPWebSearchService: ChatWebSearching {}
+

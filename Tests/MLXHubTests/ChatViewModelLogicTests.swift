@@ -21,17 +21,14 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertEqual(MusicIntentState.forPrompt("Create a moody cyberpunk track"), .needsInstrumentalOrVocals)
     }
 
-    func testMusicToolCallBlockedWhenAmbiguous() {
+    func testMusicToolCallAllowsAmbiguousPromptToUseDefaultMusicPath() {
         let state = MusicIntentState.forToolCall(
             prompt: "Create a moody cyberpunk track",
             parameters: ["caption": "moody cyberpunk track"]
         )
 
-        XCTAssertEqual(state, .needsInstrumentalOrVocals)
-        XCTAssertEqual(
-            state.blockedToolMessage,
-            "Do not call generate_music yet. Ask the user whether they want instrumental music or vocals with lyrics."
-        )
+        XCTAssertEqual(state, .readyToGenerate)
+        XCTAssertNil(state.blockedToolMessage)
     }
 
     func testMusicToolCallBlockedWhenLyricsAreDraftedWithoutApproval() {
