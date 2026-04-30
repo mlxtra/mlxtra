@@ -196,6 +196,24 @@ final class ModelDownloadManagerTests: XCTestCase {
         XCTAssertTrue(ModelDownloadManager.DownloadState.failed("error").isTerminal)
     }
 
+    func testDownloadStateIdentifiesRepairableFailures() {
+        XCTAssertTrue(
+            ModelDownloadManager.DownloadState
+                .failed("Local Hugging Face cache is incomplete.")
+                .isRepairableFailure
+        )
+        XCTAssertTrue(
+            ModelDownloadManager.DownloadState
+                .failed("Download finished, but model files were not found in cache.")
+                .isRepairableFailure
+        )
+        XCTAssertFalse(
+            ModelDownloadManager.DownloadState
+                .failed("Network connection lost.")
+                .isRepairableFailure
+        )
+    }
+
     func testAceStepDownloadHelperUsageErrorUsesTypedEvent() throws {
         let helperPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("MLXHub/Resources/runtime/macos-arm64/acestep_download_helper.py")

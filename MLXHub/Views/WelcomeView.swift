@@ -188,6 +188,7 @@ private struct WelcomePromptChips: View {
                 }
                 .buttonStyle(.plain)
                 .help(item.title)
+                .accessibilityIdentifier("welcome.tool.\(item.tool.id)")
             }
         }
     }

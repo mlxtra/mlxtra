@@ -188,22 +188,51 @@ final class ModelDownloadManager: ObservableObject {
                 return false
             }
         }
+
+        var failureMessage: String? {
+            if case .failed(let message) = self {
+                return message
+            }
+            return nil
+        }
+
+        var isRepairableFailure: Bool {
+            guard let message = failureMessage?.lowercased() else { return false }
+            return message.contains("incomplete")
+                || message.contains("not found in cache")
+                || message.contains("missing files")
+                || message.contains("missing components")
+                || message.contains("redownload")
+        }
     }
 
-@Published private(set) var states: [String: DownloadState] = [:]
+    @Published private(set) var states: [String: DownloadState] = [:]
 
-	private let runtimeManager = RuntimeManager()
-	private var tasks: [String: Task<Void, Never>] = [:]
+    private let runtimeManager = RuntimeManager()
+    private var tasks: [String: Task<Void, Never>] = [:]
     private var processes: [String: Process] = [:]
     private var stopReasons: [String: DownloadStopReason] = [:]
     private var lastProgress: [String: DownloadProgress] = [:]
-	private let errorTracker = DownloadErrorTracker()
+    private let errorTracker = DownloadErrorTracker()
+#if DEBUG
+    private let usesUITestDownloadStates: Bool
+#endif
 
     init() {
+#if DEBUG
+        usesUITestDownloadStates = ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_DOWNLOAD_STATES"] == "1"
+        if usesUITestDownloadStates {
+            installUITestDownloadStates()
+            return
+        }
+#endif
         refreshStatuses()
     }
 
     func refreshStatuses() {
+#if DEBUG
+        guard !usesUITestDownloadStates else { return }
+#endif
         let modelsToCheck = DownloadableModel.embedded.compactMap { model -> (id: String, modelId: String)? in
             guard states[model.id]?.isDownloading != true,
                   states[model.id]?.isPaused != true else {
@@ -216,16 +245,59 @@ final class ModelDownloadManager: ObservableObject {
         Task { [modelsToCheck, checkpointsPath] in
             let results = await Task.detached(priority: .utility) {
                 modelsToCheck.map { model in
-                    (model.id, RuntimeManager.isModelDownloaded(modelId: model.modelId, checkpointsPath: checkpointsPath))
+                    (
+                        model.id,
+                        RuntimeManager.modelStorageStatus(
+                            modelId: model.modelId,
+                            checkpointsPath: checkpointsPath
+                        )
+                    )
                 }
             }.value
 
-            for (modelId, isDownloaded) in results
+            for (modelId, status) in results
                 where states[modelId]?.isDownloading != true && states[modelId]?.isPaused != true {
-                states[modelId] = isDownloaded ? .downloaded : .notDownloaded
+                states[modelId] = Self.downloadState(for: status)
             }
         }
     }
+
+#if DEBUG
+    private func installUITestDownloadStates() {
+        let models = DownloadableModel.embedded
+        let halfProgress = DownloadProgress(
+            status: "Downloading",
+            description: "UI test fixture",
+            unit: "B",
+            progressKind: "bytes",
+            downloadedBytes: 512,
+            totalBytes: 1024,
+            percent: 50
+        )
+        let pausedProgress = DownloadProgress(
+            status: "Paused",
+            description: "UI test fixture",
+            unit: "B",
+            progressKind: "bytes",
+            downloadedBytes: 256,
+            totalBytes: 1024,
+            percent: 25
+        )
+
+        let fixtures: [DownloadState] = [
+            .downloaded,
+            .notDownloaded,
+            .downloading(halfProgress),
+            .paused(pausedProgress),
+            .failed("Incomplete cache: missing files. Redownload to repair."),
+            .failed("Network unavailable.")
+        ]
+
+        for (model, state) in zip(models, fixtures) {
+            states[model.id] = state
+        }
+    }
+#endif
 
     func state(for model: DownloadableModel) -> DownloadState {
         states[model.id] ?? .notDownloaded
@@ -236,6 +308,9 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     func download(_ model: DownloadableModel) {
+#if DEBUG
+        guard !usesUITestDownloadStates else { return }
+#endif
         guard tasks[model.id] == nil else { return }
 
         errorTracker.clearErrorReceived(for: model.id)
@@ -251,9 +326,9 @@ final class ModelDownloadManager: ObservableObject {
                 } else {
                     try await runSnapshotDownload(modelId: model.modelId)
                 }
-                let isDownloaded = await isModelDownloadedOffMain(modelId: model.modelId)
-                states[model.id] = isDownloaded ? .downloaded : .failed("Download finished, but model files were not found in cache.")
-                if isDownloaded {
+                let storageStatus = await modelStorageStatusOffMain(modelId: model.modelId)
+                states[model.id] = Self.downloadStateAfterDownload(for: storageStatus)
+                if storageStatus.isDownloaded {
                     lastProgress[model.id] = nil
                 }
             } catch {
@@ -277,14 +352,23 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     func pause(_ model: DownloadableModel) {
+#if DEBUG
+        guard !usesUITestDownloadStates else { return }
+#endif
         stop(model, reason: .pause)
     }
 
     func resume(_ model: DownloadableModel) {
+#if DEBUG
+        guard !usesUITestDownloadStates else { return }
+#endif
         download(model)
     }
 
     func cancel(_ model: DownloadableModel) {
+#if DEBUG
+        guard !usesUITestDownloadStates else { return }
+#endif
         stop(model, reason: .cancel)
     }
 
@@ -316,10 +400,37 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     private func isModelDownloadedOffMain(modelId: String) async -> Bool {
+        let status = await modelStorageStatusOffMain(modelId: modelId)
+        return status.isDownloaded
+    }
+
+    private func modelStorageStatusOffMain(modelId: String) async -> RuntimeManager.ModelStorageStatus {
         let checkpointsPath = runtimeManager.checkpointsPath
         return await Task.detached(priority: .utility) {
-            RuntimeManager.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
+            RuntimeManager.modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath)
         }.value
+    }
+
+    private static func downloadState(for storageStatus: RuntimeManager.ModelStorageStatus) -> DownloadState {
+        switch storageStatus {
+        case .downloaded:
+            return .downloaded
+        case .missing:
+            return .notDownloaded
+        case .incomplete(let message):
+            return .failed(message)
+        }
+    }
+
+    private static func downloadStateAfterDownload(for storageStatus: RuntimeManager.ModelStorageStatus) -> DownloadState {
+        switch storageStatus {
+        case .downloaded:
+            return .downloaded
+        case .missing:
+            return .failed("Download finished, but model files were not found in cache.")
+        case .incomplete(let message):
+            return .failed(message)
+        }
     }
 
     private func runAceStepDownload(modelId: String) async throws {
@@ -577,10 +688,24 @@ final class ModelDownloadManager: ObservableObject {
             )
             lastProgress[modelId] = progress
             states[modelId] = .downloading(progress)
+        case "download.verified":
+            guard states[modelId]?.isTerminal != true else { return }
+            let hashCount = Self.int64Value(event["hash_count"]) ?? 0
+            let progress = DownloadProgress(
+                status: "Verifying",
+                description: hashCount > 0 ? "Local files and hashes verified" : "Local files verified",
+                unit: nil,
+                progressKind: nil,
+                downloadedBytes: nil,
+                totalBytes: nil,
+                percent: nil
+            )
+            lastProgress[modelId] = progress
+            states[modelId] = .downloading(progress)
         case "download.complete":
             guard states[modelId]?.isTerminal != true else { return }
             let progress = DownloadProgress(
-                status: "Verifying",
+                status: "Finalizing",
                 description: nil,
                 unit: nil,
                 progressKind: nil,

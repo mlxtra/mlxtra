@@ -252,6 +252,41 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertFalse(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
     }
 
+    func testAceStepStorageStatusDistinguishesMissingIncompleteAndDownloaded() throws {
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: checkpointsPath) }
+        let modelId = "ACE-Step/acestep-v15-turbo-continuous"
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath),
+            .missing
+        )
+
+        let partialComponent = checkpointsPath.appendingPathComponent("acestep-v15-turbo")
+        try FileManager.default.createDirectory(at: partialComponent, withIntermediateDirectories: true)
+        try Data([1]).write(to: partialComponent.appendingPathComponent("model.safetensors"))
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            modelId: modelId,
+            checkpointsPath: checkpointsPath
+        ) else {
+            XCTFail("Expected incomplete ACE-Step checkpoint status")
+            return
+        }
+        XCTAssertTrue(message.contains("ACE-Step checkpoints are incomplete"))
+
+        for component in ["vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"] {
+            let componentPath = checkpointsPath.appendingPathComponent(component)
+            try FileManager.default.createDirectory(at: componentPath, withIntermediateDirectories: true)
+            try Data([1]).write(to: componentPath.appendingPathComponent("model.safetensors"))
+        }
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath),
+            .downloaded
+        )
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MLXHubTests")

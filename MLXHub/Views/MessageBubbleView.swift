@@ -1,10 +1,13 @@
 import SwiftUI
+import AppKit
+import Combine
 import UniformTypeIdentifiers
 @preconcurrency import AVFoundation
 
 struct MessageBubble: View {
     let message: Message
     let isStreaming: Bool
+    let streamingContent: StreamingMessageContent?
     @State private var isHovered = false
     @State private var cursorVisible = true
     @State private var showCopyFeedback = false
@@ -17,11 +20,13 @@ struct MessageBubble: View {
     init(
         message: Message,
         isStreaming: Bool = false,
+        streamingContent: StreamingMessageContent? = nil,
         onOpenModels: (() -> Void)? = nil,
         onRestartLocalEngine: (() -> Void)? = nil
     ) {
         self.message = message
         self.isStreaming = isStreaming
+        self.streamingContent = streamingContent
         self.onOpenModels = onOpenModels
         self.onRestartLocalEngine = onRestartLocalEngine
     }
@@ -73,14 +78,24 @@ struct MessageBubble: View {
                     }
 
                     if !message.content.isEmpty || isStreaming {
-                        AIContentView(
-                            content: message.content,
-                            isStreaming: isStreaming,
-                            cursorVisible: cursorVisible,
-                            onCopy: copyToClipboard,
-                            onOpenModels: onOpenModels,
-                            onRestartLocalEngine: onRestartLocalEngine
-                        )
+                        Group {
+                            if isStreaming, let streamingContent {
+                                StreamingAIContentView(
+                                    streamingContent: streamingContent,
+                                    onOpenModels: onOpenModels,
+                                    onRestartLocalEngine: onRestartLocalEngine
+                                )
+                            } else {
+                                AIContentView(
+                                    content: message.content,
+                                    isStreaming: isStreaming,
+                                    cursorVisible: cursorVisible,
+                                    onCopy: copyToClipboard,
+                                    onOpenModels: onOpenModels,
+                                    onRestartLocalEngine: onRestartLocalEngine
+                                )
+                            }
+                        }
                         .contextMenu {
                             Button("Copy") {
                                 copyToClipboard()
@@ -103,6 +118,11 @@ struct MessageBubble: View {
                     )
                     .opacity(isHovered || showCopyFeedback ? 1 : 0)
                     .animation(.easeInOut(duration: 0.15), value: isHovered || showCopyFeedback)
+                }
+
+                if !message.isUser, !isStreaming, let metrics = message.performanceMetrics {
+                    GenerationMetricsView(metrics: metrics)
+                        .frame(maxWidth: messageMaxWidth, alignment: .leading)
                 }
 
                 if !isStreaming {
@@ -130,12 +150,12 @@ struct MessageBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
         .onAppear {
-            if isStreaming {
+            if isStreaming && message.isUser {
                 startCursorAnimation()
             }
         }
         .onChange(of: isStreaming) { _, streaming in
-            if streaming {
+            if streaming && message.isUser {
                 startCursorAnimation()
             }
         }
@@ -153,7 +173,7 @@ struct MessageBubble: View {
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
 
-        var clipboardText = message.content
+        var clipboardText = streamingContent?.text ?? message.content
         if !message.imageURLs.isEmpty {
             let attachments = message.imageURLs.map { $0.lastPathComponent }.joined(separator: ", ")
             clipboardText += clipboardText.isEmpty ? "Attachments: \(attachments)" : "\n\nAttachments: \(attachments)"
@@ -189,6 +209,42 @@ struct MessageBubble: View {
             }
             cursorVisible = false
         }
+    }
+}
+
+private struct GenerationMetricsView: View {
+    let metrics: GenerationPerformanceMetrics
+
+    private var summary: String {
+        var parts: [String] = []
+        if let ttft = metrics.timeToFirstToken {
+            parts.append("TTFT \(formatSeconds(ttft))")
+        }
+        if let tokensPerSecond = metrics.tokensPerSecond {
+            parts.append("\(formatNumber(tokensPerSecond)) tok/s")
+        }
+        if parts.isEmpty {
+            parts.append("Completed in \(formatSeconds(metrics.totalDuration))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        Label(summary, systemImage: "speedometer")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .labelStyle(.titleAndIcon)
+            .accessibilityIdentifier("message.performanceMetrics")
+    }
+
+    private func formatSeconds(_ seconds: TimeInterval) -> String {
+        seconds < 10
+            ? String(format: "%.2fs", max(seconds, 0))
+            : String(format: "%.1fs", max(seconds, 0))
+    }
+
+    private func formatNumber(_ value: Double) -> String {
+        value < 10 ? String(format: "%.1f", value) : String(format: "%.0f", value)
     }
 }
 
@@ -319,6 +375,10 @@ struct GeneratedAudioAttachmentView: View {
         .shadow(color: Color.black.opacity(0.035), radius: 12, x: 0, y: 5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(audioURL.lastPathComponent)
+        .accessibilityIdentifier(
+            isMusic ? "generated.audio.music" : "generated.audio.speech"
+        )
+        .accessibilityValue(audioURL.path)
         .contextMenu {
             Button(isPlaying ? "Pause Audio" : "Play Audio", action: togglePlayback)
             Button("Reveal in Finder", action: revealAudio)
@@ -726,6 +786,8 @@ struct GeneratedImageAttachmentView: View {
                 .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
         )
         .help(imageURL.lastPathComponent)
+        .accessibilityIdentifier("generated.image")
+        .accessibilityValue(imageURL.path)
         .contextMenu {
             Button("Open Image", action: { showLightbox = true })
             Button("Reveal in Finder", action: revealImage)
@@ -1047,10 +1109,14 @@ struct AIContentView: View {
                 )
             } else {
                 if let mainContent = ReasoningContentFilter.visibleText(from: content), !mainContent.isEmpty {
-                    MarkdownTextView(
-                        text: mainContent + (isStreaming && cursorVisible ? "▊" : ""),
-                        isStreaming: isStreaming
-                    )
+                    if isStreaming || AIContentRenderingPolicy.shouldUseFastPlainText(for: mainContent) {
+                        StreamingPlainTextView(text: mainContent + (isStreaming && cursorVisible ? "▊" : ""))
+                    } else {
+                        MarkdownTextView(
+                            text: mainContent,
+                            isStreaming: false
+                        )
+                    }
                 }
             }
         }
@@ -1060,6 +1126,287 @@ struct AIContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
+}
+
+enum AIContentRenderingPolicy {
+    static func shouldUseFastPlainText(for content: String) -> Bool {
+        true
+    }
+}
+
+private struct StreamingPlainTextView: View {
+    let text: String
+
+    var body: some View {
+        FastStreamingTextView(text: text)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct StreamingAIContentView: View {
+    let streamingContent: StreamingMessageContent
+    let onOpenModels: (() -> Void)?
+    let onRestartLocalEngine: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FastStreamingTextView(streamingContent: streamingContent)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+private struct FastStreamingTextView: NSViewRepresentable {
+    private let text: String?
+    private let streamingContent: StreamingMessageContent?
+
+    init(text: String) {
+        self.text = text
+        self.streamingContent = nil
+    }
+
+    init(streamingContent: StreamingMessageContent) {
+        self.text = nil
+        self.streamingContent = streamingContent
+    }
+
+    func makeNSView(context: Context) -> FastStreamingTextNativeView {
+        FastStreamingTextNativeView()
+    }
+
+    func updateNSView(_ nsView: FastStreamingTextNativeView, context: Context) {
+        if let streamingContent {
+            nsView.bind(to: streamingContent)
+        } else {
+            nsView.updateStaticText(text ?? "")
+        }
+    }
+
+    static func dismantleNSView(_ nsView: FastStreamingTextNativeView, coordinator: ()) {
+        nsView.unbindStreamingContent()
+    }
+}
+
+private final class FastStreamingTextNativeView: NSView {
+    private let textView = NSTextView()
+    private var currentText = ""
+    private var lastMeasuredWidth: CGFloat = 0
+    private var cachedHeight: CGFloat = 18
+    private var appliedRevision: Int?
+    private var streamingCancellable: AnyCancellable?
+    private var boundStreamingContentId: UUID?
+    private var lastHeightMeasurementTime = Date.distantPast
+    private var lastScrollTime = Date.distantPast
+    private var pendingScrollToBottom = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureTextView()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureTextView()
+    }
+
+    override var isFlipped: Bool { true }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: cachedHeight)
+    }
+
+    override func layout() {
+        super.layout()
+        textView.frame = bounds
+        let width = max(bounds.width, 1)
+        if abs(width - lastMeasuredWidth) > 0.5 {
+            lastMeasuredWidth = width
+            configureContainer(width: width)
+            refreshMeasuredHeight(width: width, force: true)
+        }
+    }
+
+    func bind(to streamingContent: StreamingMessageContent) {
+        if boundStreamingContentId != streamingContent.id {
+            unbindStreamingContent()
+            boundStreamingContentId = streamingContent.id
+            currentText = ""
+            appliedRevision = nil
+            textView.textStorage?.setAttributedString(NSAttributedString())
+        }
+
+        apply(streamingContent: streamingContent)
+
+        if streamingCancellable == nil {
+            streamingCancellable = streamingContent.$revision
+                .dropFirst()
+                .sink { [weak self, weak streamingContent] _ in
+                    guard let streamingContent else { return }
+                    self?.apply(streamingContent: streamingContent)
+                }
+        }
+    }
+
+    func unbindStreamingContent() {
+        streamingCancellable?.cancel()
+        streamingCancellable = nil
+        boundStreamingContentId = nil
+    }
+
+    func updateStaticText(_ text: String) {
+        unbindStreamingContent()
+        updateText(text, mutation: .replace(text), revision: nil, autoScroll: false, forceHeight: true)
+    }
+
+    private func apply(streamingContent: StreamingMessageContent) {
+        let text: String
+        let mutation: StreamingMessageContentMutation
+        if streamingContent.containsReasoningMarkup {
+            text = ReasoningContentFilter.visibleText(from: streamingContent.text) ?? ""
+            mutation = .replace(text)
+        } else {
+            text = streamingContent.text
+            mutation = streamingContent.latestMutation
+        }
+
+        updateText(
+            text,
+            mutation: mutation,
+            revision: streamingContent.revision,
+            autoScroll: true,
+            forceHeight: shouldForceHeightRefresh(for: mutation)
+        )
+    }
+
+    private func updateText(
+        _ newText: String,
+        mutation: StreamingMessageContentMutation,
+        revision: Int?,
+        autoScroll: Bool,
+        forceHeight: Bool
+    ) {
+        if let revision {
+            guard appliedRevision != revision else { return }
+            appliedRevision = revision
+        } else {
+            guard newText != currentText else { return }
+        }
+
+        switch mutation {
+        case .append(let delta) where !currentText.isEmpty || newText == delta:
+            textView.textStorage?.append(attributedString(delta))
+        case .replace(let text):
+            textView.textStorage?.setAttributedString(attributedString(text))
+        case .append:
+            if newText.hasPrefix(currentText) {
+                let delta = String(newText.dropFirst(currentText.count))
+                textView.textStorage?.append(attributedString(delta))
+            } else {
+                textView.textStorage?.setAttributedString(attributedString(newText))
+            }
+        }
+
+        currentText = newText
+        configureContainer(width: max(bounds.width, 1))
+        refreshMeasuredHeight(width: max(bounds.width, 1), force: forceHeight)
+        needsLayout = true
+        if autoScroll {
+            scheduleScrollToBottom()
+        }
+    }
+
+    private func configureTextView() {
+        textView.drawsBackground = false
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.font = NSFont.systemFont(ofSize: 14.5)
+        textView.textColor = NSColor.labelColor
+        addSubview(textView)
+    }
+
+    private func configureContainer(width: CGFloat) {
+        textView.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+    }
+
+    private func refreshMeasuredHeight(width: CGFloat, force: Bool) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastHeightMeasurementTime) >= 1.0 / 30.0 else {
+            return
+        }
+        lastHeightMeasurementTime = now
+
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer else {
+            return
+        }
+
+        configureContainer(width: width)
+        layoutManager.ensureLayout(for: textContainer)
+        let height = max(18, ceil(layoutManager.usedRect(for: textContainer).height))
+        guard abs(height - cachedHeight) > 0.5 else { return }
+
+        cachedHeight = height
+        invalidateIntrinsicContentSize()
+    }
+
+    private func shouldForceHeightRefresh(for mutation: StreamingMessageContentMutation) -> Bool {
+        switch mutation {
+        case .append(let delta):
+            return delta.contains("\n") || delta.count > 120
+        case .replace:
+            return true
+        }
+    }
+
+    private func scheduleScrollToBottom() {
+        guard !pendingScrollToBottom else { return }
+        pendingScrollToBottom = true
+
+        let minimumScrollInterval: TimeInterval = 1.0 / 30.0
+        let delay = max(0, minimumScrollInterval - Date().timeIntervalSince(lastScrollTime))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.pendingScrollToBottom = false
+            self.lastScrollTime = Date()
+            self.scrollEnclosingViewToBottom()
+        }
+    }
+
+    private func scrollEnclosingViewToBottom() {
+        guard let scrollView = enclosingScrollView,
+              let documentView = scrollView.documentView else { return }
+
+        let maxY = max(documentView.bounds.height - scrollView.contentView.bounds.height, 0)
+        let targetY = documentView.isFlipped ? maxY : 0
+        scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: targetY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func attributedString(_ string: String) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 5
+        return NSAttributedString(
+            string: string,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 14.5),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraph
+            ]
+        )
+    }
 }
 
 private enum RecoveryAction {
@@ -1195,8 +1542,8 @@ struct MarkdownTextView: View {
     let isStreaming: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(parseBlocks(text).enumerated()), id: \.offset) { _, block in
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(MarkdownParser.parseBlocks(text).enumerated()), id: \.offset) { _, block in
                 blockView(block)
             }
         }
@@ -1207,28 +1554,28 @@ struct MarkdownTextView: View {
     private func blockView(_ block: MarkdownBlock) -> some View {
         switch block {
         case .heading(let level, let content):
-            Text(parseInlineMarkdown(content))
+            inlineText(content)
                 .font(.system(size: headingSize(for: level), weight: .semibold))
-                .lineSpacing(3)
+                .lineSpacing(4)
                 .padding(.top, level <= 2 ? 4 : 2)
 
         case .paragraph(let content):
-            Text(parseInlineMarkdown(content))
-                .font(.system(size: 14))
-                .lineSpacing(4)
+            inlineText(content)
+                .font(.system(size: 14.5))
+                .lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
 
         case .quote(let lines):
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    Text(parseInlineMarkdown(line))
-                        .font(.system(size: 14))
-                        .lineSpacing(4)
+                    inlineText(line)
+                        .font(.system(size: 14.5))
+                        .lineSpacing(5)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.leading, 10)
+            .padding(.leading, 12)
             .overlay(alignment: .leading) {
                 Rectangle()
                     .fill(Color.secondary.opacity(0.35))
@@ -1236,44 +1583,48 @@ struct MarkdownTextView: View {
             }
 
         case .unorderedList(let items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("•")
-                            .font(.system(size: 14, weight: .medium))
-                        Text(parseInlineMarkdown(item))
-                            .font(.system(size: 14))
-                            .lineSpacing(4)
+                            .font(.system(size: 14.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14, alignment: .trailing)
+                        inlineText(item)
+                            .font(.system(size: 14.5))
+                            .lineSpacing(5)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
 
         case .orderedList(let items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(index + 1).")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 14.5, weight: .medium))
                             .foregroundStyle(.secondary)
-                        Text(parseInlineMarkdown(item))
-                            .font(.system(size: 14))
-                            .lineSpacing(4)
+                            .frame(width: 24, alignment: .trailing)
+                        inlineText(item)
+                            .font(.system(size: 14.5))
+                            .lineSpacing(5)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
 
         case .taskList(let items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: item.isComplete ? "checkmark.square.fill" : "square")
                             .font(.system(size: 13))
                             .foregroundStyle(item.isComplete ? Color.accentColor : .secondary)
-                        Text(parseInlineMarkdown(item.text))
-                            .font(.system(size: 14))
-                            .lineSpacing(4)
+                            .frame(width: 18, alignment: .trailing)
+                        inlineText(item.text)
+                            .font(.system(size: 14.5))
+                            .lineSpacing(5)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1292,7 +1643,7 @@ struct MarkdownTextView: View {
                         .font(.system(size: 13, design: .monospaced))
                         .lineSpacing(3)
                         .textSelection(.enabled)
-                        .padding(10)
+                        .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -1304,14 +1655,10 @@ struct MarkdownTextView: View {
             )
 
         case .table(let rows):
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(rows.joined(separator: "\n"))
-                    .font(.system(size: 13, design: .monospaced))
-                    .lineSpacing(3)
-                    .padding(10)
-            }
-            .background(Color(NSColor.textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            MarkdownTableView(rows: rows)
+
+        case .mathBlock(let content):
+            MarkdownMathBlockView(content: content)
 
         case .divider:
             Divider()
@@ -1319,24 +1666,109 @@ struct MarkdownTextView: View {
         }
     }
 
-    private func parseInlineMarkdown(_ text: String) -> AttributedString {
-        let processed = normalizeHTMLLikeTags(text)
-
-        do {
-            var options = AttributedString.MarkdownParsingOptions()
-            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-
-            return try AttributedString(
-                markdown: processed,
-                options: options,
-                baseURL: nil
-            )
-        } catch {
-            return AttributedString(processed)
+    private func headingSize(for level: Int) -> CGFloat {
+        switch level {
+        case 1: return 22
+        case 2: return 19
+        case 3: return 17
+        default: return 15
         }
     }
 
-    private func parseBlocks(_ text: String) -> [MarkdownBlock] {
+    private func inlineText(_ content: String) -> Text {
+        MarkdownParser.inlineSegments(content).reduce(Text("")) { partial, segment in
+            switch segment {
+            case .text(let value):
+                return partial + Text(MarkdownParser.attributedString(value))
+            case .math(let value):
+                return partial + Text(LatexRenderer.render(value))
+                    .font(.system(size: 14, weight: .medium, design: .serif))
+                    .foregroundColor(.accentColor)
+            }
+        }
+    }
+}
+
+private struct MarkdownTableView: View {
+    let rows: [[String]]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                            Text(MarkdownParser.attributedString(cell))
+                                .font(.system(size: 13, weight: rowIndex == 0 ? .semibold : .regular))
+                                .lineSpacing(3)
+                                .frame(minWidth: 92, maxWidth: 220, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(rowIndex == 0 ? Color.accentColor.opacity(0.08) : Color.clear)
+                        }
+                    }
+                    if rowIndex < rows.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
+            )
+        }
+        .background(Color(NSColor.textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct MarkdownMathBlockView: View {
+    let content: String
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Text(LatexRenderer.render(content))
+                .font(.system(size: 16, weight: .medium, design: .serif))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .background(Color.accentColor.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
+        )
+        .accessibilityIdentifier("markdown.mathBlock")
+    }
+}
+
+enum MarkdownBlock: Equatable {
+    case heading(level: Int, content: String)
+    case paragraph(content: String)
+    case quote(lines: [String])
+    case unorderedList(items: [String])
+    case orderedList(items: [String])
+    case taskList(items: [TaskListItem])
+    case codeBlock(language: String?, content: String)
+    case table(rows: [[String]])
+    case mathBlock(content: String)
+    case divider
+}
+
+struct TaskListItem: Equatable {
+    let text: String
+    let isComplete: Bool
+}
+
+enum MarkdownInlineSegment: Equatable {
+    case text(String)
+    case math(String)
+}
+
+enum MarkdownParser {
+    static func parseBlocks(_ text: String) -> [MarkdownBlock] {
         let normalizedText = normalizeHTMLLikeTags(text)
         let lines = normalizedText.components(separatedBy: .newlines)
         var blocks: [MarkdownBlock] = []
@@ -1371,6 +1803,12 @@ struct MarkdownTextView: View {
                 continue
             }
 
+            if let math = parseMathBlock(lines, startIndex: index) {
+                blocks.append(.mathBlock(content: math.content))
+                index = math.nextIndex
+                continue
+            }
+
             if let heading = parseHeading(trimmed) {
                 blocks.append(heading)
                 index += 1
@@ -1385,11 +1823,13 @@ struct MarkdownTextView: View {
 
             if isTableStart(lines, at: index) {
                 var tableRows: [String] = []
-                while index < lines.count, lines[index].contains("|"), !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+                while index < lines.count,
+                      lines[index].contains("|"),
+                      !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
                     tableRows.append(lines[index])
                     index += 1
                 }
-                blocks.append(.table(rows: tableRows))
+                blocks.append(.table(rows: parseTableRows(tableRows)))
                 continue
             }
 
@@ -1425,6 +1865,7 @@ struct MarkdownTextView: View {
                 if next.isEmpty
                     || next.hasPrefix("```")
                     || next.hasPrefix("~~~")
+                    || lineStartsMathBlock(next)
                     || parseHeading(next) != nil
                     || isDivider(next)
                     || isTableStart(lines, at: index)
@@ -1444,136 +1885,65 @@ struct MarkdownTextView: View {
         return blocks.isEmpty ? [.paragraph(content: text)] : blocks
     }
 
-    private func parseHeading(_ line: String) -> MarkdownBlock? {
-        let hashes = line.prefix { $0 == "#" }.count
-        guard (1...6).contains(hashes), line.dropFirst(hashes).first == " " else {
-            return nil
+    static func inlineSegments(_ text: String) -> [MarkdownInlineSegment] {
+        let processed = normalizeHTMLLikeTags(text)
+        var segments: [MarkdownInlineSegment] = []
+        var scan = processed.startIndex
+        var textStart = processed.startIndex
+
+        func appendText(upTo end: String.Index) {
+            guard textStart < end else { return }
+            segments.append(.text(String(processed[textStart..<end])))
         }
 
-        let content = String(line.dropFirst(hashes)).trimmingCharacters(in: .whitespaces)
-        return .heading(level: hashes, content: content)
-    }
+        while scan < processed.endIndex {
+            if processed[scan] == "\\" {
+                let next = processed.index(after: scan)
+                if next < processed.endIndex, processed[next] == "(" {
+                    let contentStart = processed.index(after: next)
+                    if let end = processed.range(of: "\\)", range: contentStart..<processed.endIndex) {
+                        appendText(upTo: scan)
+                        segments.append(.math(String(processed[contentStart..<end.lowerBound])))
+                        scan = end.upperBound
+                        textStart = scan
+                        continue
+                    }
+                }
+            }
 
-    private func isDivider(_ line: String) -> Bool {
-        let compact = line.filter { !$0.isWhitespace }
-        guard compact.count >= 3 else { return false }
-        return compact.allSatisfy { $0 == "-" } || compact.allSatisfy { $0 == "*" } || compact.allSatisfy { $0 == "_" }
-    }
+            if processed[scan] == "$" {
+                let next = processed.index(after: scan)
+                if next < processed.endIndex, processed[next] != "$",
+                   let closing = processed[next...].firstIndex(of: "$") {
+                    appendText(upTo: scan)
+                    segments.append(.math(String(processed[next..<closing])))
+                    scan = processed.index(after: closing)
+                    textStart = scan
+                    continue
+                }
+            }
 
-    private func isTableStart(_ lines: [String], at index: Int) -> Bool {
-        guard index + 1 < lines.count else { return false }
-        let current = lines[index].trimmingCharacters(in: .whitespaces)
-        let separator = lines[index + 1].trimmingCharacters(in: .whitespaces)
-        guard current.contains("|"), separator.contains("|") else { return false }
-
-        let allowed = CharacterSet(charactersIn: "|:- ")
-        return separator.unicodeScalars.allSatisfy { allowed.contains($0) } && separator.contains("-")
-    }
-
-    private func parseQuote(_ lines: [String], startIndex: Int) -> (lines: [String], nextIndex: Int)? {
-        guard lineStartsQuote(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
-
-        var quoteLines: [String] = []
-        var index = startIndex
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            guard lineStartsQuote(line) else { break }
-            quoteLines.append(String(line.dropFirst()).trimmingCharacters(in: .whitespaces))
-            index += 1
+            scan = processed.index(after: scan)
         }
 
-        return (quoteLines, index)
+        appendText(upTo: processed.endIndex)
+
+        return segments.isEmpty ? [.text(processed)] : coalescedTextSegments(segments)
     }
 
-    private func parseTaskList(_ lines: [String], startIndex: Int) -> (items: [TaskListItem], nextIndex: Int)? {
-        guard lineStartsTaskList(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
+    static func attributedString(_ text: String) -> AttributedString {
+        let processed = normalizeHTMLLikeTags(text)
 
-        var items: [TaskListItem] = []
-        var index = startIndex
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            guard lineStartsTaskList(line) else { break }
-
-            let isComplete = line.lowercased().hasPrefix("- [x]") || line.lowercased().hasPrefix("* [x]")
-            let text = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            items.append(TaskListItem(text: text, isComplete: isComplete))
-            index += 1
-        }
-
-        return (items, index)
-    }
-
-    private func parseUnorderedList(_ lines: [String], startIndex: Int) -> (items: [String], nextIndex: Int)? {
-        guard lineStartsUnorderedList(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
-
-        var items: [String] = []
-        var index = startIndex
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            guard lineStartsUnorderedList(line) else { break }
-            items.append(String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces))
-            index += 1
-        }
-
-        return (items, index)
-    }
-
-    private func parseOrderedList(_ lines: [String], startIndex: Int) -> (items: [String], nextIndex: Int)? {
-        guard let first = orderedListContent(lines[startIndex]) else { return nil }
-
-        var items: [String] = [first]
-        var index = startIndex + 1
-        while index < lines.count, let item = orderedListContent(lines[index]) {
-            items.append(item)
-            index += 1
-        }
-
-        return (items, index)
-    }
-
-    private func lineStartsQuote(_ line: String) -> Bool {
-        line.hasPrefix(">")
-    }
-
-    private func lineStartsTaskList(_ line: String) -> Bool {
-        let lowercased = line.lowercased()
-        return lowercased.hasPrefix("- [ ] ")
-            || lowercased.hasPrefix("- [x] ")
-            || lowercased.hasPrefix("* [ ] ")
-            || lowercased.hasPrefix("* [x] ")
-    }
-
-    private func lineStartsUnorderedList(_ line: String) -> Bool {
-        (line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ")) && !lineStartsTaskList(line)
-    }
-
-    private func lineStartsOrderedList(_ line: String) -> Bool {
-        orderedListContent(line) != nil
-    }
-
-    private func orderedListContent(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard let markerEnd = trimmed.firstIndex(where: { $0 == "." || $0 == ")" }) else { return nil }
-
-        let number = trimmed[..<markerEnd]
-        guard !number.isEmpty, number.allSatisfy({ $0.isNumber }) else { return nil }
-
-        let afterMarker = trimmed.index(after: markerEnd)
-        guard afterMarker < trimmed.endIndex, trimmed[afterMarker] == " " else { return nil }
-
-        return String(trimmed[trimmed.index(after: afterMarker)...]).trimmingCharacters(in: .whitespaces)
-    }
-
-    private func headingSize(for level: Int) -> CGFloat {
-        switch level {
-        case 1: return 22
-        case 2: return 19
-        case 3: return 17
-        default: return 15
+        do {
+            var options = AttributedString.MarkdownParsingOptions()
+            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+            return try AttributedString(markdown: processed, options: options, baseURL: nil)
+        } catch {
+            return AttributedString(processed)
         }
     }
 
-    private func normalizeHTMLLikeTags(_ text: String) -> String {
+    static func normalizeHTMLLikeTags(_ text: String) -> String {
         var result = text
         let replacements = [
             ("<br>", "\n"),
@@ -1601,23 +1971,382 @@ struct MarkdownTextView: View {
 
         return result
     }
+
+    private static func parseHeading(_ line: String) -> MarkdownBlock? {
+        let hashes = line.prefix { $0 == "#" }.count
+        guard (1...6).contains(hashes), line.dropFirst(hashes).first == " " else {
+            return nil
+        }
+
+        let content = String(line.dropFirst(hashes)).trimmingCharacters(in: .whitespaces)
+        return .heading(level: hashes, content: content)
+    }
+
+    private static func parseMathBlock(_ lines: [String], startIndex: Int) -> (content: String, nextIndex: Int)? {
+        let trimmed = lines[startIndex].trimmingCharacters(in: .whitespaces)
+
+        if trimmed.hasPrefix("$$") {
+            let afterOpening = String(trimmed.dropFirst(2))
+            if afterOpening.hasSuffix("$$"), afterOpening.count > 2 {
+                return (String(afterOpening.dropLast(2)).trimmingCharacters(in: .whitespaces), startIndex + 1)
+            }
+            return collectMultilineMath(lines, startIndex: startIndex, opening: "$$", closing: "$$")
+        }
+
+        if trimmed.hasPrefix("\\[") {
+            let afterOpening = String(trimmed.dropFirst(2))
+            if afterOpening.hasSuffix("\\]") {
+                return (String(afterOpening.dropLast(2)).trimmingCharacters(in: .whitespaces), startIndex + 1)
+            }
+            return collectMultilineMath(lines, startIndex: startIndex, opening: "\\[", closing: "\\]")
+        }
+
+        if trimmed.hasPrefix("\\begin{equation}") {
+            var mathLines: [String] = [trimmed.replacingOccurrences(of: "\\begin{equation}", with: "")]
+            var index = startIndex + 1
+            while index < lines.count {
+                let candidate = lines[index]
+                if candidate.contains("\\end{equation}") {
+                    mathLines.append(candidate.replacingOccurrences(of: "\\end{equation}", with: ""))
+                    return (mathLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), index + 1)
+                }
+                mathLines.append(candidate)
+                index += 1
+            }
+        }
+
+        return nil
+    }
+
+    private static func collectMultilineMath(
+        _ lines: [String],
+        startIndex: Int,
+        opening: String,
+        closing: String
+    ) -> (content: String, nextIndex: Int)? {
+        var mathLines: [String] = []
+        let first = lines[startIndex].trimmingCharacters(in: .whitespaces)
+        let firstContent = String(first.dropFirst(opening.count))
+        if !firstContent.isEmpty {
+            mathLines.append(firstContent)
+        }
+
+        var index = startIndex + 1
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasSuffix(closing) {
+                let content = String(trimmed.dropLast(closing.count))
+                if !content.isEmpty {
+                    mathLines.append(content)
+                }
+                return (mathLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), index + 1)
+            }
+            mathLines.append(line)
+            index += 1
+        }
+
+        return nil
+    }
+
+    private static func isDivider(_ line: String) -> Bool {
+        let compact = line.filter { !$0.isWhitespace }
+        guard compact.count >= 3 else { return false }
+        return compact.allSatisfy { $0 == "-" } || compact.allSatisfy { $0 == "*" } || compact.allSatisfy { $0 == "_" }
+    }
+
+    private static func isTableStart(_ lines: [String], at index: Int) -> Bool {
+        guard index + 1 < lines.count else { return false }
+        let current = lines[index].trimmingCharacters(in: .whitespaces)
+        let separator = lines[index + 1].trimmingCharacters(in: .whitespaces)
+        guard current.contains("|"), separator.contains("|") else { return false }
+
+        let allowed = CharacterSet(charactersIn: "|:- ")
+        return separator.unicodeScalars.allSatisfy { allowed.contains($0) } && separator.contains("-")
+    }
+
+    private static func parseTableRows(_ rows: [String]) -> [[String]] {
+        guard rows.count >= 2 else { return rows.map(splitTableRow) }
+
+        let header = splitTableRow(rows[0])
+        let body = rows.dropFirst(2).map(splitTableRow)
+        return [header] + body
+    }
+
+    private static func splitTableRow(_ row: String) -> [String] {
+        var cells = row.split(separator: "|", omittingEmptySubsequences: false).map {
+            String($0).trimmingCharacters(in: .whitespaces)
+        }
+        if cells.first?.isEmpty == true {
+            cells.removeFirst()
+        }
+        if cells.last?.isEmpty == true {
+            cells.removeLast()
+        }
+        return cells
+    }
+
+    private static func parseQuote(_ lines: [String], startIndex: Int) -> (lines: [String], nextIndex: Int)? {
+        guard lineStartsQuote(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
+
+        var quoteLines: [String] = []
+        var index = startIndex
+        while index < lines.count {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            guard lineStartsQuote(line) else { break }
+            quoteLines.append(String(line.dropFirst()).trimmingCharacters(in: .whitespaces))
+            index += 1
+        }
+
+        return (quoteLines, index)
+    }
+
+    private static func parseTaskList(_ lines: [String], startIndex: Int) -> (items: [TaskListItem], nextIndex: Int)? {
+        guard lineStartsTaskList(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
+
+        var items: [TaskListItem] = []
+        var index = startIndex
+        while index < lines.count {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            guard lineStartsTaskList(line) else { break }
+
+            let isComplete = line.lowercased().hasPrefix("- [x]") || line.lowercased().hasPrefix("* [x]")
+            let text = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            items.append(TaskListItem(text: text, isComplete: isComplete))
+            index += 1
+        }
+
+        return (items, index)
+    }
+
+    private static func parseUnorderedList(_ lines: [String], startIndex: Int) -> (items: [String], nextIndex: Int)? {
+        guard lineStartsUnorderedList(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
+
+        var items: [String] = []
+        var index = startIndex
+        while index < lines.count {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            guard lineStartsUnorderedList(line) else { break }
+            items.append(String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces))
+            index += 1
+        }
+
+        return (items, index)
+    }
+
+    private static func parseOrderedList(_ lines: [String], startIndex: Int) -> (items: [String], nextIndex: Int)? {
+        guard let first = orderedListContent(lines[startIndex]) else { return nil }
+
+        var items: [String] = [first]
+        var index = startIndex + 1
+        while index < lines.count, let item = orderedListContent(lines[index]) {
+            items.append(item)
+            index += 1
+        }
+
+        return (items, index)
+    }
+
+    private static func lineStartsMathBlock(_ line: String) -> Bool {
+        line.hasPrefix("$$") || line.hasPrefix("\\[") || line.hasPrefix("\\begin{equation}")
+    }
+
+    private static func lineStartsQuote(_ line: String) -> Bool {
+        line.hasPrefix(">")
+    }
+
+    private static func lineStartsTaskList(_ line: String) -> Bool {
+        let lowercased = line.lowercased()
+        return lowercased.hasPrefix("- [ ] ")
+            || lowercased.hasPrefix("- [x] ")
+            || lowercased.hasPrefix("* [ ] ")
+            || lowercased.hasPrefix("* [x] ")
+    }
+
+    private static func lineStartsUnorderedList(_ line: String) -> Bool {
+        (line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ")) && !lineStartsTaskList(line)
+    }
+
+    private static func lineStartsOrderedList(_ line: String) -> Bool {
+        orderedListContent(line) != nil
+    }
+
+    private static func orderedListContent(_ line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let markerEnd = trimmed.firstIndex(where: { $0 == "." || $0 == ")" }) else { return nil }
+
+        let number = trimmed[..<markerEnd]
+        guard !number.isEmpty, number.allSatisfy({ $0.isNumber }) else { return nil }
+
+        let afterMarker = trimmed.index(after: markerEnd)
+        guard afterMarker < trimmed.endIndex, trimmed[afterMarker] == " " else { return nil }
+
+        return String(trimmed[trimmed.index(after: afterMarker)...]).trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func coalescedTextSegments(_ segments: [MarkdownInlineSegment]) -> [MarkdownInlineSegment] {
+        var result: [MarkdownInlineSegment] = []
+        for segment in segments {
+            if case .text(let text) = segment, case .text(let previous)? = result.last {
+                result[result.count - 1] = .text(previous + text)
+            } else {
+                result.append(segment)
+            }
+        }
+        return result
+    }
 }
 
-private enum MarkdownBlock {
-    case heading(level: Int, content: String)
-    case paragraph(content: String)
-    case quote(lines: [String])
-    case unorderedList(items: [String])
-    case orderedList(items: [String])
-    case taskList(items: [TaskListItem])
-    case codeBlock(language: String?, content: String)
-    case table(rows: [String])
-    case divider
-}
+enum LatexRenderer {
+    private static let commandReplacements: [(String, String)] = [
+        ("\\rightarrow", "→"), ("\\leftarrow", "←"), ("\\Rightarrow", "⇒"),
+        ("\\Leftarrow", "⇐"), ("\\times", "×"), ("\\cdot", "·"),
+        ("\\leq", "≤"), ("\\geq", "≥"), ("\\neq", "≠"), ("\\approx", "≈"),
+        ("\\pm", "±"), ("\\infty", "∞"), ("\\sum", "∑"), ("\\prod", "∏"),
+        ("\\int", "∫"), ("\\partial", "∂"), ("\\nabla", "∇"), ("\\alpha", "α"),
+        ("\\beta", "β"), ("\\gamma", "γ"), ("\\delta", "δ"), ("\\epsilon", "ε"),
+        ("\\theta", "θ"), ("\\lambda", "λ"), ("\\mu", "μ"), ("\\pi", "π"),
+        ("\\sigma", "σ"), ("\\omega", "ω"), ("\\Delta", "Δ"), ("\\Omega", "Ω")
+    ]
 
-private struct TaskListItem {
-    let text: String
-    let isComplete: Bool
+    private static let superscriptMap: [Character: Character] = [
+        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+        "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+        "n": "ⁿ", "i": "ⁱ"
+    ]
+
+    private static let subscriptMap: [Character: Character] = [
+        "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+        "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+        "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎",
+        "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+        "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+        "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+        "v": "ᵥ", "x": "ₓ"
+    ]
+
+    static func render(_ input: String) -> String {
+        var result = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        result = result
+            .replacingOccurrences(of: "\\left", with: "")
+            .replacingOccurrences(of: "\\right", with: "")
+
+        result = replaceCommand("\\frac", arity: 2, in: result) { values in
+            "\(render(values[0]))⁄\(render(values[1]))"
+        }
+        result = replaceCommand("\\sqrt", arity: 1, in: result) { values in
+            "√(\(render(values[0])))"
+        }
+        result = replaceCommand("\\text", arity: 1, in: result) { values in
+            values[0]
+        }
+
+        for (source, replacement) in commandReplacements {
+            result = result.replacingOccurrences(of: source, with: replacement)
+        }
+
+        result = replaceScript(marker: "^", map: superscriptMap, in: result)
+        result = replaceScript(marker: "_", map: subscriptMap, in: result)
+        return result.replacingOccurrences(of: "\\", with: "")
+    }
+
+    private static func replaceCommand(
+        _ command: String,
+        arity: Int,
+        in text: String,
+        transform: ([String]) -> String
+    ) -> String {
+        var output = text
+
+        while let commandRange = output.range(of: command) {
+            var cursor = commandRange.upperBound
+            var values: [String] = []
+
+            for _ in 0..<arity {
+                while cursor < output.endIndex, output[cursor].isWhitespace {
+                    cursor = output.index(after: cursor)
+                }
+                guard let parsed = parseBracedGroup(in: output, from: cursor) else {
+                    return output
+                }
+                values.append(parsed.content)
+                cursor = parsed.endIndex
+            }
+
+            output.replaceSubrange(commandRange.lowerBound..<cursor, with: transform(values))
+        }
+
+        return output
+    }
+
+    private static func parseBracedGroup(in text: String, from start: String.Index) -> (content: String, endIndex: String.Index)? {
+        guard start < text.endIndex, text[start] == "{" else { return nil }
+
+        var depth = 0
+        var cursor = start
+        let contentStart = text.index(after: start)
+
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "{" {
+                depth += 1
+            } else if character == "}" {
+                depth -= 1
+                if depth == 0 {
+                    return (String(text[contentStart..<cursor]), text.index(after: cursor))
+                }
+            }
+            cursor = text.index(after: cursor)
+        }
+
+        return nil
+    }
+
+    private static func replaceScript(marker: Character, map: [Character: Character], in text: String) -> String {
+        var result = ""
+        var cursor = text.startIndex
+
+        while cursor < text.endIndex {
+            guard text[cursor] == marker else {
+                result.append(text[cursor])
+                cursor = text.index(after: cursor)
+                continue
+            }
+
+            let valueStart = text.index(after: cursor)
+            guard valueStart < text.endIndex else {
+                result.append(marker)
+                cursor = valueStart
+                continue
+            }
+
+            let parsed: (content: String, endIndex: String.Index)
+            if text[valueStart] == "{", let group = parseBracedGroup(in: text, from: valueStart) {
+                parsed = group
+            } else {
+                parsed = (String(text[valueStart]), text.index(after: valueStart))
+            }
+
+            if let mapped = mappedScript(parsed.content, map: map) {
+                result += mapped
+            } else {
+                result += "\(marker)(\(parsed.content))"
+            }
+            cursor = parsed.endIndex
+        }
+
+        return result
+    }
+
+    private static func mappedScript(_ value: String, map: [Character: Character]) -> String? {
+        var result = ""
+        for character in value {
+            guard let mapped = map[character] else { return nil }
+            result.append(mapped)
+        }
+        return result
+    }
 }
 
 // MARK: - Tool Call View

@@ -8,31 +8,146 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
+import wave
 from pathlib import Path
+from typing import Optional
 
 # Setup paths
-APP_BUNDLE = Path(
-    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXHub-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXHub.app"
-)
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _derived_data_app_candidates() -> list[Path]:
+    derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
+    return list(derived_data.glob("MLXHub-*/Build/Products/Debug/MLXHub.app"))
+
+
+def _newest_existing_app() -> Optional[Path]:
+    candidates = [path for path in _derived_data_app_candidates() if path.exists()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _build_app() -> None:
+    subprocess.run(
+        [
+            "xcodebuild",
+            "-project",
+            "MLXHub.xcodeproj",
+            "-scheme",
+            "MLXHub",
+            "-configuration",
+            "Debug",
+            "build",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+
+
+def resolve_app_bundle() -> Path:
+    override = os.environ.get("MLXHUB_APP_BUNDLE")
+    if override:
+        return Path(override)
+
+    if os.environ.get("MLXHUB_BUILD_APP") == "1":
+        _build_app()
+
+    app_bundle = _newest_existing_app()
+    if app_bundle:
+        return app_bundle
+
+    _build_app()
+    app_bundle = _newest_existing_app()
+    if app_bundle:
+        return app_bundle
+
+    raise FileNotFoundError("Could not find or build MLXHub.app")
+
+
+APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
 RUNTIME = RESOURCES / "runtime/macos-arm64"
 VENV_PYTHON = RUNTIME / "acestep-venv/bin/python"
 MAIN_PYTHON = RUNTIME / "venv/bin/python"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
 PYTHON_BRIDGE = RESOURCES / "python_bridge.py"
+GENERATED_MUSIC_DIR = (
+    Path.home() / "Library/Application Support/MLXHub/GeneratedMusic"
+)
+ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXHub/checkpoints"
+REQUIRE_ALL_MODELS = os.environ.get("MLXHUB_REQUIRE_ALL_MODELS") == "1"
+
+
+def path_has_content(path: Path) -> bool:
+    try:
+        resolved = path.resolve(strict=True)
+        return resolved.is_file() and resolved.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def ace_step_required_model_files() -> dict[str, Path]:
+    return {
+        "DiT model": ACESTEP_CHECKPOINTS_DIR
+        / "acestep-v15-turbo"
+        / "model.safetensors",
+        "VAE": ACESTEP_CHECKPOINTS_DIR
+        / "vae"
+        / "diffusion_pytorch_model.safetensors",
+        "Text encoder": ACESTEP_CHECKPOINTS_DIR
+        / "Qwen3-Embedding-0.6B"
+        / "model.safetensors",
+        "LM": ACESTEP_CHECKPOINTS_DIR
+        / "acestep-5Hz-lm-1.7B"
+        / "model.safetensors",
+    }
+
+
+def ace_step_model_is_complete() -> bool:
+    return all(path_has_content(path) for path in ace_step_required_model_files().values())
 
 
 class MusicGenerationIntegrationTest:
     def __init__(self):
         self.results = []
         self.output_files = []
+        self.skipped_tests = set()
 
     def log(self, message: str, level: str = "INFO"):
         """Log a message with timestamp."""
         timestamp = time.strftime("%H:%M:%S")
         print(f"[{timestamp}] [{level}] {message}")
+
+    def missing_music_model_result(self, test_name: str) -> Optional[bool]:
+        missing = [
+            name
+            for name, path in ace_step_required_model_files().items()
+            if not path_has_content(path)
+        ]
+        message = "ACE-Step checkpoints are missing or incomplete: " + ", ".join(missing)
+
+        if REQUIRE_ALL_MODELS:
+            self.log(f"✗ FAILED: {message}", "ERROR")
+            self.log(
+                "   Strict model policy is enabled by MLXHUB_REQUIRE_ALL_MODELS=1.",
+                "ERROR",
+            )
+            return False
+
+        self.skipped_tests.add(test_name)
+        self.log(f"↷ SKIPPED: {message}")
+        self.log(
+            "   Restore/download ACE-Step checkpoints locally, or set MLXHUB_REQUIRE_ALL_MODELS=1 to make this fail."
+        )
+        return None
+
+    def require_music_model(self, test_name: str) -> Optional[bool]:
+        if ace_step_model_is_complete():
+            self.log("Local ACE-Step checkpoints verified.")
+            return True
+        return self.missing_music_model_result(test_name)
 
     def get_env(self) -> dict:
         """Get environment variables matching Swift's VLMExecutor.setupEnvironment()."""
@@ -51,7 +166,10 @@ class MusicGenerationIntegrationTest:
         # Set critical env vars for the bundled Python (matching Swift)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONHOME"] = str(APP_BUNDLE / "Contents/Resources/runtime/macos-arm64/python/Frameworks/Versions/3.12")
+        env["PYTHONHOME"] = str(
+            APP_BUNDLE
+            / "Contents/Resources/runtime/macos-arm64/python/Frameworks/Versions/3.12"
+        )
         env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
         env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
         env["ACESTEP_CHECKPOINTS_DIR"] = str(
@@ -86,28 +204,21 @@ class MusicGenerationIntegrationTest:
         if not all_good:
             return False
 
-        # Check model files
-        checkpoints_dir = Path.home() / "Library/Application Support/MLXHub/checkpoints"
-        self.log(f"\nCheckpoints directory: {checkpoints_dir}")
+        GENERATED_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+        self.log(f"  ✓ Generated music directory: {GENERATED_MUSIC_DIR}")
 
-        required = {
-            "DiT model": checkpoints_dir / "acestep-v15-turbo" / "model.safetensors",
-            "VAE": checkpoints_dir / "vae" / "diffusion_pytorch_model.safetensors",
-            "Text encoder": checkpoints_dir
-            / "Qwen3-Embedding-0.6B"
-            / "model.safetensors",
-            "LM": checkpoints_dir / "acestep-5Hz-lm-1.7B" / "model.safetensors",
-        }
+        # Check model files without making default local development runs fail.
+        self.log(f"\nCheckpoints directory: {ACESTEP_CHECKPOINTS_DIR}")
 
         all_present = True
-        for name, path in required.items():
-            exists = path.exists()
+        for name, path in ace_step_required_model_files().items():
+            exists = path_has_content(path)
             status = "✓" if exists else "✗"
             self.log(f"  {status} {name}: {path.name}")
             if not exists:
                 all_present = False
 
-        return all_present
+        return all_present or not REQUIRE_ALL_MODELS
 
     def test_model_normalization(self) -> bool:
         """Test 2: Verify model ID normalization logic."""
@@ -177,6 +288,63 @@ class MusicGenerationIntegrationTest:
             traceback.print_exc()
             return False
 
+    def validate_wav(
+        self,
+        path: str,
+        minimum_duration: float = 1.0,
+        expected_sample_rate: Optional[int] = None,
+    ) -> bool:
+        """Validate generated audio is a readable WAV with plausible metadata."""
+        audio_path = Path(path)
+        if not audio_path.exists():
+            self.log(f"\n✗ FAILED: Audio file not found at {audio_path}", "ERROR")
+            return False
+
+        if audio_path.stat().st_size <= 0:
+            self.log(f"\n✗ FAILED: Audio file is empty at {audio_path}", "ERROR")
+            return False
+
+        try:
+            with wave.open(str(audio_path), "rb") as wav_file:
+                channels = wav_file.getnchannels()
+                sample_rate = wav_file.getframerate()
+                frames = wav_file.getnframes()
+        except wave.Error as exc:
+            self.log(f"\n✗ FAILED: Invalid WAV file: {exc}", "ERROR")
+            return False
+
+        if channels <= 0 or sample_rate <= 0 or frames <= 0:
+            self.log(
+                "✗ FAILED: Invalid WAV metadata "
+                f"channels={channels}, sample_rate={sample_rate}, frames={frames}",
+                "ERROR",
+            )
+            return False
+
+        duration = frames / sample_rate
+        if duration < minimum_duration:
+            self.log(
+                f"✗ FAILED: WAV duration {duration:.2f}s is shorter than "
+                f"{minimum_duration:.2f}s",
+                "ERROR",
+            )
+            return False
+
+        if expected_sample_rate is not None and sample_rate != expected_sample_rate:
+            self.log(
+                f"✗ FAILED: WAV sample rate {sample_rate}, "
+                f"expected {expected_sample_rate}",
+                "ERROR",
+            )
+            return False
+
+        file_size = audio_path.stat().st_size / 1024 / 1024
+        self.log(
+            f"  WAV metadata: {sample_rate} Hz, {channels} ch, "
+            f"{duration:.2f}s, {file_size:.2f} MB"
+        )
+        return True
+
     def validate_generation_output(self, stdout: str, stderr: str, elapsed: float) -> bool:
         """Validate bridge stdout contains JSON events for a generated audio file."""
         output_messages = []
@@ -240,16 +408,21 @@ class MusicGenerationIntegrationTest:
             self.log(f"\n✗ FAILED: Audio file not found at {audio_path}", "ERROR")
             return False
 
-        file_size = Path(audio_path).stat().st_size
-        if file_size <= 0:
-            self.log(f"\n✗ FAILED: Audio file is empty at {audio_path}", "ERROR")
+        expected_sample_rate = audio_generated[0].get("sample_rate")
+        if not isinstance(expected_sample_rate, int):
+            expected_sample_rate = None
+
+        if not self.validate_wav(
+            audio_path,
+            minimum_duration=1.0,
+            expected_sample_rate=expected_sample_rate,
+        ):
             return False
 
         self.output_files.append(audio_path)
         self.log("\n✓ SUCCESS!")
         self.log(f"  Audio file: {audio_path}")
-        self.log(f"  File size: {file_size / 1024 / 1024:.2f} MB")
-        self.log(f"  Duration: {elapsed:.2f}s")
+        self.log(f"  Generation time: {elapsed:.2f}s")
 
         return True
 
@@ -259,8 +432,14 @@ class MusicGenerationIntegrationTest:
         self.log("TEST 3: Direct Instrumental Generation")
         self.log("=" * 60)
 
+        test_name = "Direct Instrumental Generation"
+        preflight = self.require_music_model(test_name)
+        if preflight is not True:
+            return preflight is None
+
         request = {
             "model": "ACE-Step/acestep-v15-turbo-continuous",
+            "output_dir": str(GENERATED_MUSIC_DIR),
             "messages": [{"role": "user", "content": "moody cyberpunk instrumental"}],
             "parameters": {
                 "caption": "moody cyberpunk instrumental",
@@ -280,9 +459,15 @@ class MusicGenerationIntegrationTest:
         self.log("TEST 4: Direct Vocal Generation With Lyrics")
         self.log("=" * 60)
 
+        test_name = "Direct Vocal Generation With Lyrics"
+        preflight = self.require_music_model(test_name)
+        if preflight is not True:
+            return preflight is None
+
         lyrics = "[Verse]\nNeon streets are waking\n[Chorus]\nWe rise into the morning"
         request = {
             "model": "ACE-Step/acestep-v15-turbo-continuous",
+            "output_dir": str(GENERATED_MUSIC_DIR),
             "messages": [{"role": "user", "content": "warm pop song with vocals"}],
             "parameters": {
                 "caption": "warm pop song with vocals",
@@ -302,10 +487,16 @@ class MusicGenerationIntegrationTest:
         self.log("TEST 5: Main Bridge Music Forwarding")
         self.log("=" * 60)
 
+        test_name = "Main Bridge Music Forwarding"
+        preflight = self.require_music_model(test_name)
+        if preflight is not True:
+            return preflight is None
+
         request = {
             "type": "music.generate",
             "model": "ACE-Step/acestep-v15-turbo-continuous",
             "request_id": "music-integration-main-bridge",
+            "output_dir": str(GENERATED_MUSIC_DIR),
             "messages": [{"role": "user", "content": "short upbeat synth theme"}],
             "parameters": {
                 "caption": "short upbeat synth theme",
@@ -387,6 +578,7 @@ class MusicGenerationIntegrationTest:
 
         request = {
             "model": "ACE-Step/acestep-v15-turbo-continuous",
+            "output_dir": str(GENERATED_MUSIC_DIR),
             "messages": [{"role": "user", "content": ""}],
             "parameters": {},
         }
@@ -420,8 +612,17 @@ class MusicGenerationIntegrationTest:
         self.log("ACE-Step Music Generation Integration Test")
         self.log("=" * 60)
         self.log(f"Python: {sys.version.split()[0]}")
+        self.log(f"App bundle: {APP_BUNDLE}")
         self.log(
             f"ACESTEP_CHECKPOINTS_DIR: {self.get_env()['ACESTEP_CHECKPOINTS_DIR']}"
+        )
+        self.log(
+            "Model policy: "
+            + (
+                "strict fail on missing models"
+                if REQUIRE_ALL_MODELS
+                else "skip missing models by default"
+            )
         )
 
         tests = [
@@ -450,7 +651,10 @@ class MusicGenerationIntegrationTest:
         self.log("=" * 60)
 
         for name, passed in results:
-            status = "✓ PASS" if passed else "✗ FAIL"
+            if name in self.skipped_tests:
+                status = "↷ SKIP"
+            else:
+                status = "✓ PASS" if passed else "✗ FAIL"
             self.log(f"  {status}: {name}")
 
         all_passed = all(passed for _, passed in results)

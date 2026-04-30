@@ -20,6 +20,99 @@ private enum ChatStreamDiagnostics {
 #endif
 
 @MainActor
+final class StreamingMessageContent: ObservableObject, Identifiable {
+    let id: UUID
+    @Published private(set) var revision = 0
+    private(set) var text: String
+    private(set) var latestMutation: StreamingMessageContentMutation
+    private(set) var containsReasoningMarkup: Bool
+
+    init(id: UUID, text: String = "") {
+        self.id = id
+        self.text = text
+        self.latestMutation = .replace(text)
+        self.containsReasoningMarkup = Self.hasReasoningMarkup(text)
+    }
+
+    func update(_ text: String) {
+        guard self.text != text else { return }
+        self.text = text
+        latestMutation = .replace(text)
+        containsReasoningMarkup = Self.hasReasoningMarkup(text)
+        revision &+= 1
+    }
+
+    func append(_ text: String) {
+        guard !text.isEmpty else { return }
+        let detectionWindow = String(self.text.suffix(32)) + text
+        self.text += text
+        latestMutation = .append(text)
+        containsReasoningMarkup = containsReasoningMarkup || Self.hasReasoningMarkup(detectionWindow)
+        revision &+= 1
+    }
+
+    func clear() {
+        update("")
+    }
+
+    private static func hasReasoningMarkup(_ text: String) -> Bool {
+        text.contains("<think")
+            || text.contains("</think")
+            || text.contains("<thinking")
+            || text.contains("</thinking")
+    }
+}
+
+enum StreamingMessageContentMutation {
+    case append(String)
+    case replace(String)
+}
+
+@MainActor
+final class StreamingMessageContentStore {
+    private var entries: [UUID: StreamingMessageContent] = [:]
+
+    func begin(messageId: UUID, initialText: String = "") -> StreamingMessageContent {
+        if let existing = entries[messageId] {
+            existing.update(initialText)
+            return existing
+        }
+
+        let content = StreamingMessageContent(id: messageId, text: initialText)
+        entries[messageId] = content
+        return content
+    }
+
+    func content(for messageId: UUID) -> StreamingMessageContent? {
+        entries[messageId]
+    }
+
+    func update(messageId: UUID, text: String) {
+        if let existing = entries[messageId] {
+            existing.update(text)
+        } else {
+            _ = begin(messageId: messageId, initialText: text)
+        }
+    }
+
+    func append(messageId: UUID, text: String) {
+        if let existing = entries[messageId] {
+            existing.append(text)
+        } else {
+            _ = begin(messageId: messageId, initialText: text)
+        }
+    }
+
+    func clear(messageId: UUID) {
+        content(for: messageId)?.clear()
+    }
+
+    func end(messageId: UUID) {
+        entries.removeValue(forKey: messageId)
+    }
+}
+
+@MainActor
 class ChatViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var chats: [Chat] = []
@@ -73,6 +166,7 @@ class ChatViewModel: ObservableObject {
     let toolExecutor: ChatToolExecutionServicing
     let modelSelectionStore: ModelSelectionStore
     let modelParameterStore: ModelParameterStore
+    let streamingContentStore = StreamingMessageContentStore()
     var generationTask: Task<Void, Never>?
     let maxAutoToolDepth = 4
     var pendingDownloadMonitorTask: Task<Void, Never>?
@@ -362,6 +456,7 @@ class ChatViewModel: ObservableObject {
             )
 
             if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
+                _ = streamingContentStore.begin(messageId: aiMessage.id)
                 chats[index].messages.append(aiMessage)
                 chats[index].timestamp = Date()
                 streamingMessageId = aiMessage.id
@@ -492,6 +587,7 @@ class ChatViewModel: ObservableObject {
                     isGenerating = false
                     return
                 }
+                _ = streamingContentStore.begin(messageId: existingId, initialText: chats[chatIndex].messages[messageIndex].content)
                 aiMessage = chats[chatIndex].messages[messageIndex]
                 loadingMessage = "Using tool result..."
             } else {
@@ -513,9 +609,10 @@ class ChatViewModel: ObservableObject {
                 )
 
                 if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
-        chats[index].messages.append(aiMessage)
-            chats[index].timestamp = Date()
-            streamingMessageId = aiMessage.id
+                    _ = streamingContentStore.begin(messageId: aiMessage.id)
+                    chats[index].messages.append(aiMessage)
+                    chats[index].timestamp = Date()
+                    streamingMessageId = aiMessage.id
                 }
             }
 
@@ -823,22 +920,49 @@ class ChatViewModel: ObservableObject {
     ) async {
         var fullResponse = ""
         var renderedResponse = ""
+        var pendingRenderDelta = ""
         var lastRenderTime = Date.distantPast
-        let minimumRenderInterval: TimeInterval = 1.0 / 30.0
+        let minimumRenderInterval: TimeInterval = 1.0 / 60.0
+        let generationStartedAt = Date()
+        var firstOutputAt: Date?
+        var observedTokenEvents = 0
 #if DEBUG
         var tokenIndex = 0
 #endif
 
+        func currentPerformanceMetrics(usage: TokenUsage) -> GenerationPerformanceMetrics {
+            let outputTokenCount = usage.completionTokens > 0 ? usage.completionTokens : observedTokenEvents
+            let appMeasuredMetrics = GenerationPerformanceMetrics.measured(
+                startedAt: generationStartedAt,
+                firstOutputAt: firstOutputAt,
+                outputTokenCount: outputTokenCount
+            )
+            let metrics = GenerationPerformanceMetrics.measured(
+                startedAt: generationStartedAt,
+                firstOutputAt: firstOutputAt,
+                outputTokenCount: outputTokenCount,
+                backendTokensPerSecond: usage.tokensPerSecond
+            )
+#if DEBUG
+            if let bridgeTokensPerSecond = usage.tokensPerSecond,
+               let appTokensPerSecond = appMeasuredMetrics.tokensPerSecond {
+                ChatStreamDiagnostics.log("performance.compare bridgeTokS=\(String(format: "%.2f", bridgeTokensPerSecond)) appTokS=\(String(format: "%.2f", appTokensPerSecond)) outputTokens=\(outputTokenCount)")
+            }
+#endif
+            return metrics
+        }
+
         func renderStreamingResponse(force: Bool = false, tokenIndex: Int? = nil, tokenReceivedAt: TimeInterval? = nil) {
-            guard fullResponse != renderedResponse else { return }
+            guard !pendingRenderDelta.isEmpty else { return }
 
             let now = Date()
             guard force || renderedResponse.isEmpty || now.timeIntervalSince(lastRenderTime) >= minimumRenderInterval else {
                 return
             }
 
-            updateStreamingMessage(messageId, content: fullResponse)
-            renderedResponse = fullResponse
+            appendStreamingMessage(messageId, content: pendingRenderDelta)
+            renderedResponse += pendingRenderDelta
+            pendingRenderDelta = ""
             lastRenderTime = now
 
 #if DEBUG
@@ -872,6 +996,8 @@ class ChatViewModel: ObservableObject {
                     continue
                 }
 
+                firstOutputAt = firstOutputAt ?? Date()
+                observedTokenEvents += 1
                 fullResponse += token
                 if hasTools && shouldBufferToolEnabledOutput(fullResponse) {
                     loadingMessage = "Thinking..."
@@ -879,6 +1005,11 @@ class ChatViewModel: ObservableObject {
                     ChatStreamDiagnostics.log("token.buffered index=\(tokenIndex) responseChars=\(fullResponse.count)")
 #endif
                 } else {
+                    if renderedResponse.isEmpty, pendingRenderDelta.isEmpty, fullResponse != token {
+                        pendingRenderDelta = fullResponse
+                    } else {
+                        pendingRenderDelta += token
+                    }
 #if DEBUG
                     renderStreamingResponse(force: renderedResponse.isEmpty, tokenIndex: tokenIndex, tokenReceivedAt: tokenReceivedAt)
 #else
@@ -887,9 +1018,11 @@ class ChatViewModel: ObservableObject {
                 }
 
             case .image(let imageURL):
+                firstOutputAt = firstOutputAt ?? Date()
                 appendGeneratedImage(imageURL, toMessage: messageId)
 
             case .audio(let audioURL):
+                firstOutputAt = firstOutputAt ?? Date()
                 appendGeneratedAudio(audioURL, toMessage: messageId)
                 
             case .complete(let response, let usage):
@@ -897,6 +1030,7 @@ class ChatViewModel: ObservableObject {
                 ChatStreamDiagnostics.log("stream.complete responseChars=\(response.count)")
 #endif
                 fullResponse = response
+                let performanceMetrics = currentPerformanceMetrics(usage: usage)
                 if hasTools,
                    let plainTextToolCall = plainTextToolCall(from: response, prompt: prompt),
                    var currentMessages = messages,
@@ -907,7 +1041,8 @@ class ChatViewModel: ObservableObject {
                             messageId,
                             content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
                             usage: usage,
-                            clearToolCall: false
+                            clearToolCall: false,
+                            performanceMetrics: performanceMetrics
                         )
                         isGenerating = false
                         isModelLoading = false
@@ -921,7 +1056,8 @@ class ChatViewModel: ObservableObject {
                             messageId,
                             content: "Maximum tool call depth reached. Cannot execute more tool calls.",
                             usage: usage,
-                            clearToolCall: false
+                            clearToolCall: false,
+                            performanceMetrics: performanceMetrics
                         )
                         isGenerating = false
                         isModelLoading = false
@@ -966,7 +1102,8 @@ class ChatViewModel: ObservableObject {
                     messageId,
                     content: (isImageGeneration || isSpeechGeneration) ? "" : fullResponse,
                     usage: usage,
-                    clearToolCall: isImageGeneration || isSpeechGeneration
+                    clearToolCall: isImageGeneration || isSpeechGeneration,
+                    performanceMetrics: performanceMetrics
                 )
                 if isMusicGeneration {
                     activeMusicGenerationDraft = nil
@@ -986,7 +1123,8 @@ class ChatViewModel: ObservableObject {
                         messageId,
                         content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
                         usage: TokenUsage(promptTokens: 0, completionTokens: 0),
-                        clearToolCall: false
+                        clearToolCall: false,
+                        performanceMetrics: currentPerformanceMetrics(usage: TokenUsage(promptTokens: 0, completionTokens: 0))
                     )
                     isGenerating = false
                     isModelLoading = false
@@ -996,8 +1134,18 @@ class ChatViewModel: ObservableObject {
                     return
                 }
                 guard toolDepth < maxAutoToolDepth else {
-                    // Max tool depth reached, skip recursive tool execution
-                    currentMessages.append(ExecutionMessage(role: .assistant, content: "Maximum tool call depth reached. Cannot execute more tool calls."))
+                    finalizeMessage(
+                        messageId,
+                        content: "Maximum tool call depth reached. Cannot execute more tool calls.",
+                        usage: TokenUsage(promptTokens: 0, completionTokens: 0),
+                        clearToolCall: false,
+                        performanceMetrics: currentPerformanceMetrics(usage: TokenUsage(promptTokens: 0, completionTokens: 0))
+                    )
+                    isGenerating = false
+                    isModelLoading = false
+                    streamingMessageId = nil
+                    generationTask = nil
+                    loadingMessage = ""
                     return
                 }
                 let hasTerminalMediaTool = executableToolCalls.contains { isTerminalMediaTool($0.function.name) }
@@ -1045,6 +1193,7 @@ class ChatViewModel: ObservableObject {
         }
 
         if Task.isCancelled {
+            renderStreamingResponse(force: true)
             if isMusicGeneration {
                 activeMusicGenerationDraft = nil
             }

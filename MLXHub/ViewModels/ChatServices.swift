@@ -58,7 +58,7 @@ enum ChatToolExecutionUpdate: Equatable {
 }
 
 enum ChatToolExecutionOutcome: Equatable {
-    case toolMessage(String)
+    case toolMessage(String, metrics: GenerationPerformanceMetrics? = nil)
     case downloadRequired(DownloadableModel)
 }
 
@@ -82,6 +82,7 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     private let userDefaults: UserDefaults
     private let selectedChatKey: String
     private let storageDirectory: URL
+    private let writeQueue = DispatchQueue(label: "com.localstudio.mlxhub.chat-persistence", qos: .utility)
 
     init(
         fileManager: FileManager = .default,
@@ -99,6 +100,10 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
         .appendingPathComponent("MLXHub", isDirectory: true)
     }
 
+    deinit {
+        writeQueue.sync {}
+    }
+
     private var conversationsURL: URL {
         storageDirectory.appendingPathComponent("conversations.json")
     }
@@ -108,6 +113,8 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     }
 
     func loadChats() -> [Chat] {
+        flushPendingWrites()
+
         guard fileManager.fileExists(atPath: conversationsURL.path) else {
             return []
         }
@@ -124,21 +131,29 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     }
 
     func saveChats(_ chats: [Chat]) {
-        do {
-            try fileManager.createDirectory(
-                at: storageDirectory,
-                withIntermediateDirectories: true
-            )
+        let storageDirectory = storageDirectory
+        let conversationsURL = conversationsURL
 
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        writeQueue.async {
+            do {
+                try FileManager.default.createDirectory(
+                    at: storageDirectory,
+                    withIntermediateDirectories: true
+                )
 
-            let data = try encoder.encode(chats)
-            try data.write(to: conversationsURL, options: [.atomic])
-        } catch {
-            print("Failed to save conversation history: \(error)")
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+
+                let data = try encoder.encode(chats)
+                try data.write(to: conversationsURL, options: [.atomic])
+            } catch {
+                print("Failed to save conversation history: \(error)")
+            }
         }
+    }
+
+    private func flushPendingWrites() {
+        writeQueue.sync {}
     }
 
     func loadSelectedChatId() -> UUID? {
@@ -243,6 +258,11 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         }
 
         do {
+            let startedAt = Date()
+            var firstOutputAt: Date?
+            var observedTokenEvents = 0
+            var completionTokenCount = 0
+            var backendTokensPerSecond: Double?
             let stream = try await modelExecutor.execute(request: plan.request)
             var generatedAssetURL: URL?
             var generationSummary = "\(plan.operationName) completed."
@@ -256,27 +276,42 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
                 case .progress(let message):
                     onUpdate(.progress(message))
                 case .image(let imageURL) where plan.attachmentKind == .image:
+                    firstOutputAt = firstOutputAt ?? Date()
                     generatedAssetURL = imageURL
                     onUpdate(.generatedAsset(imageURL, kind: .image))
                 case .audio(let audioURL) where plan.attachmentKind == .audio:
+                    firstOutputAt = firstOutputAt ?? Date()
                     generatedAssetURL = audioURL
                     onUpdate(.generatedAsset(audioURL, kind: .audio))
-                case .complete(let response, _):
+                case .token(let token):
+                    guard !token.isEmpty else { break }
+                    firstOutputAt = firstOutputAt ?? Date()
+                    observedTokenEvents += 1
+                case .complete(let response, let usage):
                     if !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         generationSummary = response
                     }
+                    completionTokenCount = usage.completionTokens
+                    backendTokensPerSecond = usage.tokensPerSecond
                 case .error(let error):
                     throw error
-                case .started, .token, .toolCalls, .image, .audio:
+                case .started, .toolCalls, .image, .audio:
                     break
                 }
             }
 
+            let metrics = GenerationPerformanceMetrics.measured(
+                startedAt: startedAt,
+                firstOutputAt: firstOutputAt,
+                outputTokenCount: completionTokenCount > 0 ? completionTokenCount : observedTokenEvents,
+                backendTokensPerSecond: backendTokensPerSecond
+            )
+
             if generatedAssetURL != nil {
-                return .toolMessage("\(generationSummary)\n\(plan.completionHint)")
+                return .toolMessage("\(generationSummary)\n\(plan.completionHint)", metrics: metrics)
             }
 
-            return .toolMessage(plan.noOutputMessage)
+            return .toolMessage(plan.noOutputMessage, metrics: metrics)
         } catch {
             return .toolMessage("\(plan.unavailablePrefix): \(error.localizedDescription)")
         }
@@ -295,4 +330,3 @@ extension RuntimeManager: ChatRuntimeManaging {
 }
 
 extension MCPWebSearchService: ChatWebSearching {}
-

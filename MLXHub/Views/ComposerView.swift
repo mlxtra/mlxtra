@@ -518,6 +518,7 @@ private struct SendActionButton: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .help(isEnabled ? help : disabledHelp)
+        .accessibilityIdentifier("composer.primaryAction")
         .accessibilityLabel(help)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.14)) {
@@ -805,6 +806,7 @@ struct ToolSelectorInline: View {
             downloadManager.refreshStatuses()
         }
         .fixedSize()
+        .accessibilityIdentifier("composer.toolSelector")
     }
 }
 
@@ -887,6 +889,7 @@ struct ToolRow: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .accessibilityIdentifier("tool.\(tool.id)")
     }
 
     @ViewBuilder
@@ -907,10 +910,11 @@ struct ToolRow: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.orange)
                 .labelStyle(.titleAndIcon)
-        case .failed:
-            Label("Retry", systemImage: "exclamationmark.triangle.fill")
+        case .failed(let message):
+            let failedState = ModelDownloadManager.DownloadState.failed(message)
+            Label(failedState.failureBadgeTitle, systemImage: failedState.failureBadgeIcon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.red)
+                .foregroundStyle(failedState.failureBadgeTint)
                 .labelStyle(.titleAndIcon)
         case .notDownloaded:
             Label("Missing", systemImage: "arrow.down.circle")
@@ -1003,10 +1007,11 @@ struct ModelSelectorInline: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.orange)
                 .labelStyle(.titleAndIcon)
-        case .failed:
-            Label("Retry", systemImage: "exclamationmark.triangle.fill")
+        case .failed(let message):
+            let failedState = ModelDownloadManager.DownloadState.failed(message)
+            Label(failedState.failureBadgeTitle, systemImage: failedState.failureBadgeIcon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.red)
+                .foregroundStyle(failedState.failureBadgeTint)
                 .labelStyle(.titleAndIcon)
         case .notDownloaded:
             Label("Missing", systemImage: "arrow.down.circle")
@@ -1265,12 +1270,15 @@ struct MultilineTextInput: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
+        scrollView.setAccessibilityIdentifier("composer.input")
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.scrollerStyle = .overlay
 
         let textView = NSTextView()
+        textView.setAccessibilityIdentifier("composer.input")
+        textView.setAccessibilityLabel("Composer input")
         textView.delegate = context.coordinator
         textView.font = NSFont.systemFont(ofSize: 16)
         textView.isRichText = false
@@ -1387,6 +1395,20 @@ private func saveTemporaryImage(_ image: NSImage) -> URL? {
     } catch {
         print("Failed to save pasted image: \(error)")
         return nil
+    }
+}
+
+private extension ModelDownloadManager.DownloadState {
+    var failureBadgeTitle: String {
+        isRepairableFailure ? "Repair" : "Failed"
+    }
+
+    var failureBadgeIcon: String {
+        isRepairableFailure ? "wrench.and.screwdriver.fill" : "exclamationmark.triangle.fill"
+    }
+
+    var failureBadgeTint: Color {
+        isRepairableFailure ? .orange : .red
     }
 }
 

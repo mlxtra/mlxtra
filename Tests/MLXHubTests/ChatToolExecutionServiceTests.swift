@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import MLXHub
 
@@ -70,10 +71,13 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 .generatedAsset(assetURL, kind: .image)
             ]
         )
-        XCTAssertEqual(
-            outcome,
-            .toolMessage("Generated image.\nThe generated image is already displayed in the app UI.")
-        )
+        guard case .toolMessage(let content, let metrics) = outcome else {
+            XCTFail("Expected tool message outcome")
+            return
+        }
+        XCTAssertEqual(content, "Generated image.\nThe generated image is already displayed in the app UI.")
+        XCTAssertEqual(metrics?.outputTokenCount, 2)
+        XCTAssertNotNil(metrics?.timeToFirstToken)
         XCTAssertEqual(executor.receivedRequests.count, 1)
         XCTAssertEqual(executor.receivedRequests[0].modelId, "image-model")
     }
@@ -111,6 +115,58 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(viewModel.chats.count, 1)
         XCTAssertFalse(viewModel.chats[0].messages[0].isStreaming)
         XCTAssertTrue(executor.delegate === viewModel)
+    }
+
+    func testStreamingContentUpdatesBypassPublishedChatTreeUntilStopped() throws {
+        let messageId = UUID()
+        let chat = Chat(
+            title: "Streaming chat",
+            messages: [
+                Message(
+                    id: messageId,
+                    content: "",
+                    isUser: false,
+                    timestamp: Date(),
+                    isStreaming: true
+                )
+            ],
+            timestamp: Date(),
+            icon: "message"
+        )
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: MockChatModelExecutor(),
+            runtimeManager: MockChatRuntimeManager(downloadedModelIds: []),
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.chats = [chat]
+        viewModel.selectedChatId = chat.id
+        _ = viewModel.streamingContentStore.begin(messageId: messageId)
+
+        let streamingContent = try XCTUnwrap(viewModel.streamingContent(for: messageId))
+        var chatTreePublishCount = 0
+        var streamingPublishCount = 0
+        var cancellables = Set<AnyCancellable>()
+        viewModel.objectWillChange
+            .sink { chatTreePublishCount += 1 }
+            .store(in: &cancellables)
+        streamingContent.objectWillChange
+            .sink { streamingPublishCount += 1 }
+            .store(in: &cancellables)
+
+        viewModel.appendStreamingMessage(messageId, content: "First streamed")
+        viewModel.appendStreamingMessage(messageId, content: " chunk")
+
+        XCTAssertEqual(viewModel.chats[0].messages[0].content, "")
+        XCTAssertEqual(streamingContent.text, "First streamed chunk")
+        XCTAssertEqual(chatTreePublishCount, 0)
+        XCTAssertEqual(streamingPublishCount, 2)
+
+        viewModel.markMessageStopped(messageId)
+
+        XCTAssertEqual(viewModel.chats[0].messages[0].content, "First streamed chunk")
+        XCTAssertFalse(viewModel.chats[0].messages[0].isStreaming)
+        XCTAssertNil(viewModel.streamingContent(for: messageId))
     }
 
     func testSendMessageBuildsImageGenerationRequestThroughInjectedExecutor() async {
@@ -173,6 +229,8 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
     func testChatModeSendsPlainVLMRequestWithoutTools() async {
         let executor = MockChatModelExecutor(events: [
+            .token("Plain "),
+            .token("answer."),
             .complete("Plain answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
         ])
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
@@ -193,6 +251,41 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests[0].backend, .vlm)
         XCTAssertNil(executor.receivedRequests[0].tools)
         XCTAssertEqual(viewModel.chats.first?.messages.last?.content, "Plain answer.")
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.performanceMetrics?.outputTokenCount, 2)
+        XCTAssertNotNil(viewModel.chats.first?.messages.last?.performanceMetrics?.timeToFirstToken)
+        XCTAssertNotNil(viewModel.chats.first?.messages.last?.performanceMetrics?.tokensPerSecond)
+    }
+
+    func testChatModeUsesBridgeTokensPerSecondWhenAvailable() async {
+        let executor = MockChatModelExecutor(events: [
+            .token("Plain "),
+            .token("answer."),
+            .complete(
+                "Plain answer.",
+                usage: TokenUsage(
+                    promptTokens: 1,
+                    completionTokens: 2,
+                    generationTokensPerSecond: 18.75
+                )
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.chat)
+        viewModel.inputText = "Explain this simply"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.performanceMetrics?.outputTokenCount, 2)
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.performanceMetrics?.tokensPerSecond, 18.75)
     }
 
     func testChatModeBlocksParsedToolCallWhenToolsAreUnavailable() async {

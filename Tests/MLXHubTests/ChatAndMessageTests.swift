@@ -130,7 +130,14 @@ final class ChatAndMessageTests: XCTestCase {
             toolCall: ToolCall(toolName: "test", status: "done", icon: "test"),
             isStreaming: false,
             imageURLs: [URL(fileURLWithPath: "/test.png")],
-            audioURLs: [URL(fileURLWithPath: "/test.wav")]
+            audioURLs: [URL(fileURLWithPath: "/test.wav")],
+            performanceMetrics: GenerationPerformanceMetrics(
+                timeToFirstToken: 0.25,
+                tokensPerSecond: 42,
+                outputTokenCount: 21,
+                totalDuration: 1.2,
+                measuredAt: Date(timeIntervalSince1970: 1000001)
+            )
         )
 
         let encoder = JSONEncoder()
@@ -148,6 +155,26 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertEqual(decodedMessage.toolCalls.first?.toolName, "test")
         XCTAssertEqual(decodedMessage.imageURLs.count, 1)
         XCTAssertEqual(decodedMessage.audioURLs.count, 1)
+        XCTAssertEqual(decodedMessage.performanceMetrics?.outputTokenCount, 21)
+        XCTAssertEqual(decodedMessage.performanceMetrics?.tokensPerSecond, 42)
+    }
+
+    func testGenerationPerformanceMetricsPrefersBridgeTokensPerSecond() {
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let firstOutputAt = Date(timeIntervalSince1970: 101)
+        let completedAt = Date(timeIntervalSince1970: 111)
+
+        let metrics = GenerationPerformanceMetrics.measured(
+            startedAt: startedAt,
+            firstOutputAt: firstOutputAt,
+            completedAt: completedAt,
+            outputTokenCount: 10,
+            backendTokensPerSecond: 4.5
+        )
+
+        XCTAssertEqual(metrics.timeToFirstToken, 1)
+        XCTAssertEqual(metrics.outputTokenCount, 10)
+        XCTAssertEqual(metrics.tokensPerSecond, 4.5)
     }
 
     func testMessageDecodingWithLegacyToolCallKey() throws {

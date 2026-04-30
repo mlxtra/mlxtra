@@ -9,6 +9,7 @@ import sys
 import json
 import os
 import gc
+import math
 import re
 import signal
 import selectors
@@ -38,6 +39,41 @@ MUSIC_MODEL_REGISTRY: Dict[str, Any] = {}
 def log_debug(msg: str):
     """Log debug message to stderr (not stdout, which is for JSON only)"""
     print(msg, file=sys.stderr, flush=True)
+
+
+def _positive_finite_float(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _chat_performance_payload(
+    *,
+    prompt_tps: Any = None,
+    generation_tps: Any = None,
+    peak_memory_gb: Any = None,
+    completion_tokens: int = 0,
+) -> Dict[str, float]:
+    metrics: Dict[str, float] = {}
+
+    prompt_tokens_per_second = _positive_finite_float(prompt_tps)
+    if prompt_tokens_per_second is not None:
+        metrics["prompt_tokens_per_second"] = prompt_tokens_per_second
+
+    generation_tokens_per_second = _positive_finite_float(generation_tps)
+    if generation_tokens_per_second is not None:
+        metrics["generation_tokens_per_second"] = generation_tokens_per_second
+        metrics["tokens_per_second"] = generation_tokens_per_second
+        if completion_tokens > 0:
+            metrics["generation_duration"] = completion_tokens / generation_tokens_per_second
+
+    peak_memory = _positive_finite_float(peak_memory_gb)
+    if peak_memory is not None:
+        metrics["peak_memory_gb"] = peak_memory
+
+    return metrics
 
 
 def get_request_id(request: Optional[dict] = None) -> Optional[str]:
@@ -510,6 +546,9 @@ def handle_chat_completion(request: dict) -> None:
         full_response = ""
         prompt_tokens = 0
         completion_tokens = 0
+        prompt_tps = None
+        generation_tps = None
+        peak_memory_gb = None
         enable_thinking = bool(chat_template_kwargs.get("enable_thinking", False))
 
         if enable_thinking:
@@ -540,6 +579,9 @@ def handle_chat_completion(request: dict) -> None:
             full_response += token
             prompt_tokens = chunk.prompt_tokens
             completion_tokens = chunk.generation_tokens
+            prompt_tps = getattr(chunk, "prompt_tps", prompt_tps)
+            generation_tps = getattr(chunk, "generation_tps", generation_tps)
+            peak_memory_gb = getattr(chunk, "peak_memory", peak_memory_gb)
 
             send_json(
                 {
@@ -551,31 +593,38 @@ def handle_chat_completion(request: dict) -> None:
 
         parsed_tool_calls = parse_tool_calls(full_response)
 
+        performance = _chat_performance_payload(
+            prompt_tps=prompt_tps,
+            generation_tps=generation_tps,
+            peak_memory_gb=peak_memory_gb,
+            completion_tokens=completion_tokens,
+        )
+
         if parsed_tool_calls:
-            send_json(
-                {
-                    "type": "chat.completion.tool_calls",
-                    "tool_calls": parsed_tool_calls,
-                    "content": full_response,
-                    "usage": {
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                    },
+            payload = {
+                "type": "chat.completion.tool_calls",
+                "tool_calls": parsed_tool_calls,
+                "content": full_response,
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
                 },
-                request=request,
-            )
+            }
+            if performance:
+                payload["performance"] = performance
+            send_json(payload, request=request)
         else:
-            send_json(
-                {
-                    "type": "chat.completion.complete",
-                    "choices": [{"message": {"content": full_response}}],
-                    "usage": {
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                    },
+            payload = {
+                "type": "chat.completion.complete",
+                "choices": [{"message": {"content": full_response}}],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
                 },
-                request=request,
-            )
+            }
+            if performance:
+                payload["performance"] = performance
+            send_json(payload, request=request)
 
         mx.clear_cache()
         gc.collect()

@@ -50,6 +50,7 @@ struct SettingsView: View {
             }
         }
         .frame(width: 900, height: 680)
+        .accessibilityIdentifier("settings.window")
         .onAppear {
             downloadManager.refreshStatuses()
         }
@@ -624,7 +625,7 @@ private struct CapabilitySetupCard: View {
             Button {
                 onDownload(item.model)
             } label: {
-                Label(item.state.isFailed ? "Retry" : "Download", systemImage: item.state.isFailed ? "arrow.clockwise" : "arrow.down.circle")
+                Label(item.state.recoveryActionTitle, systemImage: item.state.recoveryActionIcon)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
@@ -650,7 +651,7 @@ private struct CapabilitySetupCard: View {
         case .paused:
             return "Paused"
         case .failed:
-            return "Needs retry"
+            return item.state.failureStatusTitle
         case .notDownloaded:
             return "Missing"
         }
@@ -665,7 +666,7 @@ private struct CapabilitySetupCard: View {
         case .paused:
             return "pause.circle.fill"
         case .failed:
-            return "exclamationmark.triangle.fill"
+            return item.state.failureStatusIcon
         case .notDownloaded:
             return "arrow.down.circle"
         }
@@ -680,7 +681,7 @@ private struct CapabilitySetupCard: View {
         case .paused:
             return .orange
         case .failed:
-            return .red
+            return item.state.failureTint
         case .notDownloaded:
             return .secondary
         }
@@ -817,7 +818,7 @@ private struct BestModelCard: View {
             Button {
                 onDownload()
             } label: {
-                Label(state.isFailed ? "Retry" : "Download", systemImage: state.isFailed ? "arrow.clockwise" : "arrow.down.circle")
+                Label(state.recoveryActionTitle, systemImage: state.recoveryActionIcon)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
@@ -1061,6 +1062,7 @@ private struct ModelDownloadRow: View {
                 pendingDownloadModelId = ""
             }
         }
+        .accessibilityIdentifier("settings.modelRow.\(model.accessibilityIdentifierComponent)")
     }
 
     @ViewBuilder
@@ -1080,6 +1082,7 @@ private struct ModelDownloadRow: View {
                     Label("Download", systemImage: "arrow.down.circle")
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("settings.modelState.missing")
             }
 
         case .downloading(let progress):
@@ -1129,6 +1132,7 @@ private struct ModelDownloadRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+            .accessibilityIdentifier("settings.modelState.downloading")
 
         case .paused(let progress):
             VStack(alignment: .trailing, spacing: 6) {
@@ -1159,17 +1163,20 @@ private struct ModelDownloadRow: View {
                 }
                 .controlSize(.small)
             }
+            .accessibilityIdentifier("settings.modelState.paused")
 
         case .downloaded:
             Label("Ready", systemImage: "checkmark.circle.fill")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.green)
+                .accessibilityIdentifier("settings.modelState.ready")
 
         case .failed(let message):
+            let failedState = ModelDownloadManager.DownloadState.failed(message)
             VStack(alignment: .trailing, spacing: 6) {
-                Label("Failed", systemImage: "exclamationmark.triangle.fill")
+                Label(failedState.failureStatusTitle, systemImage: failedState.failureStatusIcon)
                     .font(.callout.weight(.medium))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(failedState.failureTint)
 
                 Text(message)
                     .font(.caption)
@@ -1180,9 +1187,15 @@ private struct ModelDownloadRow: View {
                 Button {
                     downloadManager.download(model)
                 } label: {
-                    Label("Retry", systemImage: "arrow.clockwise")
+                    Label(failedState.recoveryActionTitle, systemImage: failedState.recoveryActionIcon)
                 }
+                .accessibilityIdentifier(
+                    failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
+                )
             }
+            .accessibilityIdentifier(
+                failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
+            )
         }
     }
 
@@ -1246,7 +1259,7 @@ private struct RequiredDownloadCallout: View {
             Button {
                 onDownload()
             } label: {
-                Label(state.isFailed ? "Retry" : "Download", systemImage: state.isFailed ? "arrow.clockwise" : "arrow.down.circle")
+                Label(state.recoveryActionTitle, systemImage: state.recoveryActionIcon)
             }
             .buttonStyle(.borderedProminent)
 
@@ -1382,6 +1395,44 @@ private extension ModelDownloadManager.DownloadState {
         }
         return false
     }
+
+    var recoveryActionTitle: String {
+        switch self {
+        case .failed:
+            return isRepairableFailure ? "Repair" : "Retry"
+        case .notDownloaded:
+            return "Download"
+        case .paused:
+            return "Resume"
+        case .downloaded, .downloading:
+            return ""
+        }
+    }
+
+    var recoveryActionIcon: String {
+        switch self {
+        case .failed:
+            return isRepairableFailure ? "wrench.and.screwdriver" : "arrow.clockwise"
+        case .notDownloaded:
+            return "arrow.down.circle"
+        case .paused:
+            return "play.fill"
+        case .downloaded, .downloading:
+            return "checkmark.circle.fill"
+        }
+    }
+
+    var failureStatusTitle: String {
+        isRepairableFailure ? "Needs repair" : "Failed"
+    }
+
+    var failureStatusIcon: String {
+        isRepairableFailure ? "wrench.and.screwdriver.fill" : "exclamationmark.triangle.fill"
+    }
+
+    var failureTint: Color {
+        isRepairableFailure ? .orange : .red
+    }
 }
 
 private extension ModelModality {
@@ -1407,6 +1458,13 @@ private extension ModelFit {
 }
 
 private extension DownloadableModel {
+    var accessibilityIdentifierComponent: String {
+        id.unicodeScalars.map { scalar in
+            CharacterSet.alphanumerics.contains(scalar) ? String(scalar) : "-"
+        }
+        .joined()
+    }
+
     func matchesDownloadSearch(_ query: String) -> Bool {
         name.localizedCaseInsensitiveContains(query)
             || subtitle.localizedCaseInsensitiveContains(query)

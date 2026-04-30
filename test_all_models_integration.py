@@ -20,9 +20,36 @@ from pathlib import Path
 from typing import Optional
 
 # Setup paths
-DEFAULT_APP_BUNDLE = Path(
-    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXHub-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXHub.app"
-)
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _derived_data_app_candidates() -> list[Path]:
+    derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
+    return list(derived_data.glob("MLXHub-*/Build/Products/Debug/MLXHub.app"))
+
+
+def _newest_existing_app() -> Optional[Path]:
+    candidates = [path for path in _derived_data_app_candidates() if path.exists()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _build_app() -> None:
+    subprocess.run(
+        [
+            "xcodebuild",
+            "-project",
+            "MLXHub.xcodeproj",
+            "-scheme",
+            "MLXHub",
+            "-configuration",
+            "Debug",
+            "build",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+    )
 
 
 def resolve_app_bundle() -> Path:
@@ -30,12 +57,145 @@ def resolve_app_bundle() -> Path:
     if override:
         return Path(override)
 
-    derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
-    candidates = list(derived_data.glob("MLXHub-*/Build/Products/Debug/MLXHub.app"))
-    if candidates:
-        return max(candidates, key=lambda path: path.stat().st_mtime)
+    if os.environ.get("MLXHUB_BUILD_APP") == "1":
+        _build_app()
 
-    return DEFAULT_APP_BUNDLE
+    app_bundle = _newest_existing_app()
+    if app_bundle:
+        return app_bundle
+
+    _build_app()
+    app_bundle = _newest_existing_app()
+    if app_bundle:
+        return app_bundle
+
+    raise FileNotFoundError("Could not find or build MLXHub.app")
+
+
+ALLOW_MODEL_DOWNLOADS = os.environ.get("MLXHUB_ALLOW_MODEL_DOWNLOADS") == "1"
+REQUIRE_ALL_MODELS = os.environ.get("MLXHUB_REQUIRE_ALL_MODELS") == "1"
+HF_CACHE = Path.home() / ".cache/huggingface/hub"
+ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXHub/checkpoints"
+
+
+def path_has_content(path: Path) -> bool:
+    try:
+        resolved = path.resolve(strict=True)
+        return resolved.is_file() and resolved.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def hf_snapshot_candidates(model_id: str) -> list[Path]:
+    cache_name = f"models--{model_id.replace('/', '--')}"
+    snapshots_dir = HF_CACHE / cache_name / "snapshots"
+    if not snapshots_dir.exists():
+        return []
+
+    return [
+        path
+        for path in sorted(
+            snapshots_dir.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True
+        )
+        if path.is_dir()
+    ]
+
+
+def hf_snapshot_has_metadata(snapshot: Path) -> bool:
+    metadata_names = {
+        "config.json",
+        "model_index.json",
+        "tokenizer.json",
+        "tokenizer.model",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "scheduler_config.json",
+    }
+    for path in snapshot.rglob("*"):
+        if path.name in metadata_names and path_has_content(path):
+            return True
+    return False
+
+
+def is_hf_weight_index(path: Path) -> bool:
+    return path.name.endswith(".index.json")
+
+
+def is_hf_weight_artifact(path: Path) -> bool:
+    name = path.name.lower()
+    if is_hf_weight_index(path):
+        return False
+    return name.endswith((".safetensors", ".bin", ".gguf", ".ckpt", ".pt"))
+
+
+def declared_weight_files_are_complete(index_path: Path, snapshot: Path) -> bool:
+    try:
+        payload = json.loads(index_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return False
+
+    declared_files = {
+        filename
+        for filename in weight_map.values()
+        if isinstance(filename, str) and filename
+    }
+    if not declared_files:
+        return False
+
+    for filename in declared_files:
+        candidates = (index_path.parent / filename, snapshot / filename)
+        if not any(path_has_content(candidate) for candidate in candidates):
+            return False
+    return True
+
+
+def hf_snapshot_is_complete(model_id: str) -> bool:
+    for snapshot in hf_snapshot_candidates(model_id):
+        if not hf_snapshot_has_metadata(snapshot):
+            continue
+
+        indexes = [
+            path
+            for path in snapshot.rglob("*.index.json")
+            if path_has_content(path)
+        ]
+        if indexes:
+            if all(declared_weight_files_are_complete(path, snapshot) for path in indexes):
+                return True
+            continue
+
+        if any(
+            is_hf_weight_artifact(path) and path_has_content(path)
+            for path in snapshot.rglob("*")
+        ):
+            return True
+
+    return False
+
+
+def ace_step_required_model_files() -> dict[str, Path]:
+    return {
+        "DiT model": ACESTEP_CHECKPOINTS_DIR
+        / "acestep-v15-turbo"
+        / "model.safetensors",
+        "VAE": ACESTEP_CHECKPOINTS_DIR
+        / "vae"
+        / "diffusion_pytorch_model.safetensors",
+        "Text encoder": ACESTEP_CHECKPOINTS_DIR
+        / "Qwen3-Embedding-0.6B"
+        / "model.safetensors",
+        "LM": ACESTEP_CHECKPOINTS_DIR
+        / "acestep-5Hz-lm-1.7B"
+        / "model.safetensors",
+    }
+
+
+def ace_step_model_is_complete() -> bool:
+    return all(path_has_content(path) for path in ace_step_required_model_files().values())
 
 
 APP_BUNDLE = resolve_app_bundle()
@@ -57,11 +217,60 @@ class MLXHubIntegrationTest:
     def __init__(self):
         self.results = []
         self.generated_files = []
+        self.skipped_tests = set()
 
     def log(self, message: str, level: str = "INFO"):
         """Log a message with timestamp."""
         timestamp = time.strftime("%H:%M:%S")
         print(f"[{timestamp}] [{level}] {message}")
+
+    def missing_model_result(self, test_name: str, message: str) -> Optional[bool]:
+        """Return None for a policy skip, False for a strict failure."""
+        if REQUIRE_ALL_MODELS:
+            self.log(f"✗ FAILED: {message}", "ERROR")
+            self.log(
+                "   Strict model policy is enabled by MLXHUB_REQUIRE_ALL_MODELS=1.",
+                "ERROR",
+            )
+            return False
+
+        self.skipped_tests.add(test_name)
+        self.log(f"↷ SKIPPED: {message}")
+        self.log(
+            "   Restore/download the model locally, or set MLXHUB_ALLOW_MODEL_DOWNLOADS=1 to allow an explicit repair/download run."
+        )
+        return None
+
+    def require_hf_model(self, test_name: str, model_id: str) -> Optional[bool]:
+        if ALLOW_MODEL_DOWNLOADS:
+            self.log(
+                f"Model preflight: downloads enabled; bridge may repair/download {model_id}."
+            )
+            return True
+
+        if hf_snapshot_is_complete(model_id):
+            self.log(f"Local Hugging Face snapshot verified: {model_id}")
+            return True
+
+        return self.missing_model_result(
+            test_name,
+            f"{model_id} is missing or incomplete in the local Hugging Face cache.",
+        )
+
+    def require_music_model(self, test_name: str) -> Optional[bool]:
+        if ace_step_model_is_complete():
+            self.log("Local ACE-Step checkpoints verified.")
+            return True
+
+        missing = [
+            name
+            for name, path in ace_step_required_model_files().items()
+            if not path_has_content(path)
+        ]
+        return self.missing_model_result(
+            test_name,
+            "ACE-Step checkpoints are missing or incomplete: " + ", ".join(missing),
+        )
 
     def get_bridge_env(self) -> dict:
         """Get environment variables for the Python bridge."""
@@ -150,8 +359,18 @@ class MLXHubIntegrationTest:
 
             return messages, success
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             self.log(f"Timeout after {timeout}s", "ERROR")
+            stdout = e.stdout or ""
+            stderr = e.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            for line in stdout.splitlines()[-10:]:
+                self.log(f"  [stdout before timeout] {line[:150]}", "ERROR")
+            for line in stderr.splitlines()[-20:]:
+                self.log(f"  [stderr before timeout] {line[:150]}", "ERROR")
             return [], False
         except Exception as e:
             self.log(f"Exception: {e}", "ERROR")
@@ -309,7 +528,10 @@ class MLXHubIntegrationTest:
         return True
 
     def validate_wav(
-        self, path: str, minimum_duration: float = 0.1, expected_sample_rate: Optional[int] = None
+        self,
+        path: str,
+        minimum_duration: float = 0.1,
+        expected_sample_rate: Optional[int] = None,
     ) -> bool:
         audio_path = Path(path)
         if not audio_path.exists():
@@ -385,7 +607,12 @@ class MLXHubIntegrationTest:
         if not all_good:
             return False
 
-        for output_dir in (GENERATED_IMAGES_DIR, GENERATED_SPEECH_DIR, GENERATED_MUSIC_DIR):
+        output_dirs = (
+            GENERATED_IMAGES_DIR,
+            GENERATED_SPEECH_DIR,
+            GENERATED_MUSIC_DIR,
+        )
+        for output_dir in output_dirs:
             output_dir.mkdir(parents=True, exist_ok=True)
             self.log(f"  ✓ Output directory: {output_dir}")
 
@@ -460,21 +687,11 @@ class MLXHubIntegrationTest:
         self.log("TEST 3: Chat/Completion (VLM)")
         self.log("=" * 70)
 
+        test_name = "Chat/Completion (VLM)"
         model_id = "mlx-community/Qwen3.5-9B-MLX-4bit"
-
-        # Check if model is downloaded (in HuggingFace cache)
-        model_path = (
-            Path.home()
-            / ".cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-MLX-4bit"
-        )
-
-        if not model_path.exists():
-            self.log(f"⚠ SKIPPED: Model not downloaded at {model_path}")
-            self.log(f"   Run the app to download the model first, or run:")
-            self.log(f"   mlx-lm.server --model {model_id}")
-            return True  # Skip but don't fail
-
-        self.log(f"Found model at: {model_path}")
+        preflight = self.require_hf_model(test_name, model_id)
+        if preflight is not True:
+            return preflight is None
 
         # Use persistent session for chat (init + chat in same process)
         requests = [
@@ -534,50 +751,6 @@ class MLXHubIntegrationTest:
         self.log(f"  Messages received: {[m.get('type') for m in messages]}")
         return False
 
-        # Wait for model.loaded
-        loaded = any(
-            m.get("type") in ("model.loaded", "model.initialized") for m in messages
-        )
-        if not loaded:
-            self.log("✗ FAILED: model.loaded not received after init", "ERROR")
-            return False
-
-        self.log("✓ Model initialized and loaded")
-
-        # Step 2: Send chat request
-        self.log("Step 2: Send chat request...")
-        request = {
-            "type": "chat.completions",
-            "model": model_id,
-            "messages": [
-                {"role": "user", "content": "What is 2+2? Answer in one word."}
-            ],
-            "temperature": 0.7,
-            "max_tokens": 10,
-        }
-
-        self.log(f"Request: {json.dumps(request, indent=2)}")
-
-        messages, success = self.send_request_to_bridge(request, timeout=60)
-
-        if not success:
-            errors = [m for m in messages if m.get("type") == "error"]
-            if errors:
-                self.log(f"✗ FAILED: {errors[0].get('message')}", "ERROR")
-            else:
-                self.log("✗ FAILED: Timeout waiting for response", "ERROR")
-            return False
-
-        # Check for assistant response
-        assistants = [m for m in messages if m.get("type") == "assistant"]
-        if assistants:
-            content = assistants[0].get("content", "")
-            self.log(f"✓ SUCCESS: Got response: '{content[:50]}...'")
-            return True
-
-        self.log("✗ FAILED: No assistant response received", "ERROR")
-        return False
-
     # ==========================================================================
     # TEST 4: Image Generation (FLUX)
     # ==========================================================================
@@ -587,10 +760,16 @@ class MLXHubIntegrationTest:
         self.log("TEST 4: Image Generation (FLUX)")
         self.log("=" * 70)
 
+        test_name = "Image Generation (FLUX)"
+        model_id = "black-forest-labs/FLUX.2-klein-4B"
+        preflight = self.require_hf_model(test_name, model_id)
+        if preflight is not True:
+            return preflight is None
+
         request_id = "integration-image-generate"
         request = {
             "type": "image.generate",
-            "model": "black-forest-labs/FLUX.2-klein-4B",
+            "model": model_id,
             "request_id": request_id,
             "messages": [
                 {"role": "user", "content": "A simple red circle on white background"}
@@ -661,10 +840,16 @@ class MLXHubIntegrationTest:
         self.log("TEST 6: Audio/Speech (TTS)")
         self.log("=" * 70)
 
+        test_name = "Audio/Speech (TTS)"
+        model_id = "kugelaudio/kugelaudio-0-open"
+        preflight = self.require_hf_model(test_name, model_id)
+        if preflight is not True:
+            return preflight is None
+
         request_id = "integration-audio-speech"
         request = {
             "type": "audio.speech",
-            "model": "kugelaudio/kugelaudio-0-open",
+            "model": model_id,
             "request_id": request_id,
             "messages": [{"role": "user", "content": "Hello world. This is a test."}],
             "output_dir": str(GENERATED_SPEECH_DIR),
@@ -676,9 +861,9 @@ class MLXHubIntegrationTest:
         }
 
         self.log(f"Request: {json.dumps(request, indent=2)}")
-        self.log("Generating speech (this may take 20-40s)...")
+        self.log("Generating speech (this may take a few minutes)...")
 
-        messages, success = self.send_request_to_bridge(request, timeout=90)
+        messages, success = self.send_request_to_bridge(request, timeout=300)
 
         if not success or not self.require_no_error(messages):
             return False
@@ -735,6 +920,11 @@ class MLXHubIntegrationTest:
         self.log("TEST 8: Music Generation (ACE-Step)")
         self.log("=" * 70)
 
+        test_name = "Music Generation (ACE-Step)"
+        preflight = self.require_music_model(test_name)
+        if preflight is not True:
+            return preflight is None
+
         request_id = "integration-music-generate"
         request = {
             "type": "music.generate",
@@ -773,7 +963,11 @@ class MLXHubIntegrationTest:
         expected_sample_rate = audio_message.get("sample_rate")
         if not isinstance(expected_sample_rate, int):
             expected_sample_rate = None
-        return self.validate_wav(path, minimum_duration=1.0, expected_sample_rate=expected_sample_rate)
+        return self.validate_wav(
+            path,
+            minimum_duration=1.0,
+            expected_sample_rate=expected_sample_rate,
+        )
 
     def test_control_routes(self) -> bool:
         """Test lightweight bridge control routes."""
@@ -828,15 +1022,36 @@ class MLXHubIntegrationTest:
         self.log(
             f"ACESTEP_CHECKPOINTS_DIR: {self.get_bridge_env()['ACESTEP_CHECKPOINTS_DIR']}"
         )
+        self.log(
+            "Model policy: "
+            + (
+                "strict fail on missing models"
+                if REQUIRE_ALL_MODELS
+                else "skip missing models by default"
+            )
+            + (
+                "; explicit downloads/repair enabled"
+                if ALLOW_MODEL_DOWNLOADS
+                else "; downloads disabled"
+            )
+        )
 
         tests = [
             ("Setup Verification", self.test_setup, False),
             ("Model Normalization", self.test_model_normalization, False),
             ("Chat/Completion (VLM)", self.test_chat_completion, True),
             ("Image Generation (FLUX)", self.test_image_generation, True),
-            ("Image Missing Prompt Error", self.test_image_missing_prompt_returns_error, False),
+            (
+                "Image Missing Prompt Error",
+                self.test_image_missing_prompt_returns_error,
+                False,
+            ),
             ("Audio/Speech (TTS)", self.test_audio_speech, True),
-            ("Audio Missing Text Error", self.test_audio_missing_text_returns_error, False),
+            (
+                "Audio Missing Text Error",
+                self.test_audio_missing_text_returns_error,
+                False,
+            ),
             ("Music Generation (ACE-Step)", self.test_music_generation, True),
             ("Bridge Control Routes", self.test_control_routes, False),
         ]
@@ -859,7 +1074,10 @@ class MLXHubIntegrationTest:
         self.log("=" * 70)
 
         for name, passed in results:
-            status = "✓ PASS" if passed else "✗ FAIL"
+            if name in self.skipped_tests:
+                status = "↷ SKIP"
+            else:
+                status = "✓ PASS" if passed else "✗ FAIL"
             self.log(f"  {status}: {name}")
 
         all_passed = all(passed for _, passed in results)

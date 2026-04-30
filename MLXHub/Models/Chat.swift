@@ -35,6 +35,7 @@ struct Message: Identifiable, Codable {
     var isStreaming: Bool
     var imageURLs: [URL]
     var audioURLs: [URL]
+    var performanceMetrics: GenerationPerformanceMetrics?
     
     init(
         id: UUID = UUID(),
@@ -44,7 +45,8 @@ struct Message: Identifiable, Codable {
         toolCall: ToolCall? = nil,
         isStreaming: Bool = false,
         imageURLs: [URL] = [],
-        audioURLs: [URL] = []
+        audioURLs: [URL] = [],
+        performanceMetrics: GenerationPerformanceMetrics? = nil
     ) {
         self.id = id
         self.content = content
@@ -54,6 +56,7 @@ struct Message: Identifiable, Codable {
         self.isStreaming = isStreaming
         self.imageURLs = imageURLs
         self.audioURLs = audioURLs
+        self.performanceMetrics = performanceMetrics
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -66,6 +69,7 @@ struct Message: Identifiable, Codable {
         case isStreaming
         case imageURLs
         case audioURLs
+        case performanceMetrics
     }
 
     init(from decoder: Decoder) throws {
@@ -77,6 +81,7 @@ struct Message: Identifiable, Codable {
         isStreaming = try container.decode(Bool.self, forKey: .isStreaming)
         imageURLs = try container.decodeIfPresent([URL].self, forKey: .imageURLs) ?? []
         audioURLs = try container.decodeIfPresent([URL].self, forKey: .audioURLs) ?? []
+        performanceMetrics = try container.decodeIfPresent(GenerationPerformanceMetrics.self, forKey: .performanceMetrics)
 
         if let decodedToolCalls = try container.decodeIfPresent([ToolCall].self, forKey: .toolCalls) {
             toolCalls = decodedToolCalls
@@ -97,6 +102,54 @@ struct Message: Identifiable, Codable {
         try container.encode(isStreaming, forKey: .isStreaming)
         try container.encode(imageURLs, forKey: .imageURLs)
         try container.encode(audioURLs, forKey: .audioURLs)
+        try container.encodeIfPresent(performanceMetrics, forKey: .performanceMetrics)
+    }
+}
+
+struct GenerationPerformanceMetrics: Codable, Equatable {
+    var timeToFirstToken: TimeInterval?
+    var tokensPerSecond: Double?
+    var outputTokenCount: Int
+    var totalDuration: TimeInterval
+    var measuredAt: Date
+
+    init(
+        timeToFirstToken: TimeInterval? = nil,
+        tokensPerSecond: Double? = nil,
+        outputTokenCount: Int = 0,
+        totalDuration: TimeInterval,
+        measuredAt: Date = Date()
+    ) {
+        self.timeToFirstToken = timeToFirstToken
+        self.tokensPerSecond = tokensPerSecond
+        self.outputTokenCount = outputTokenCount
+        self.totalDuration = totalDuration
+        self.measuredAt = measuredAt
+    }
+
+    static func measured(
+        startedAt: Date,
+        firstOutputAt: Date?,
+        completedAt: Date = Date(),
+        outputTokenCount: Int,
+        backendTokensPerSecond: Double? = nil
+    ) -> GenerationPerformanceMetrics {
+        let totalDuration = max(completedAt.timeIntervalSince(startedAt), 0)
+        let timeToFirstToken = firstOutputAt.map { max($0.timeIntervalSince(startedAt), 0) }
+        let tokenDuration = firstOutputAt.map { max(completedAt.timeIntervalSince($0), 0.001) } ?? max(totalDuration, 0.001)
+        let appMeasuredTokensPerSecond = outputTokenCount > 0 ? Double(outputTokenCount) / tokenDuration : nil
+        let bridgeTokensPerSecond = backendTokensPerSecond.flatMap { value in
+            value.isFinite && value > 0 ? value : nil
+        }
+        let tokensPerSecond = bridgeTokensPerSecond ?? appMeasuredTokensPerSecond
+
+        return GenerationPerformanceMetrics(
+            timeToFirstToken: timeToFirstToken,
+            tokensPerSecond: tokensPerSecond,
+            outputTokenCount: outputTokenCount,
+            totalDuration: totalDuration,
+            measuredAt: completedAt
+        )
     }
 }
 

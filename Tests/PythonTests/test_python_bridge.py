@@ -2,6 +2,7 @@
 """Unit tests for python_bridge.py"""
 
 import json
+import io
 import os
 import subprocess
 import sys
@@ -152,6 +153,83 @@ class TestParseToolCalls(unittest.TestCase):
         text = '{"answer": "No tool needed"}'
 
         assert python_bridge.parse_tool_calls(text) == []
+
+
+class TestChatCompletionPerformance(unittest.TestCase):
+    def test_chat_completion_emits_bridge_generation_tps_after_model_loaded(self):
+        loaded = {"value": False, "observed_by_stream": False}
+
+        def fake_load_model_if_needed(model_id, request=None):
+            loaded["value"] = True
+            return ("model", object(), {"model_type": "fake"})
+
+        def fake_apply_chat_template(processor, config, messages, num_images=0, **kwargs):
+            return "prompt"
+
+        def fake_stream_generate(*args, **kwargs):
+            loaded["observed_by_stream"] = loaded["value"]
+            yield types.SimpleNamespace(
+                text="A",
+                prompt_tokens=7,
+                generation_tokens=1,
+                prompt_tps=70.0,
+                generation_tps=10.0,
+                peak_memory=1.25,
+            )
+            yield types.SimpleNamespace(
+                text="B",
+                prompt_tokens=7,
+                generation_tokens=2,
+                prompt_tps=70.0,
+                generation_tps=12.5,
+                peak_memory=1.25,
+            )
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.stream_generate = fake_stream_generate
+        prompt_utils_module = types.ModuleType("mlx_vlm.prompt_utils")
+        prompt_utils_module.apply_chat_template = fake_apply_chat_template
+        mlx_module = types.ModuleType("mlx")
+        mlx_core_module = types.ModuleType("mlx.core")
+        mlx_core_module.clear_cache = lambda: None
+        mlx_module.core = mlx_core_module
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "request_id": "req-perf",
+        }
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mlx": mlx_module,
+                "mlx.core": mlx_core_module,
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.prompt_utils": prompt_utils_module,
+            },
+        ), patch.object(
+            python_bridge, "load_model_if_needed", fake_load_model_if_needed
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        assert loaded["observed_by_stream"] is True
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        complete = messages[-1]
+
+        assert complete["type"] == "chat.completion.complete"
+        assert complete["choices"][0]["message"]["content"] == "AB"
+        assert complete["usage"] == {"prompt_tokens": 7, "completion_tokens": 2}
+        assert complete["performance"]["tokens_per_second"] == 12.5
+        assert complete["performance"]["generation_tokens_per_second"] == 12.5
+        assert complete["performance"]["prompt_tokens_per_second"] == 70.0
+        assert complete["performance"]["generation_duration"] == 0.16
+        assert complete["performance"]["peak_memory_gb"] == 1.25
 
 
 class TestLastUserPrompt(unittest.TestCase):

@@ -128,8 +128,26 @@ enum ExecutionEvent {
 struct TokenUsage {
     let promptTokens: Int
     let completionTokens: Int
+    let promptTokensPerSecond: Double?
+    let generationTokensPerSecond: Double?
+    let peakMemoryGB: Double?
+
+    init(
+        promptTokens: Int,
+        completionTokens: Int,
+        promptTokensPerSecond: Double? = nil,
+        generationTokensPerSecond: Double? = nil,
+        peakMemoryGB: Double? = nil
+    ) {
+        self.promptTokens = promptTokens
+        self.completionTokens = completionTokens
+        self.promptTokensPerSecond = promptTokensPerSecond
+        self.generationTokensPerSecond = generationTokensPerSecond
+        self.peakMemoryGB = peakMemoryGB
+    }
     
     var totalTokens: Int { promptTokens + completionTokens }
+    var tokensPerSecond: Double? { generationTokensPerSecond }
 }
 
 /// Runtime backend types

@@ -218,6 +218,20 @@ final class ExecutionTypesTests: XCTestCase {
         XCTAssertEqual(usage.totalTokens, 150)
     }
 
+    func testTokenUsageStoresBridgePerformance() {
+        let usage = TokenUsage(
+            promptTokens: 100,
+            completionTokens: 50,
+            promptTokensPerSecond: 250,
+            generationTokensPerSecond: 25,
+            peakMemoryGB: 3.5
+        )
+
+        XCTAssertEqual(usage.promptTokensPerSecond, 250)
+        XCTAssertEqual(usage.tokensPerSecond, 25)
+        XCTAssertEqual(usage.peakMemoryGB, 3.5)
+    }
+
     func testTokenUsageZeroTokens() {
         let usage = TokenUsage(promptTokens: 0, completionTokens: 0)
         XCTAssertEqual(usage.totalTokens, 0)

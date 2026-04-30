@@ -16,6 +16,16 @@ class RuntimeManager: ObservableObject {
         case ready
         case error(String)
     }
+
+    enum ModelStorageStatus: Equatable {
+        case missing
+        case incomplete(String)
+        case downloaded
+
+        var isDownloaded: Bool {
+            self == .downloaded
+        }
+    }
     
     private var runtimeBundleURL: URL {
         // Try multiple locations for the runtime bundle
@@ -289,9 +299,17 @@ class RuntimeManager: ObservableObject {
     }
 
     nonisolated static func isModelDownloaded(modelId: String, checkpointsPath: URL) -> Bool {
+        modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath).isDownloaded
+    }
+
+    func modelStorageStatus(modelId: String) -> ModelStorageStatus {
+        Self.modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath)
+    }
+
+    nonisolated static func modelStorageStatus(modelId: String, checkpointsPath: URL) -> ModelStorageStatus {
         // Special handling for ACE-Step models - check component subdirectories under checkpoints/
         if modelId.hasPrefix("ACE-Step/") {
-            return isAceStepModelDownloaded(checkpointsPath: checkpointsPath)
+            return aceStepModelStorageStatus(checkpointsPath: checkpointsPath)
         }
 
         // For other models, check HF cache structure
@@ -303,7 +321,7 @@ class RuntimeManager: ObservableObject {
               let contents = try? FileManager.default.contentsOfDirectory(atPath: path.path),
               !contents.isEmpty else {
             print("[RuntimeManager] Model \(modelId) not in HF cache")
-            return false
+            return .missing
         }
 
         // Check for snapshots subdirectory (standard HF cache structure)
@@ -312,39 +330,53 @@ class RuntimeManager: ObservableObject {
             for snapshotPath in Self.snapshotCandidates(modelCachePath: path, snapshotsPath: snapshotsPath) {
                 if Self.snapshotContainsModelFiles(snapshotPath) {
                     print("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
-                    return true
+                    return .downloaded
                 }
             }
         }
 
-        print("[RuntimeManager] Model \(modelId) not in HF cache")
-        return false
+        print("[RuntimeManager] Model \(modelId) cache is incomplete")
+        return .incomplete("Local Hugging Face cache is incomplete. Repair will verify the snapshot and redownload missing files.")
     }
 
-/// ACE-Step models download to component subdirectories under checkpoints/
-	/// Check if all main model components exist and contain actual weight files
-	private nonisolated static func isAceStepModelDownloaded(checkpointsPath: URL) -> Bool {
-		let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
-		let checkpointsDir = checkpointsPath
+    /// ACE-Step models download to component subdirectories under checkpoints/
+    /// Check if all main model components exist and contain actual weight files
+    private nonisolated static func isAceStepModelDownloaded(checkpointsPath: URL) -> Bool {
+        aceStepModelStorageStatus(checkpointsPath: checkpointsPath).isDownloaded
+    }
 
-		print("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
+    private nonisolated static func aceStepModelStorageStatus(checkpointsPath: URL) -> ModelStorageStatus {
+        let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+        let checkpointsDir = checkpointsPath
+        var foundAnyComponent = false
+        var incompleteComponents: [String] = []
 
-		for component in aceStepComponents {
-			let componentPath = checkpointsDir.appendingPathComponent(component)
-			if !FileManager.default.fileExists(atPath: componentPath.path) {
-				print("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
-				return false
-			}
-			if !Self.containsModelWeights(at: componentPath) {
-				print("[RuntimeManager] ACE-Step component missing weight files: \(componentPath.path)")
-				return false
-			}
-			print("[RuntimeManager] ACE-Step component found with weights: \(componentPath.path)")
-		}
+        print("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
 
-		print("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
-		return true
-	}
+        for component in aceStepComponents {
+            let componentPath = checkpointsDir.appendingPathComponent(component)
+            if !FileManager.default.fileExists(atPath: componentPath.path) {
+                print("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
+                incompleteComponents.append(component)
+                continue
+            }
+            foundAnyComponent = true
+            if !Self.containsModelWeights(at: componentPath) {
+                print("[RuntimeManager] ACE-Step component missing weight files: \(componentPath.path)")
+                incompleteComponents.append(component)
+                continue
+            }
+            print("[RuntimeManager] ACE-Step component found with weights: \(componentPath.path)")
+        }
+
+        if !incompleteComponents.isEmpty {
+            guard foundAnyComponent else { return .missing }
+            return .incomplete("ACE-Step checkpoints are incomplete: \(incompleteComponents.joined(separator: ", ")). Repair will redownload missing components.")
+        }
+
+        print("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
+        return .downloaded
+    }
 
         private nonisolated static func snapshotCandidates(modelCachePath: URL, snapshotsPath: URL) -> [URL] {
             var candidates: [URL] = []

@@ -2,6 +2,10 @@ import Foundation
 
 @MainActor
 extension ChatViewModel {
+    func streamingContent(for messageId: UUID) -> StreamingMessageContent? {
+        streamingContentStore.content(for: messageId)
+    }
+
     func beginToolCallProgress(toolName: String, status: String, icon: String, details: [ToolCallDetail] = []) {
         guard let messageId = streamingMessageId else { return }
 
@@ -49,7 +53,10 @@ extension ChatViewModel {
                 toolCallId: toolCall.id,
                 name: plan.functionName
             ))
-        case .toolMessage(let content):
+        case .toolMessage(let content, let metrics):
+            if let messageId = streamingMessageId, let metrics {
+                updateMessagePerformanceMetrics(messageId, metrics: metrics)
+            }
             messages.append(ExecutionMessage(
                 role: .tool,
                 content: content,
@@ -69,6 +76,7 @@ extension ChatViewModel {
     }
 
     func clearMessageContent(_ messageId: UUID) {
+        streamingContentStore.clear(messageId: messageId)
         if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
            let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
             chats[chatIndex].messages[messageIndex].content = ""
@@ -76,10 +84,31 @@ extension ChatViewModel {
     }
 
     func updateStreamingMessage(_ messageId: UUID, content: String) {
+        if streamingContentStore.content(for: messageId) != nil {
+            streamingContentStore.update(messageId: messageId, text: content)
+            return
+        }
+
         if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
            let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
             var updatedMessages = chats[chatIndex].messages
             updatedMessages[messageIndex].content = content
+            chats[chatIndex].messages = updatedMessages
+        }
+    }
+
+    func appendStreamingMessage(_ messageId: UUID, content: String) {
+        guard !content.isEmpty else { return }
+
+        if streamingContentStore.content(for: messageId) != nil {
+            streamingContentStore.append(messageId: messageId, text: content)
+            return
+        }
+
+        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+            var updatedMessages = chats[chatIndex].messages
+            updatedMessages[messageIndex].content += content
             chats[chatIndex].messages = updatedMessages
         }
     }
@@ -115,15 +144,30 @@ extension ChatViewModel {
         }
     }
 
-    func finalizeMessage(_ messageId: UUID, content: String, usage: TokenUsage, clearToolCall: Bool = false) {
+    func updateMessagePerformanceMetrics(_ messageId: UUID, metrics: GenerationPerformanceMetrics) {
+        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+            chats[chatIndex].messages[messageIndex].performanceMetrics = metrics
+        }
+    }
+
+    func finalizeMessage(
+        _ messageId: UUID,
+        content: String,
+        usage: TokenUsage,
+        clearToolCall: Bool = false,
+        performanceMetrics: GenerationPerformanceMetrics? = nil
+    ) {
         if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
            let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
             chats[chatIndex].messages[messageIndex].content = content
             chats[chatIndex].messages[messageIndex].isStreaming = false
+            chats[chatIndex].messages[messageIndex].performanceMetrics = performanceMetrics
             if clearToolCall {
                 chats[chatIndex].messages[messageIndex].toolCalls = []
             }
             chats[chatIndex].timestamp = Date()
+            streamingContentStore.end(messageId: messageId)
             persistConversationHistory()
         }
     }
@@ -131,6 +175,10 @@ extension ChatViewModel {
     func markMessageStopped(_ messageId: UUID) {
         if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
            let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+            if let streamingContent = streamingContentStore.content(for: messageId) {
+                chats[chatIndex].messages[messageIndex].content = streamingContent.text
+                streamingContentStore.end(messageId: messageId)
+            }
             chats[chatIndex].messages[messageIndex].isStreaming = false
             persistConversationHistory()
         }
@@ -142,6 +190,7 @@ extension ChatViewModel {
            !chats[chatIndex].messages[messageIndex].isUser {
             chats[chatIndex].messages.remove(at: messageIndex)
             chats[chatIndex].timestamp = Date()
+            streamingContentStore.end(messageId: messageId)
             persistConversationHistory()
         }
     }
@@ -180,6 +229,7 @@ extension ChatViewModel {
                let messageIndex = chats[index].messages.firstIndex(where: { $0.id == messageId }) {
                 chats[index].messages[messageIndex].content = errorContent
                 chats[index].messages[messageIndex].isStreaming = false
+                streamingContentStore.end(messageId: messageId)
             } else {
                 let errorMessage = Message(
                     content: errorContent,
@@ -266,4 +316,3 @@ extension ChatViewModel: VLMExecutionDelegate {
         // Note: handleGenerationError is called by the main task catch block
     }
 }
-

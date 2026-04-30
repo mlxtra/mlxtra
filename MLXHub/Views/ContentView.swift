@@ -1,10 +1,14 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var viewModel = ChatViewModel()
+    @StateObject private var viewModel: ChatViewModel
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
+
+    init(viewModel: ChatViewModel = ChatViewModel()) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
 
     var body: some View {
         NavigationSplitView {

@@ -573,9 +573,14 @@ private final class StreamFinishState: @unchecked Sendable {
                             completedContent = responseBuilder.fullResponse
                         }
                         let usage = json["usage"] as? [String: Any]
+                        let performance = json["performance"] as? [String: Any]
                         let tokenUsage = TokenUsage(
                             promptTokens: usage?["prompt_tokens"] as? Int ?? 0,
-                            completionTokens: usage?["completion_tokens"] as? Int ?? 0
+                            completionTokens: usage?["completion_tokens"] as? Int ?? 0,
+                            promptTokensPerSecond: bridgeDouble(performance?["prompt_tokens_per_second"]),
+                            generationTokensPerSecond: bridgeDouble(performance?["generation_tokens_per_second"])
+                                ?? bridgeDouble(performance?["tokens_per_second"]),
+                            peakMemoryGB: bridgeDouble(performance?["peak_memory_gb"])
                         )
                         continuation.yield(.complete(completedContent, usage: tokenUsage))
                         if finishState.finish() {
@@ -733,6 +738,20 @@ private final class StreamFinishState: @unchecked Sendable {
 }
 
 typealias BridgeJSONMessage = [String: Any]
+
+private func bridgeDouble(_ value: Any?) -> Double? {
+    if let value = value as? Double {
+        return value.isFinite ? value : nil
+    }
+    if let value = value as? Int {
+        return Double(value)
+    }
+    if let value = value as? NSNumber {
+        let doubleValue = value.doubleValue
+        return doubleValue.isFinite ? doubleValue : nil
+    }
+    return nil
+}
 
 struct BridgeOutputRoute {
     let requestID: String?

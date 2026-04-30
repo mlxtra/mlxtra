@@ -4,12 +4,8 @@ struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @Environment(\.openSettings) private var openSettings
     let chatId: UUID
-    @State private var viewportHeight: CGFloat = 0
-    @State private var contentBottomY: CGFloat = 0
-    @State private var autoScrollEnabled = true
 
     private let bottomAnchorID = "chat-bottom-anchor"
-    private let bottomScrollThreshold: CGFloat = 80
 
     // Access chat through viewModel so updates are observed
     var chat: Chat? {
@@ -21,12 +17,7 @@ struct ChatView: View {
     }
 
     private var hasStreamingProgressSurface: Bool {
-        guard let message = streamingAssistantMessage else { return false }
-
-        return !message.toolCalls.isEmpty
-            || !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !message.imageURLs.isEmpty
-            || !message.audioURLs.isEmpty
+        streamingAssistantMessage != nil
     }
 
     private var shouldShowTypingIndicator: Bool {
@@ -54,17 +45,14 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 16) {
                         ForEach(chat?.messages ?? []) { message in
-                            if shouldShowTypingIndicator && message.id == streamingAssistantMessage?.id {
-                                EmptyView()
-                            } else {
-                                MessageBubble(
-                                    message: message,
-                                    isStreaming: message.isStreaming,
-                                    onOpenModels: { openSettings() },
-                                    onRestartLocalEngine: viewModel.restartLocalEngine
-                                )
-                                .id(message.id)
-                            }
+                            MessageBubble(
+                                message: message,
+                                isStreaming: message.isStreaming,
+                                streamingContent: viewModel.streamingContent(for: message.id),
+                                onOpenModels: { openSettings() },
+                                onRestartLocalEngine: viewModel.restartLocalEngine
+                            )
+                            .id(message.id)
                         }
 
                         if shouldShowTypingIndicator {
@@ -75,51 +63,23 @@ struct ChatView: View {
                         Color.clear
                             .frame(height: 1)
                             .id(bottomAnchorID)
-                            .background(
-                                GeometryReader { geometry in
-                                    Color.clear.preference(
-                                        key: ChatContentBottomPreferenceKey.self,
-                                        value: geometry.frame(in: .named("ChatScrollView")).maxY
-                                    )
-                                }
-                            )
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
-                }
-                .coordinateSpace(name: "ChatScrollView")
-                .background(
-                    GeometryReader { geometry in
-                        Color.clear.preference(key: ChatViewportHeightPreferenceKey.self, value: geometry.size.height)
-                    }
-                )
-                .onPreferenceChange(ChatViewportHeightPreferenceKey.self) { height in
-                    viewportHeight = height
-                    updateAutoScrollState()
-                }
-                .onPreferenceChange(ChatContentBottomPreferenceKey.self) { bottomY in
-                    contentBottomY = bottomY
-                    updateAutoScrollState()
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .onAppear {
                     DispatchQueue.main.async {
-                        proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                        scrollToBottom(proxy)
                     }
                 }
-                .onChange(of: viewModel.chats) { _, _ in
-                    // Trigger update when chats array changes
-                }
                 .onChange(of: chat?.messages.count) { _, _ in
-                    scrollToBottomIfNeeded(proxy)
+                    scrollToBottom(proxy)
                 }
                 .onChange(of: viewModel.isGenerating) { _, isGenerating in
                     if isGenerating {
-                        scrollToBottomIfNeeded(proxy)
-                    }
-                }
-                .onChange(of: chat?.messages.last?.content) { _, _ in
-                    if viewModel.isGenerating {
-                        scrollToBottomIfNeeded(proxy)
+                        scrollToBottom(proxy)
                     }
                 }
             }
@@ -133,32 +93,10 @@ struct ChatView: View {
         .background(Color(NSColor.windowBackgroundColor))
     }
 
-    private func scrollToBottomIfNeeded(_ proxy: ScrollViewProxy) {
-        guard autoScrollEnabled else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
             proxy.scrollTo(bottomAnchorID, anchor: .bottom)
         }
-    }
-
-    private func updateAutoScrollState() {
-        guard viewportHeight > 0 else { return }
-        autoScrollEnabled = contentBottomY <= viewportHeight + bottomScrollThreshold
-    }
-}
-
-private struct ChatViewportHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct ChatContentBottomPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
