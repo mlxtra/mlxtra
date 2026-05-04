@@ -112,10 +112,24 @@ final class StreamingMessageContentStore {
     }
 }
 
+struct ChatSidebarMetadata {
+    let icon: String
+    let preview: String
+}
+
 @MainActor
 class ChatViewModel: ObservableObject {
+    // MARK: - Performance Caches
+    private var cachedRecentChats: [Chat] = []
+    private var _cachedRecentChatsRevision: UInt = 0
+    private var chatsSortRevision: UInt = 0
+    private var sidebarMetadataCache: [UUID: ChatSidebarMetadata] = [:]
+    private var _sidebarMetadataRevision: UInt = 0
+
     // MARK: - Published Properties
-    @Published var chats: [Chat] = []
+    @Published var chats: [Chat] = [] {
+        didSet { chatsSortRevision &+= 1 }
+    }
     @Published var selectedChatId: UUID?
     @Published var inputText: String = "" {
         didSet {
@@ -185,7 +199,62 @@ class ChatViewModel: ObservableObject {
     }
 
     var recentChats: [Chat] {
-        chats.sorted { $0.timestamp > $1.timestamp }
+        if chatsSortRevision == 0 {
+            // First access after init; populate cache.
+            cachedRecentChats = chats.sorted { $0.timestamp > $1.timestamp }
+            chatsSortRevision = 1
+        } else if _cachedRecentChatsRevision != chatsSortRevision {
+            cachedRecentChats = chats.sorted { $0.timestamp > $1.timestamp }
+            _cachedRecentChatsRevision = chatsSortRevision
+        }
+        return cachedRecentChats
+    }
+
+    func sidebarMetadata(for chat: Chat) -> ChatSidebarMetadata {
+        if _sidebarMetadataRevision != chatsSortRevision {
+            sidebarMetadataCache.removeAll(keepingCapacity: true)
+            _sidebarMetadataRevision = chatsSortRevision
+        }
+        if let cached = sidebarMetadataCache[chat.id] { return cached }
+
+        let icon = Self.computeSidebarIcon(for: chat)
+        let preview = Self.computeSidebarPreview(for: chat)
+
+        // Re-check revision before caching (in case chats were mutated during computation).
+        guard _sidebarMetadataRevision == chatsSortRevision else {
+            // Fall through to return computed value without caching.
+            return ChatSidebarMetadata(icon: icon, preview: preview)
+        }
+        let metadata = ChatSidebarMetadata(icon: icon, preview: preview)
+        sidebarMetadataCache[chat.id] = metadata
+        return metadata
+    }
+
+    private static func computeSidebarIcon(for chat: Chat) -> String {
+        for message in chat.messages.reversed() {
+            if !message.imageURLs.isEmpty { return "photo" }
+            if let audioURL = message.audioURLs.first {
+                return audioURL.path.localizedCaseInsensitiveContains("music") ? "music.note" : "waveform"
+            }
+            if let toolCall = message.toolCalls.first {
+                if toolCall.icon == "magnifyingglass" { return "magnifyingglass" }
+                if toolCall.icon == "photo" { return "photo" }
+                if toolCall.icon == "music.note" || toolCall.icon == "waveform" { return toolCall.icon }
+            }
+        }
+        return chat.icon
+    }
+
+    private static func computeSidebarPreview(for chat: Chat) -> String {
+        guard let message = chat.messages.last else { return "No messages yet" }
+        if !message.imageURLs.isEmpty { return "Generated image" }
+        if let audioURL = message.audioURLs.first {
+            return audioURL.path.localizedCaseInsensitiveContains("music") ? "Generated music" : "Generated speech"
+        }
+        if let visibleText = ReasoningContentFilter.visibleText(from: message.content), !visibleText.isEmpty {
+            return visibleText
+        }
+        return message.isUser ? "Message" : "Assistant response"
     }
 
     var isInputDisabled: Bool {
@@ -281,6 +350,12 @@ class ChatViewModel: ObservableObject {
     func persistConversationHistory() {
         chatPersistence.saveChats(chats)
         chatPersistence.saveSelectedChatId(selectedChatId)
+    }
+
+    /// Coalesces rapid persistence calls (e.g. finalize + stop in quick succession)
+    /// into a single write after a short debounce interval.
+    func scheduleConversationPersistence() {
+        chatPersistence.scheduleSave(chats, selectedChatId: selectedChatId)
     }
 
     // MARK: - Actions
@@ -424,9 +499,13 @@ class ChatViewModel: ObservableObject {
         isModelLoading = false
         loadingMessage = ""
 
-        Task {
+        generationTask = Task {
             await vlmExecutor.terminate()
         }
+
+        // Flush any pending debounced writes so state is preserved.
+        chatPersistence.flushPendingSave()
+        persistConversationHistory()
     }
 
     private func generateMusicDirectly(for prompt: String) async {
@@ -926,6 +1005,9 @@ class ChatViewModel: ObservableObject {
         let generationStartedAt = Date()
         var firstOutputAt: Date?
         var observedTokenEvents = 0
+        var toolBufferTokenCount = 0
+        let overallTimeout: TimeInterval = 300.0  // 5 minute overall generation timeout
+        var timeoutTask: Task<Void, Never>?
 #if DEBUG
         var tokenIndex = 0
 #endif
@@ -973,6 +1055,14 @@ class ChatViewModel: ObservableObject {
 #endif
         }
         
+        // Set up a timeout to terminate the executor if generation takes too long
+        timeoutTask = Task { [weak vlmExecutor] in
+            try? await Task.sleep(nanoseconds: UInt64(overallTimeout * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            print("[ChatVM] Generation timed out after \(overallTimeout)s")
+            await vlmExecutor?.terminate()
+        }
+
         for await event in stream {
             if Task.isCancelled {
                 markMessageStopped(messageId)
@@ -1000,7 +1090,10 @@ class ChatViewModel: ObservableObject {
                 observedTokenEvents += 1
                 fullResponse += token
                 if hasTools && shouldBufferToolEnabledOutput(fullResponse) {
-                    loadingMessage = "Thinking..."
+                    toolBufferTokenCount += 1
+                    // Once we detect a tool call, keep buffering — never flash raw tool call
+                    // JSON on screen. The tool call will be parsed at .complete time.
+                    loadingMessage = "Preparing tool..."
 #if DEBUG
                     ChatStreamDiagnostics.log("token.buffered index=\(tokenIndex) responseChars=\(fullResponse.count)")
 #endif
@@ -1015,6 +1108,9 @@ class ChatViewModel: ObservableObject {
 #else
                     renderStreamingResponse(force: renderedResponse.isEmpty)
 #endif
+                }
+                if observedTokenEvents % 3 == 0 {
+                    await Task.yield()
                 }
 
             case .image(let imageURL):
@@ -1191,6 +1287,9 @@ class ChatViewModel: ObservableObject {
                 loadingMessage = message
             }
         }
+
+        timeoutTask?.cancel()
+        timeoutTask = nil
 
         if Task.isCancelled {
             renderStreamingResponse(force: true)

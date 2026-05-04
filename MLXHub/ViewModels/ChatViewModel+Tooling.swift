@@ -333,6 +333,12 @@ extension ChatViewModel {
         guard !trimmedOutput.isEmpty else { return true }
 
         let toolPrefixes = ["<tool_call>", "<function=", "<|tool_call|>", "<|tool_call>"]
+        let maxPrefixLength = 14
+
+        if trimmedOutput.count > maxPrefixLength {
+            return toolPrefixes.contains { trimmedOutput.hasPrefix($0) }
+        }
+
         return toolPrefixes.contains { prefix in
             prefix.hasPrefix(trimmedOutput) || trimmedOutput.hasPrefix(prefix)
         }

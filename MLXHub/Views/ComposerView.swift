@@ -1232,7 +1232,7 @@ struct ImageThumbnailView: View {
     var body: some View {
         Button(action: {}) {
             ZStack(alignment: .topTrailing) {
-                Image(nsImage: NSImage(contentsOf: imageURL) ?? NSImage())
+                Image(nsImage: ImageCache.shared.image(for: imageURL) ?? NSImage())
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 80, height: 60)

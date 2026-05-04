@@ -14,7 +14,7 @@ struct MessageBubble: View {
     let onOpenModels: (() -> Void)?
     let onRestartLocalEngine: (() -> Void)?
     private let avatarSize: CGFloat = 28
-    private let messageMaxWidth: CGFloat = 680
+    private let messageMaxWidth: CGFloat = 820
     private let generatedMediaColumnWidth: CGFloat = 540
 
     init(
@@ -420,6 +420,11 @@ struct GeneratedAudioAttachmentView: View {
     }
 
     private func loadPlayer() {
+        if let cached = AudioPlayerCache.shared.player(for: audioURL) {
+            player = cached
+            duration = cached.duration
+            return
+        }
         do {
             player = try AVAudioPlayer(contentsOf: audioURL)
             player?.prepareToPlay()
@@ -538,67 +543,73 @@ private struct AudioWaveformScrubber: View {
     private let barCount = 42
     private let barSpacing: CGFloat = 3
 
+    @State private var barRatios: [CGFloat] = []
+    @State private var barWidth: CGFloat = 2
+
     var body: some View {
         GeometryReader { geometry in
             let clampedProgress = min(max(progress, 0), 1)
             let activeWidth = geometry.size.width * clampedProgress
+            let size = geometry.size
 
             ZStack(alignment: .leading) {
-                waveformBars(
-                    size: geometry.size,
-                    color: Color(NSColor.separatorColor).opacity(0.42)
-                )
-
-                waveformBars(
-                    size: geometry.size,
-                    color: Color.accentColor
-                )
-                .mask(alignment: .leading) {
-                    Rectangle()
-                        .frame(width: activeWidth)
-                }
+                waveformBars(color: Color(NSColor.separatorColor).opacity(0.42))
+                waveformBars(color: Color.accentColor)
+                    .mask(alignment: .leading) {
+                        Rectangle().frame(width: activeWidth)
+                    }
             }
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        onSeek(value.location.x / max(geometry.size.width, 1), false)
+                        onSeek(value.location.x / max(size.width, 1), false)
                     }
                     .onEnded { value in
-                        onSeek(value.location.x / max(geometry.size.width, 1), true)
+                        onSeek(value.location.x / max(size.width, 1), true)
                     }
             )
+            .onAppear {
+                let availableWidth = max(size.width - CGFloat(barCount - 1) * barSpacing, 1)
+                barWidth = max(availableWidth / CGFloat(barCount), 2)
+                if barRatios.isEmpty || barRatios.count != barCount {
+                    barRatios = precomputeRatios()
+                }
+            }
+            .onChange(of: size.width) { newWidth in
+                let availableWidth = max(newWidth - CGFloat(barCount - 1) * barSpacing, 1)
+                barWidth = max(availableWidth / CGFloat(barCount), 2)
+            }
         }
         .accessibilityLabel("Audio progress")
         .accessibilityValue("\(Int(progress * 100)) percent")
     }
 
-    private func waveformBars(size: CGSize, color: Color) -> some View {
-        let availableWidth = max(size.width - CGFloat(barCount - 1) * barSpacing, 1)
-        let barWidth = max(availableWidth / CGFloat(barCount), 2)
-
-        return HStack(alignment: .center, spacing: barSpacing) {
+    private func waveformBars(color: Color) -> some View {
+        HStack(alignment: .center, spacing: barSpacing) {
             ForEach(0..<barCount, id: \.self) { index in
                 RoundedRectangle(cornerRadius: barWidth / 2, style: .continuous)
                     .fill(color)
-                    .frame(width: barWidth, height: barHeight(index: index, maxHeight: size.height))
+                    .frame(width: barWidth, height: barRatios[safe: index] ?? 7)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    private func barHeight(index: Int, maxHeight: CGFloat) -> CGFloat {
-        let base = stableSeed + index * 37
-        let wave = abs(sin(Double(base) * 0.41))
-        let accent = abs(cos(Double(base) * 0.17))
-        let ratio = 0.28 + (wave * 0.47) + (accent * 0.2)
-        return max(7, min(maxHeight, maxHeight * ratio))
-    }
-
-    private var stableSeed: Int {
-        seed.unicodeScalars.reduce(17) { partialResult, scalar in
-            (partialResult &* 31) &+ Int(scalar.value)
+    private func precomputeRatios() -> [CGFloat] {
+        let stableSeed = seed.unicodeScalars.reduce(17) { p, s in (p &* 31) &+ Int(s.value) }
+        return (0..<barCount).map { index in
+            let base = stableSeed + index * 37
+            let wave = abs(sin(Double(base) * 0.41))
+            let accent = abs(cos(Double(base) * 0.17))
+            return 0.28 + (wave * 0.47) + (accent * 0.2)
         }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 
@@ -642,7 +653,7 @@ struct SentImageAttachmentView: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            Image(nsImage: NSImage(contentsOf: imageURL) ?? NSImage())
+            Image(nsImage: ImageCache.shared.image(for: imageURL) ?? NSImage())
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 112, height: 84)
@@ -695,7 +706,7 @@ struct GeneratedImageAttachmentView: View {
     private let controlButtonSize: CGFloat = 38
 
     private var loadedImage: NSImage? {
-        NSImage(contentsOf: imageURL)
+        ImageCache.shared.image(for: imageURL)
     }
 
     var body: some View {
@@ -841,7 +852,7 @@ struct ImageLightboxView: View {
     @State private var lastOffset: CGSize = .zero
 
     private var loadedImage: NSImage? {
-        NSImage(contentsOf: imageURL)
+        ImageCache.shared.image(for: imageURL)
     }
 
     var body: some View {
@@ -1050,46 +1061,6 @@ private final class ImageLightboxWindowController {
     }
 }
 
-enum ReasoningContentFilter {
-    private static let tagPairs: [(open: String, close: String)] = [
-        ("<think>", "</think>"),
-        ("<thinking>", "</thinking>")
-    ]
-
-    static func visibleText(from text: String) -> String? {
-        var sanitized = text
-
-        for tagPair in tagPairs {
-            sanitized = removeCompleteTaggedSections(from: sanitized, tagPair: tagPair)
-
-            if let openRange = sanitized.range(of: tagPair.open) {
-                sanitized.removeSubrange(openRange.lowerBound..<sanitized.endIndex)
-            }
-
-            while let closeRange = sanitized.range(of: tagPair.close) {
-                sanitized.removeSubrange(sanitized.startIndex..<closeRange.upperBound)
-            }
-        }
-
-        let trimmed = sanitized.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private static func removeCompleteTaggedSections(
-        from text: String,
-        tagPair: (open: String, close: String)
-    ) -> String {
-        var result = text
-
-        while let openRange = result.range(of: tagPair.open),
-              let closeRange = result[openRange.upperBound...].range(of: tagPair.close) {
-            result.removeSubrange(openRange.lowerBound..<closeRange.upperBound)
-        }
-
-        return result
-    }
-}
-
 // MARK: - AI Content View with Markdown
 struct AIContentView: View {
     let content: String
@@ -1130,7 +1101,71 @@ struct AIContentView: View {
 
 enum AIContentRenderingPolicy {
     static func shouldUseFastPlainText(for content: String) -> Bool {
-        true
+        // Fast path: scan for structural Markdown markers.
+        // Uses line-by-line prefix checks to avoid regex overhead in the hot path.
+
+        let hasHeading = content.contains("\n# ") || content.hasPrefix("# ")
+        let hasBold = content.contains("**")
+        let hasItalic = content.contains("*") && hasItalicPair(content)
+        let hasCodeBlock = content.contains("```")
+        let hasUnorderedList = content.contains("\n- ") || content.hasPrefix("- ")
+            || content.contains("\n* ") || content.hasPrefix("* ")
+            || content.contains("\n+ ") || content.hasPrefix("+ ")
+        let hasOrderedList = hasOrderedListPrefix(content)
+        let hasTable = content.contains("|") && hasTableSeparator(content)
+        let hasBlockquote = content.contains("\n> ") || content.hasPrefix("> ")
+        let hasMath = content.contains("$$") || content.contains("\\[")
+        let hasLink = content.contains("](")
+        return !hasHeading && !hasBold && !hasItalic && !hasCodeBlock
+            && !hasUnorderedList && !hasOrderedList && !hasTable
+            && !hasBlockquote && !hasMath && !hasLink
+    }
+
+    private static func hasItalicPair(_ text: String) -> Bool {
+        // Check for at least one *...* pair (not ** which is bold)
+        var lastWasStar = false
+        var starCount = 0
+        for ch in text {
+            if ch == "*" {
+                starCount += 1
+            } else if starCount > 0 {
+                if starCount == 1 && lastWasStar { return true }
+                lastWasStar = starCount == 2
+                starCount = 0
+            }
+        }
+        return false
+    }
+
+    private static func hasOrderedListPrefix(_ text: String) -> Bool {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        for line in lines {
+            let trimmed = line.trimmingPrefix(while: { $0 == " " })
+            if let firstDot = trimmed.firstIndex(of: "."),
+               let firstParen = trimmed.firstIndex(of: ")") {
+                let end = Swift.min(firstDot, firstParen)
+                if let num = Int(trimmed[..<end]), num > 0, end < trimmed.endIndex {
+                    let next = trimmed[trimmed.index(after: end)]
+                    if next == " " { return true }
+                }
+            }
+        }
+        return false
+    }
+
+    private static func hasTableSeparator(_ text: String) -> Bool {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        for line in lines {
+            let s = line.trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix("|") && s.hasSuffix("|") && s.contains("-") {
+                let inner = s.dropFirst().dropLast()
+                let parts = inner.split(separator: "|")
+                if parts.contains(where: { $0.trimmingCharacters(in: .whitespaces).allSatisfy({ ch in ch == "-" || ch == ":" || ch == " " }) }) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }
 
@@ -1193,6 +1228,7 @@ private struct FastStreamingTextView: NSViewRepresentable {
 
 private final class FastStreamingTextNativeView: NSView {
     private let textView = NSTextView()
+    private let scrollView = NSScrollView()
     private var currentText = ""
     private var lastMeasuredWidth: CGFloat = 0
     private var cachedHeight: CGFloat = 18
@@ -1202,6 +1238,15 @@ private final class FastStreamingTextNativeView: NSView {
     private var lastHeightMeasurementTime = Date.distantPast
     private var lastScrollTime = Date.distantPast
     private var pendingScrollToBottom = false
+
+    // Reasoning-filter cache — avoids full-string filter on every streaming token.
+    private var lastFilterInput = ""
+    private var lastFilterOutput = ""
+
+    // Hybrid streaming Markdown state
+    private let markdownState = StreamingMarkdownState()
+    private let splitter = StreamingMarkdownSplitter()
+    private let renderStyle = MarkdownRenderStyle.default
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1221,7 +1266,7 @@ private final class FastStreamingTextNativeView: NSView {
 
     override func layout() {
         super.layout()
-        textView.frame = bounds
+        scrollView.frame = bounds
         let width = max(bounds.width, 1)
         if abs(width - lastMeasuredWidth) > 0.5 {
             lastMeasuredWidth = width
@@ -1236,6 +1281,7 @@ private final class FastStreamingTextNativeView: NSView {
             boundStreamingContentId = streamingContent.id
             currentText = ""
             appliedRevision = nil
+            markdownState.reset()
             textView.textStorage?.setAttributedString(NSAttributedString())
         }
 
@@ -1255,6 +1301,9 @@ private final class FastStreamingTextNativeView: NSView {
         streamingCancellable?.cancel()
         streamingCancellable = nil
         boundStreamingContentId = nil
+        lastFilterInput = ""
+        lastFilterOutput = ""
+        markdownState.reset()
     }
 
     func updateStaticText(_ text: String) {
@@ -1264,22 +1313,80 @@ private final class FastStreamingTextNativeView: NSView {
 
     private func apply(streamingContent: StreamingMessageContent) {
         let text: String
-        let mutation: StreamingMessageContentMutation
         if streamingContent.containsReasoningMarkup {
-            text = ReasoningContentFilter.visibleText(from: streamingContent.text) ?? ""
-            mutation = .replace(text)
+            let raw = streamingContent.text
+            if raw == lastFilterInput {
+                text = lastFilterOutput
+            } else {
+                let filtered = ReasoningContentFilter.visibleText(from: raw) ?? ""
+                text = filtered
+                lastFilterInput = raw
+                lastFilterOutput = filtered
+            }
         } else {
             text = streamingContent.text
-            mutation = streamingContent.latestMutation
+            lastFilterInput = ""
+            lastFilterOutput = ""
         }
 
-        updateText(
-            text,
-            mutation: mutation,
-            revision: streamingContent.revision,
-            autoScroll: true,
-            forceHeight: shouldForceHeightRefresh(for: mutation)
+        applySplitterBasedUpdate(
+            text: text,
+            revision: streamingContent.revision
         )
+    }
+
+    private func applySplitterBasedUpdate(text: String, revision: Int) {
+        guard appliedRevision != revision else { return }
+        appliedRevision = revision
+
+        let result = splitter.splitStablePrefix(
+            text,
+            committedEndIndex: markdownState.committedEndIndex
+        )
+
+        guard let storage = textView.textStorage else { return }
+
+        // Correct mutation order: [stable blocks][old tail] → [stable blocks][new stable][new tail]
+        //
+        // 1. Remove old tail first — otherwise stable blocks get appended after stale tail text
+        let oldTailRange = markdownState.tailRange(storageLength: storage.length)
+        if oldTailRange.length > 0 {
+            storage.replaceCharacters(in: oldTailRange, with: NSAttributedString())
+        }
+
+        // 2. Append newly stable blocks (rendered once, never touched again)
+        if !result.newBlocks.isEmpty {
+            let blockAttr = MarkdownAttributedRenderer.attributedString(
+                from: result.newBlocks,
+                style: renderStyle
+            )
+            // Insert paragraph separator between existing stable blocks and new ones,
+            // matching what MarkdownAttributedRenderer does between blocks within a batch.
+            if storage.length > 0 {
+                storage.append(NSAttributedString(string: "\n"))
+            }
+            storage.append(blockAttr)
+        }
+
+        // 3. Update stable end after stable blocks are appended
+        markdownState.stableStorageEndLocation = storage.length
+        markdownState.committedEndIndex = result.newCommittedEndIndex
+        markdownState.committedUTF16Offset = result.newCommittedUTF16Offset
+
+        // 4. Append new tail
+        let tailAttr = MarkdownAttributedRenderer.tailAttributedString(
+            from: result.tail,
+            style: renderStyle
+        )
+        if tailAttr.length > 0 {
+            storage.append(tailAttr)
+        }
+
+        currentText = text
+        configureContainer(width: max(bounds.width, 1))
+        refreshMeasuredHeight(width: max(bounds.width, 1), force: true)
+        needsLayout = true
+        scheduleScrollToBottom()
     }
 
     private func updateText(
@@ -1323,7 +1430,7 @@ private final class FastStreamingTextNativeView: NSView {
         textView.drawsBackground = false
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isRichText = false
+        textView.isRichText = true
         textView.importsGraphics = false
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
@@ -1331,10 +1438,16 @@ private final class FastStreamingTextNativeView: NSView {
         textView.textContainer?.heightTracksTextView = false
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
-        textView.autoresizingMask = [.width]
         textView.font = NSFont.systemFont(ofSize: 14.5)
         textView.textColor = NSColor.labelColor
-        addSubview(textView)
+
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.documentView = textView
+        addSubview(scrollView)
     }
 
     private func configureContainer(width: CGFloat) {
@@ -1343,7 +1456,9 @@ private final class FastStreamingTextNativeView: NSView {
 
     private func refreshMeasuredHeight(width: CGFloat, force: Bool) {
         let now = Date()
-        guard force || now.timeIntervalSince(lastHeightMeasurementTime) >= 1.0 / 30.0 else {
+        let isEarlyContent = currentText.count < 200
+        let effectiveInterval: TimeInterval = isEarlyContent ? 1.0 / 60.0 : 1.0 / 30.0
+        guard force || now.timeIntervalSince(lastHeightMeasurementTime) >= effectiveInterval else {
             return
         }
         lastHeightMeasurementTime = now
@@ -1541,9 +1656,18 @@ struct MarkdownTextView: View {
     let text: String
     let isStreaming: Bool
 
+    private var parsedBlocks: [MarkdownBlock] {
+        if let cached = MarkdownCache.shared.blocks(for: text) {
+            return cached
+        }
+        let blocks = MarkdownBlockRenderer.blocks(from: text)
+        MarkdownCache.shared.setBlocks(blocks, for: text)
+        return blocks
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(MarkdownParser.parseBlocks(text).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(parsedBlocks.enumerated()), id: \.offset) { _, block in
                 blockView(block)
             }
         }
@@ -1676,10 +1800,10 @@ struct MarkdownTextView: View {
     }
 
     private func inlineText(_ content: String) -> Text {
-        MarkdownParser.inlineSegments(content).reduce(Text("")) { partial, segment in
+        MarkdownInlineSegment.parseSegments(content).reduce(Text("")) { partial, segment in
             switch segment {
             case .text(let value):
-                return partial + Text(MarkdownParser.attributedString(value))
+                return partial + Text(MarkdownInlineSegment.inlineAttributedString(value))
             case .math(let value):
                 return partial + Text(LatexRenderer.render(value))
                     .font(.system(size: 14, weight: .medium, design: .serif))
@@ -1698,7 +1822,7 @@ private struct MarkdownTableView: View {
                 ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                     HStack(alignment: .top, spacing: 0) {
                         ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                            Text(MarkdownParser.attributedString(cell))
+                            Text(MarkdownInlineSegment.inlineAttributedString(cell))
                                 .font(.system(size: 13, weight: rowIndex == 0 ? .semibold : .regular))
                                 .lineSpacing(3)
                                 .frame(minWidth: 92, maxWidth: 220, alignment: .leading)
@@ -1741,459 +1865,6 @@ private struct MarkdownMathBlockView: View {
                 .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
         )
         .accessibilityIdentifier("markdown.mathBlock")
-    }
-}
-
-enum MarkdownBlock: Equatable {
-    case heading(level: Int, content: String)
-    case paragraph(content: String)
-    case quote(lines: [String])
-    case unorderedList(items: [String])
-    case orderedList(items: [String])
-    case taskList(items: [TaskListItem])
-    case codeBlock(language: String?, content: String)
-    case table(rows: [[String]])
-    case mathBlock(content: String)
-    case divider
-}
-
-struct TaskListItem: Equatable {
-    let text: String
-    let isComplete: Bool
-}
-
-enum MarkdownInlineSegment: Equatable {
-    case text(String)
-    case math(String)
-}
-
-enum MarkdownParser {
-    static func parseBlocks(_ text: String) -> [MarkdownBlock] {
-        let normalizedText = normalizeHTMLLikeTags(text)
-        let lines = normalizedText.components(separatedBy: .newlines)
-        var blocks: [MarkdownBlock] = []
-        var index = 0
-
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.isEmpty {
-                index += 1
-                continue
-            }
-
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                let fence = String(trimmed.prefix(3))
-                let language = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
-                var codeLines: [String] = []
-                index += 1
-
-                while index < lines.count {
-                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
-                    if candidate.hasPrefix(fence) {
-                        index += 1
-                        break
-                    }
-                    codeLines.append(lines[index])
-                    index += 1
-                }
-
-                blocks.append(.codeBlock(language: language.isEmpty ? nil : language, content: codeLines.joined(separator: "\n")))
-                continue
-            }
-
-            if let math = parseMathBlock(lines, startIndex: index) {
-                blocks.append(.mathBlock(content: math.content))
-                index = math.nextIndex
-                continue
-            }
-
-            if let heading = parseHeading(trimmed) {
-                blocks.append(heading)
-                index += 1
-                continue
-            }
-
-            if isDivider(trimmed) {
-                blocks.append(.divider)
-                index += 1
-                continue
-            }
-
-            if isTableStart(lines, at: index) {
-                var tableRows: [String] = []
-                while index < lines.count,
-                      lines[index].contains("|"),
-                      !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
-                    tableRows.append(lines[index])
-                    index += 1
-                }
-                blocks.append(.table(rows: parseTableRows(tableRows)))
-                continue
-            }
-
-            if let quote = parseQuote(lines, startIndex: index) {
-                blocks.append(.quote(lines: quote.lines))
-                index = quote.nextIndex
-                continue
-            }
-
-            if let taskList = parseTaskList(lines, startIndex: index) {
-                blocks.append(.taskList(items: taskList.items))
-                index = taskList.nextIndex
-                continue
-            }
-
-            if let unorderedList = parseUnorderedList(lines, startIndex: index) {
-                blocks.append(.unorderedList(items: unorderedList.items))
-                index = unorderedList.nextIndex
-                continue
-            }
-
-            if let orderedList = parseOrderedList(lines, startIndex: index) {
-                blocks.append(.orderedList(items: orderedList.items))
-                index = orderedList.nextIndex
-                continue
-            }
-
-            var paragraphLines = [trimmed]
-            index += 1
-
-            while index < lines.count {
-                let next = lines[index].trimmingCharacters(in: .whitespaces)
-                if next.isEmpty
-                    || next.hasPrefix("```")
-                    || next.hasPrefix("~~~")
-                    || lineStartsMathBlock(next)
-                    || parseHeading(next) != nil
-                    || isDivider(next)
-                    || isTableStart(lines, at: index)
-                    || lineStartsQuote(next)
-                    || lineStartsTaskList(next)
-                    || lineStartsUnorderedList(next)
-                    || lineStartsOrderedList(next) {
-                    break
-                }
-                paragraphLines.append(next)
-                index += 1
-            }
-
-            blocks.append(.paragraph(content: paragraphLines.joined(separator: " ")))
-        }
-
-        return blocks.isEmpty ? [.paragraph(content: text)] : blocks
-    }
-
-    static func inlineSegments(_ text: String) -> [MarkdownInlineSegment] {
-        let processed = normalizeHTMLLikeTags(text)
-        var segments: [MarkdownInlineSegment] = []
-        var scan = processed.startIndex
-        var textStart = processed.startIndex
-
-        func appendText(upTo end: String.Index) {
-            guard textStart < end else { return }
-            segments.append(.text(String(processed[textStart..<end])))
-        }
-
-        while scan < processed.endIndex {
-            if processed[scan] == "\\" {
-                let next = processed.index(after: scan)
-                if next < processed.endIndex, processed[next] == "(" {
-                    let contentStart = processed.index(after: next)
-                    if let end = processed.range(of: "\\)", range: contentStart..<processed.endIndex) {
-                        appendText(upTo: scan)
-                        segments.append(.math(String(processed[contentStart..<end.lowerBound])))
-                        scan = end.upperBound
-                        textStart = scan
-                        continue
-                    }
-                }
-            }
-
-            if processed[scan] == "$" {
-                let next = processed.index(after: scan)
-                if next < processed.endIndex, processed[next] != "$",
-                   let closing = processed[next...].firstIndex(of: "$") {
-                    appendText(upTo: scan)
-                    segments.append(.math(String(processed[next..<closing])))
-                    scan = processed.index(after: closing)
-                    textStart = scan
-                    continue
-                }
-            }
-
-            scan = processed.index(after: scan)
-        }
-
-        appendText(upTo: processed.endIndex)
-
-        return segments.isEmpty ? [.text(processed)] : coalescedTextSegments(segments)
-    }
-
-    static func attributedString(_ text: String) -> AttributedString {
-        let processed = normalizeHTMLLikeTags(text)
-
-        do {
-            var options = AttributedString.MarkdownParsingOptions()
-            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-            return try AttributedString(markdown: processed, options: options, baseURL: nil)
-        } catch {
-            return AttributedString(processed)
-        }
-    }
-
-    static func normalizeHTMLLikeTags(_ text: String) -> String {
-        var result = text
-        let replacements = [
-            ("<br>", "\n"),
-            ("<br/>", "\n"),
-            ("<br />", "\n"),
-            ("<strong>", "**"),
-            ("</strong>", "**"),
-            ("<b>", "**"),
-            ("</b>", "**"),
-            ("<em>", "*"),
-            ("</em>", "*"),
-            ("<i>", "*"),
-            ("</i>", "*"),
-            ("<code>", "`"),
-            ("</code>", "`"),
-            ("<p>", ""),
-            ("</p>", "\n"),
-            ("<div>", ""),
-            ("</div>", "\n")
-        ]
-
-        for (source, replacement) in replacements {
-            result = result.replacingOccurrences(of: source, with: replacement, options: [.caseInsensitive])
-        }
-
-        return result
-    }
-
-    private static func parseHeading(_ line: String) -> MarkdownBlock? {
-        let hashes = line.prefix { $0 == "#" }.count
-        guard (1...6).contains(hashes), line.dropFirst(hashes).first == " " else {
-            return nil
-        }
-
-        let content = String(line.dropFirst(hashes)).trimmingCharacters(in: .whitespaces)
-        return .heading(level: hashes, content: content)
-    }
-
-    private static func parseMathBlock(_ lines: [String], startIndex: Int) -> (content: String, nextIndex: Int)? {
-        let trimmed = lines[startIndex].trimmingCharacters(in: .whitespaces)
-
-        if trimmed.hasPrefix("$$") {
-            let afterOpening = String(trimmed.dropFirst(2))
-            if afterOpening.hasSuffix("$$"), afterOpening.count > 2 {
-                return (String(afterOpening.dropLast(2)).trimmingCharacters(in: .whitespaces), startIndex + 1)
-            }
-            return collectMultilineMath(lines, startIndex: startIndex, opening: "$$", closing: "$$")
-        }
-
-        if trimmed.hasPrefix("\\[") {
-            let afterOpening = String(trimmed.dropFirst(2))
-            if afterOpening.hasSuffix("\\]") {
-                return (String(afterOpening.dropLast(2)).trimmingCharacters(in: .whitespaces), startIndex + 1)
-            }
-            return collectMultilineMath(lines, startIndex: startIndex, opening: "\\[", closing: "\\]")
-        }
-
-        if trimmed.hasPrefix("\\begin{equation}") {
-            var mathLines: [String] = [trimmed.replacingOccurrences(of: "\\begin{equation}", with: "")]
-            var index = startIndex + 1
-            while index < lines.count {
-                let candidate = lines[index]
-                if candidate.contains("\\end{equation}") {
-                    mathLines.append(candidate.replacingOccurrences(of: "\\end{equation}", with: ""))
-                    return (mathLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), index + 1)
-                }
-                mathLines.append(candidate)
-                index += 1
-            }
-        }
-
-        return nil
-    }
-
-    private static func collectMultilineMath(
-        _ lines: [String],
-        startIndex: Int,
-        opening: String,
-        closing: String
-    ) -> (content: String, nextIndex: Int)? {
-        var mathLines: [String] = []
-        let first = lines[startIndex].trimmingCharacters(in: .whitespaces)
-        let firstContent = String(first.dropFirst(opening.count))
-        if !firstContent.isEmpty {
-            mathLines.append(firstContent)
-        }
-
-        var index = startIndex + 1
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasSuffix(closing) {
-                let content = String(trimmed.dropLast(closing.count))
-                if !content.isEmpty {
-                    mathLines.append(content)
-                }
-                return (mathLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), index + 1)
-            }
-            mathLines.append(line)
-            index += 1
-        }
-
-        return nil
-    }
-
-    private static func isDivider(_ line: String) -> Bool {
-        let compact = line.filter { !$0.isWhitespace }
-        guard compact.count >= 3 else { return false }
-        return compact.allSatisfy { $0 == "-" } || compact.allSatisfy { $0 == "*" } || compact.allSatisfy { $0 == "_" }
-    }
-
-    private static func isTableStart(_ lines: [String], at index: Int) -> Bool {
-        guard index + 1 < lines.count else { return false }
-        let current = lines[index].trimmingCharacters(in: .whitespaces)
-        let separator = lines[index + 1].trimmingCharacters(in: .whitespaces)
-        guard current.contains("|"), separator.contains("|") else { return false }
-
-        let allowed = CharacterSet(charactersIn: "|:- ")
-        return separator.unicodeScalars.allSatisfy { allowed.contains($0) } && separator.contains("-")
-    }
-
-    private static func parseTableRows(_ rows: [String]) -> [[String]] {
-        guard rows.count >= 2 else { return rows.map(splitTableRow) }
-
-        let header = splitTableRow(rows[0])
-        let body = rows.dropFirst(2).map(splitTableRow)
-        return [header] + body
-    }
-
-    private static func splitTableRow(_ row: String) -> [String] {
-        var cells = row.split(separator: "|", omittingEmptySubsequences: false).map {
-            String($0).trimmingCharacters(in: .whitespaces)
-        }
-        if cells.first?.isEmpty == true {
-            cells.removeFirst()
-        }
-        if cells.last?.isEmpty == true {
-            cells.removeLast()
-        }
-        return cells
-    }
-
-    private static func parseQuote(_ lines: [String], startIndex: Int) -> (lines: [String], nextIndex: Int)? {
-        guard lineStartsQuote(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
-
-        var quoteLines: [String] = []
-        var index = startIndex
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            guard lineStartsQuote(line) else { break }
-            quoteLines.append(String(line.dropFirst()).trimmingCharacters(in: .whitespaces))
-            index += 1
-        }
-
-        return (quoteLines, index)
-    }
-
-    private static func parseTaskList(_ lines: [String], startIndex: Int) -> (items: [TaskListItem], nextIndex: Int)? {
-        guard lineStartsTaskList(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
-
-        var items: [TaskListItem] = []
-        var index = startIndex
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            guard lineStartsTaskList(line) else { break }
-
-            let isComplete = line.lowercased().hasPrefix("- [x]") || line.lowercased().hasPrefix("* [x]")
-            let text = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            items.append(TaskListItem(text: text, isComplete: isComplete))
-            index += 1
-        }
-
-        return (items, index)
-    }
-
-    private static func parseUnorderedList(_ lines: [String], startIndex: Int) -> (items: [String], nextIndex: Int)? {
-        guard lineStartsUnorderedList(lines[startIndex].trimmingCharacters(in: .whitespaces)) else { return nil }
-
-        var items: [String] = []
-        var index = startIndex
-        while index < lines.count {
-            let line = lines[index].trimmingCharacters(in: .whitespaces)
-            guard lineStartsUnorderedList(line) else { break }
-            items.append(String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces))
-            index += 1
-        }
-
-        return (items, index)
-    }
-
-    private static func parseOrderedList(_ lines: [String], startIndex: Int) -> (items: [String], nextIndex: Int)? {
-        guard let first = orderedListContent(lines[startIndex]) else { return nil }
-
-        var items: [String] = [first]
-        var index = startIndex + 1
-        while index < lines.count, let item = orderedListContent(lines[index]) {
-            items.append(item)
-            index += 1
-        }
-
-        return (items, index)
-    }
-
-    private static func lineStartsMathBlock(_ line: String) -> Bool {
-        line.hasPrefix("$$") || line.hasPrefix("\\[") || line.hasPrefix("\\begin{equation}")
-    }
-
-    private static func lineStartsQuote(_ line: String) -> Bool {
-        line.hasPrefix(">")
-    }
-
-    private static func lineStartsTaskList(_ line: String) -> Bool {
-        let lowercased = line.lowercased()
-        return lowercased.hasPrefix("- [ ] ")
-            || lowercased.hasPrefix("- [x] ")
-            || lowercased.hasPrefix("* [ ] ")
-            || lowercased.hasPrefix("* [x] ")
-    }
-
-    private static func lineStartsUnorderedList(_ line: String) -> Bool {
-        (line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ")) && !lineStartsTaskList(line)
-    }
-
-    private static func lineStartsOrderedList(_ line: String) -> Bool {
-        orderedListContent(line) != nil
-    }
-
-    private static func orderedListContent(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard let markerEnd = trimmed.firstIndex(where: { $0 == "." || $0 == ")" }) else { return nil }
-
-        let number = trimmed[..<markerEnd]
-        guard !number.isEmpty, number.allSatisfy({ $0.isNumber }) else { return nil }
-
-        let afterMarker = trimmed.index(after: markerEnd)
-        guard afterMarker < trimmed.endIndex, trimmed[afterMarker] == " " else { return nil }
-
-        return String(trimmed[trimmed.index(after: afterMarker)...]).trimmingCharacters(in: .whitespaces)
-    }
-
-    private static func coalescedTextSegments(_ segments: [MarkdownInlineSegment]) -> [MarkdownInlineSegment] {
-        var result: [MarkdownInlineSegment] = []
-        for segment in segments {
-            if case .text(let text) = segment, case .text(let previous)? = result.last {
-                result[result.count - 1] = .text(previous + text)
-            } else {
-                result.append(segment)
-            }
-        }
-        return result
     }
 }
 

@@ -49,11 +49,6 @@ def _positive_finite_float(value: Any) -> Optional[float]:
     return number if math.isfinite(number) and number > 0 else None
 
 
-# ── Batch constants for token streaming ──
-TOKEN_BATCH_SIZE = 10
-TOKEN_BATCH_FLUSH_S = 0.030
-
-
 def _chat_performance_payload(
     *,
     prompt_tps: Any = None,
@@ -154,6 +149,7 @@ def load_model_if_needed(model_id: str, request: Optional[dict] = None):
     """Lazy load model, cache in registry"""
     if model_id in MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Model {model_id} already loaded, using cache")
+        unload_models(keep_registry=MODEL_REGISTRY, keep_key=model_id)
         return MODEL_REGISTRY[model_id]
 
     from mlx_vlm import load
@@ -190,6 +186,7 @@ def load_image_model_if_needed(
         log_debug(
             f"[Python Bridge] Image model {cache_key} already loaded, using cache"
         )
+        unload_models(keep_registry=IMAGE_MODEL_REGISTRY, keep_key=cache_key)
         return IMAGE_MODEL_REGISTRY[cache_key]
 
     send_json(
@@ -224,6 +221,7 @@ def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
     """Lazy load mlx-audio TTS model, cache in registry"""
     if model_id in AUDIO_MODEL_REGISTRY:
         log_debug(f"[Python Bridge] Audio model {model_id} already loaded, using cache")
+        unload_models(keep_registry=AUDIO_MODEL_REGISTRY, keep_key=model_id)
         return AUDIO_MODEL_REGISTRY[model_id]
 
     send_json(
@@ -509,10 +507,6 @@ def handle_chat_completion(request: dict) -> None:
     from mlx_vlm.prompt_utils import apply_chat_template
     import mlx.core as mx
 
-    _mono = time.monotonic
-    _last_flush = _mono()
-    token_buffer: str = ""
-
     model_id = request["model"]
     messages = request["messages"]
     max_tokens = request.get("max_tokens", 32768)
@@ -583,28 +577,17 @@ def handle_chat_completion(request: dict) -> None:
         ):
             token = chunk.text
             full_response += token
-            token_buffer += token
             prompt_tokens = chunk.prompt_tokens
             completion_tokens = chunk.generation_tokens
             prompt_tps = getattr(chunk, "prompt_tps", prompt_tps)
             generation_tps = getattr(chunk, "generation_tps", generation_tps)
             peak_memory_gb = getattr(chunk, "peak_memory", peak_memory_gb)
 
-            now = _mono()
-            if len(token_buffer) >= TOKEN_BATCH_SIZE or (now - _last_flush) >= TOKEN_BATCH_FLUSH_S:
-                if token_buffer:
-                    send_json(
-                        {"type": "chat.completion.chunk",
-                         "choices": [{"delta": {"content": token_buffer}}]},
-                        request=request,
-                    )
-                    token_buffer = ""
-                    _last_flush = now
-
-        if token_buffer:
             send_json(
-                {"type": "chat.completion.chunk",
-                 "choices": [{"delta": {"content": token_buffer}}]},
+                {
+                    "type": "chat.completion.chunk",
+                    "choices": [{"delta": {"content": token}}],
+                },
                 request=request,
             )
 
@@ -644,6 +627,7 @@ def handle_chat_completion(request: dict) -> None:
             send_json(payload, request=request)
 
         mx.clear_cache()
+        gc.collect()
 
     except Exception as e:
         error_msg = log_exception("[Python Bridge] Error", e, logger=log_debug)
@@ -807,6 +791,7 @@ def handle_image_generation(request: dict) -> None:
         )
 
         mx.clear_cache()
+        gc.collect()
 
     except Exception as e:
         error_msg = log_exception(
@@ -903,6 +888,7 @@ def handle_audio_speech(request: dict) -> None:
         )
 
         mx.clear_cache()
+        gc.collect()
 
     except Exception as e:
         error_msg = log_exception(
@@ -920,71 +906,6 @@ def _terminate_child(child: subprocess.Popen, timeout: float = 5.0):
     except subprocess.TimeoutExpired:
         child.kill()
         child.wait(timeout=1.0)
-
-
-# ── Persistent music subprocess ──
-_music_process = None
-
-
-def _ensure_music_subprocess(ace_python, helper_path):
-    """Return a persistent, keep-alive ACE-Step subprocess."""
-    global _music_process
-
-    if _music_process is not None and _music_process.poll() is not None:
-        _terminate_child(_music_process)
-        _music_process = None
-
-    if _music_process is None:
-        _music_process = subprocess.Popen(
-            [ace_python, str(helper_path)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            env=os.environ.copy(),
-        )
-
-    return _music_process
-
-
-def _forward_music_request(child, request):
-    """Send one request to a running music subprocess and relay response lines."""
-    if child.stdin is None:
-        raise RuntimeError("Subprocess stdin is None")
-    child.stdin.write(json.dumps(request) + "\n")
-    child.stdin.flush()
-
-    saw_error = False
-
-    while True:
-        if child.stdout is None:
-            raise RuntimeError("Subprocess stdout is None")
-        line = child.stdout.readline()
-        if line == "":
-            break
-
-        stripped = line.strip()
-        if stripped == "__DONE__":
-            break
-
-        if stripped:
-            try:
-                payload = json.loads(stripped)
-                saw_error = saw_error or payload.get("type") == "error"
-                print(line, end="", flush=True)
-            except json.JSONDecodeError:
-                log_debug(f"[ACE-Step stdout ignored] {stripped}")
-
-    returncode = child.poll()
-    if returncode is not None and returncode != 0 and not saw_error:
-        send_json(
-            {"type": "error",
-             "message": f"ACE-Step helper exited with code {returncode}"},
-            request=request,
-        )
-    return returncode or 0
-
 
 
 def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dict) -> int:
@@ -1008,8 +929,7 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
     selector = None
 
     try:
-        if child.stdin is None:
-            raise RuntimeError("Subprocess stdin is None")
+        assert child.stdin is not None
         child.stdin.write(json.dumps(request) + "\n")
         child.stdin.close()
 
@@ -1105,8 +1025,7 @@ def handle_music_generation(request: dict) -> None:
         and Path(ace_python) != Path(sys.executable)
     ):
         helper_path = Path(__file__).with_name("acestep_bridge.py")
-        child = _ensure_music_subprocess(ace_python, helper_path)
-        _forward_music_request(child, request)
+        _forward_acestep_subprocess(ace_python, helper_path, request)
         return
 
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
@@ -1223,6 +1142,7 @@ def handle_music_generation(request: dict) -> None:
             },
             request=request,
         )
+        gc.collect()
 
     except Exception as e:
         error_msg = log_exception(
@@ -1272,59 +1192,45 @@ def handle_unknown(msg_type: str, request: Optional[dict] = None) -> None:
     send_json({"type": "error", "message": f"Unknown message type: {msg_type}"}, request=request)
 
 
-def _cleanup():
-    """Terminate subprocesses and release resources on bridge shutdown."""
-    global _music_process
-    try:
-        if _music_process is not None:
-            _terminate_child(_music_process)
-            _music_process = None
-    except Exception:
-        pass  # Best-effort cleanup
-
-
 def main():
     setup_environment()
 
     send_json({"type": "system.ready"})
 
-    try:
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
 
-            request = None
-            try:
-                request = json.loads(line)
-                msg_type = request.get("type")
+        request = None
+        try:
+            request = json.loads(line)
+            msg_type = request.get("type")
 
-                if msg_type == "chat.completions":
-                    handle_chat_completion(request)
-                elif msg_type == "image.generate":
-                    handle_image_generation(request)
-                elif msg_type == "audio.speech":
-                    handle_audio_speech(request)
-                elif msg_type == "music.generate":
-                    handle_music_generation(request)
-                elif msg_type == "init":
-                    handle_init(request)
-                elif msg_type == "ping":
-                    handle_ping(request)
-                elif msg_type == "unload":
-                    handle_unload(request)
-                else:
-                    handle_unknown(msg_type, request=request)
+            if msg_type == "chat.completions":
+                handle_chat_completion(request)
+            elif msg_type == "image.generate":
+                handle_image_generation(request)
+            elif msg_type == "audio.speech":
+                handle_audio_speech(request)
+            elif msg_type == "music.generate":
+                handle_music_generation(request)
+            elif msg_type == "init":
+                handle_init(request)
+            elif msg_type == "ping":
+                handle_ping(request)
+            elif msg_type == "unload":
+                handle_unload(request)
+            else:
+                handle_unknown(msg_type, request=request)
 
-            except json.JSONDecodeError as e:
-                send_json({"type": "error", "message": f"Invalid JSON: {str(e)}"})
-            except Exception as e:
-                send_json(
-                    {"type": "error", "message": f"Unexpected error: {str(e)}"},
-                    request=request,
-                )
-    finally:
-        _cleanup()
+        except json.JSONDecodeError as e:
+            send_json({"type": "error", "message": f"Invalid JSON: {str(e)}"})
+        except Exception as e:
+            send_json(
+                {"type": "error", "message": f"Unexpected error: {str(e)}"},
+                request=request,
+            )
 
 
 if __name__ == "__main__":

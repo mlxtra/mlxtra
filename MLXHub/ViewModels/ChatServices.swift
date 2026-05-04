@@ -4,10 +4,21 @@ import Foundation
 protocol ChatPersistenceServicing: AnyObject {
     func loadChats() -> [Chat]
     func saveChats(_ chats: [Chat])
+    func scheduleSave(_ chats: [Chat], selectedChatId: UUID?)
+    func flushPendingSave()
     func loadSelectedChatId() -> UUID?
     func saveSelectedChatId(_ selectedChatId: UUID?)
     func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL]
     func deleteAttachments(for chatId: UUID)
+}
+
+extension ChatPersistenceServicing {
+    func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
+        saveChats(chats)
+        if let id = selectedChatId { saveSelectedChatId(id) }
+    }
+
+    func flushPendingSave() {}
 }
 
 @MainActor
@@ -83,6 +94,8 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     private let selectedChatKey: String
     private let storageDirectory: URL
     private let writeQueue = DispatchQueue(label: "com.localstudio.mlxhub.chat-persistence", qos: .utility)
+    private var pendingSaveWorkItem: DispatchWorkItem?
+    private let saveDebounceInterval: TimeInterval = 1.0
 
     init(
         fileManager: FileManager = .default,
@@ -101,7 +114,9 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     }
 
     deinit {
-        writeQueue.sync {}
+        pendingSaveWorkItem?.cancel()
+        // Use async to avoid deadlock if deinit is called from within the write queue
+        writeQueue.async {}
     }
 
     private var conversationsURL: URL {
@@ -152,7 +167,30 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
         }
     }
 
+    func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
+        pendingSaveWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.saveChats(chats)
+            if let id = selectedChatId {
+                self.saveSelectedChatId(id)
+            }
+        }
+        pendingSaveWorkItem = workItem
+        writeQueue.asyncAfter(deadline: .now() + saveDebounceInterval, execute: workItem)
+    }
+
+    func flushPendingSave() {
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
+    }
+
     private func flushPendingWrites() {
+        // Also flush any pending debounced save before sync-waiting.
+        if let workItem = pendingSaveWorkItem {
+            workItem.cancel()
+            pendingSaveWorkItem = nil
+        }
         writeQueue.sync {}
     }
 

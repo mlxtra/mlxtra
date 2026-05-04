@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 private final class DownloadLineBuffer: @unchecked Sendable {
     private let lock = NSLock()
@@ -390,8 +391,26 @@ final class ModelDownloadManager: ObservableObject {
             states[model.id] = .notDownloaded
         }
 
-        if let process = processes[model.id], process.isRunning {
-            process.terminate()
+        if let process = processes[model.id] {
+            if process.isRunning {
+                process.terminate()
+                // Schedule SIGKILL fallback after 3 seconds
+                let pid = process.processIdentifier
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
+                    var zombieCheck: Int32 = 0
+                    if waitpid(pid, &zombieCheck, WNOHANG) == 0 {
+                        kill(pid, SIGKILL)
+                    }
+                }
+            }
+            // Always clean up dictionary entries when process is not running,
+            // even if terminationHandler hasn't fired yet
+            if !process.isRunning {
+                tasks[model.id]?.cancel()
+                tasks[model.id] = nil
+                processes[model.id] = nil
+                stopReasons[model.id] = nil
+            }
         } else {
             tasks[model.id]?.cancel()
             tasks[model.id] = nil
@@ -468,11 +487,11 @@ final class ModelDownloadManager: ObservableObject {
                 }
             }
 
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            errorPipe.fileHandleForReading.readabilityHandler = { [weak errorLog] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
 
-                errorLog.append(output)
+                errorLog?.append(output)
             }
 
             process.terminationHandler = { process in
@@ -571,11 +590,11 @@ final class ModelDownloadManager: ObservableObject {
                 }
             }
 
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            errorPipe.fileHandleForReading.readabilityHandler = { [weak errorLog] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
 
-                errorLog.append(output)
+                errorLog?.append(output)
             }
 
             process.terminationHandler = { process in

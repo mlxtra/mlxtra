@@ -13,11 +13,14 @@ let package = Package(
         )
     ],
     dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.7.3")
     ],
     targets: [
         .executableTarget(
             name: "MLXHub",
-            dependencies: [],
+            dependencies: [
+                .product(name: "Markdown", package: "swift-markdown")
+            ],
             path: "MLXHub",
             exclude: [
                 "Resources/Info.plist",

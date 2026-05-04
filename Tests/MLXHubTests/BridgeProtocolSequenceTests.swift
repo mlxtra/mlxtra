@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 
 final class BridgeProtocolSequenceTests: XCTestCase {
     private var tempDirectory: URL!
@@ -286,7 +287,17 @@ private final class PersistentBridgeSession {
         stdinPipe.fileHandleForWriting.closeFile()
         if process.isRunning {
             process.terminate()
+            // Wait up to 2 seconds for graceful exit
+            let deadline = Date().addingTimeInterval(2.0)
+            while process.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
         }
+        stdoutPipe.fileHandleForReading.closeFile()
+        stderrPipe.fileHandleForReading.closeFile()
     }
 
     func send(_ payload: [String: Any]) {

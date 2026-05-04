@@ -64,8 +64,11 @@ struct SidebarView: View {
 
             List {
                 ForEach(filteredChats) { chat in
+                    let metadata = viewModel.sidebarMetadata(for: chat)
                     ChatHistoryItem(
                         chat: chat,
+                        rowIcon: metadata.icon,
+                        previewText: metadata.preview,
                         isSelected: viewModel.selectedChatId == chat.id,
                         onDelete: {
                             viewModel.deleteChat(chat)
@@ -171,6 +174,8 @@ struct SidebarView: View {
 
 struct ChatHistoryItem: View {
     let chat: Chat
+    let rowIcon: String
+    let previewText: String
     let isSelected: Bool
     let onDelete: () -> Void
     @State private var isHovered = false
@@ -274,52 +279,6 @@ struct ChatHistoryItem: View {
         }
 
         return Color.white.opacity(0.18)
-    }
-
-    private var rowIcon: String {
-        for message in chat.messages.reversed() {
-            if !message.imageURLs.isEmpty {
-                return "photo"
-            }
-
-            if let audioURL = message.audioURLs.first {
-                return audioURL.path.localizedCaseInsensitiveContains("music") ? "music.note" : "waveform"
-            }
-
-            if let toolCall = message.toolCalls.first {
-                if toolCall.icon == "magnifyingglass" {
-                    return "magnifyingglass"
-                }
-                if toolCall.icon == "photo" {
-                    return "photo"
-                }
-                if toolCall.icon == "music.note" || toolCall.icon == "waveform" {
-                    return toolCall.icon
-                }
-            }
-        }
-
-        return chat.icon
-    }
-
-    private var previewText: String {
-        guard let message = chat.messages.last else {
-            return "No messages yet"
-        }
-
-        if !message.imageURLs.isEmpty {
-            return "Generated image"
-        }
-
-        if let audioURL = message.audioURLs.first {
-            return audioURL.path.localizedCaseInsensitiveContains("music") ? "Generated music" : "Generated speech"
-        }
-
-        if let visibleText = ReasoningContentFilter.visibleText(from: message.content), !visibleText.isEmpty {
-            return message.isUser ? visibleText : visibleText
-        }
-
-        return message.isUser ? "Message" : "Assistant response"
     }
 
     private var timestampText: String {

@@ -168,7 +168,18 @@ extension ChatViewModel {
             }
             chats[chatIndex].timestamp = Date()
             streamingContentStore.end(messageId: messageId)
-            persistConversationHistory()
+
+            // Warm the attributed string cache for final Markdown rendering.
+            // This runs the full pipeline: raw Markdown → swift-markdown AST →
+            // MarkdownBlockRenderer → MarkdownAttributedRenderer → cache.
+            if !AIContentRenderingPolicy.shouldUseFastPlainText(for: content) {
+                _ = MarkdownAttributedRenderer.finalRender(
+                    markdown: content,
+                    style: .default
+                )
+            }
+
+            scheduleConversationPersistence()
         }
     }
 
@@ -180,7 +191,7 @@ extension ChatViewModel {
                 streamingContentStore.end(messageId: messageId)
             }
             chats[chatIndex].messages[messageIndex].isStreaming = false
-            persistConversationHistory()
+            scheduleConversationPersistence()
         }
     }
 
@@ -191,7 +202,7 @@ extension ChatViewModel {
             chats[chatIndex].messages.remove(at: messageIndex)
             chats[chatIndex].timestamp = Date()
             streamingContentStore.end(messageId: messageId)
-            persistConversationHistory()
+            scheduleConversationPersistence()
         }
     }
 
@@ -213,9 +224,8 @@ extension ChatViewModel {
     }
 
     func handleGenerationError(_ error: Error, replacingMessageId messageId: UUID? = nil) {
-        let errorDesc = String(describing: error)
-        if error is CancellationError || errorDesc.contains("CancellationError") || (error as NSError).code == NSUserCancelledError {
-            print("[ChatVM] Ignoring cancellation error: \(errorDesc)")
+        if error is CancellationError {
+            print("[ChatVM] Ignoring cancellation error: \(error)")
             return
         }
 
@@ -239,7 +249,7 @@ extension ChatViewModel {
                 chats[index].messages.append(errorMessage)
             }
             chats[index].timestamp = Date()
-            persistConversationHistory()
+            scheduleConversationPersistence()
         }
 
         isGenerating = false

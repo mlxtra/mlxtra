@@ -50,6 +50,44 @@ class VLMExecutor: NSObject, ModelExecutor {
         super.init()
     }
 
+    deinit {
+        let processToTerminate = process
+        let stdinToClose = stdinPipe
+        let stdoutToClose = stdoutPipe
+        let stderrToClose = stderrPipe
+
+        // Nullify readability handlers to break retain cycles
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+
+        // Notify dispatcher before pipes close
+        stdoutDispatcher.handleEOF()
+        stdoutDispatcher.removeAll()
+
+        process = nil
+        stdinPipe = nil
+        stdoutPipe = nil
+        stderrPipe = nil
+
+        // Best-effort termination (deinit cannot be async)
+        stdinToClose?.fileHandleForWriting.closeFile()
+
+        if let processToTerminate, processToTerminate.isRunning {
+            processToTerminate.terminate()
+            // Schedule a kill as a fallback after a short delay
+            let pid = processToTerminate.processIdentifier
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
+                var zombieCheck: Int32 = 0
+                if waitpid(pid, &zombieCheck, WNOHANG) == 0 {
+                    kill(pid, SIGKILL)
+                }
+            }
+        }
+
+        stdoutToClose?.fileHandleForReading.closeFile()
+        stderrToClose?.fileHandleForReading.closeFile()
+    }
+
     // MARK: - ModelExecutor Protocol
 
     func initialize() async throws {
@@ -107,8 +145,6 @@ class VLMExecutor: NSObject, ModelExecutor {
         stdoutPipe = nil
         stderrPipe = nil
 
-        stdinToClose?.fileHandleForWriting.closeFile()
-
         if let processToTerminate, processToTerminate.isRunning {
             processToTerminate.terminate()
             let exited = await waitForProcessExit(processToTerminate, timeout: 2.0)
@@ -117,6 +153,8 @@ class VLMExecutor: NSObject, ModelExecutor {
                 _ = await waitForProcessExit(processToTerminate, timeout: 1.0)
             }
         }
+
+        stdinToClose?.fileHandleForWriting.closeFile()
 
         stdoutToClose?.fileHandleForReading.closeFile()
         stderrToClose?.fileHandleForReading.closeFile()
@@ -688,6 +726,10 @@ private final class StreamFinishState: @unchecked Sendable {
         // Stderr handler for debugging - capture all Python output
         stderrPipe?.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
+            guard !data.isEmpty else {
+                // EOF: pipe closed on the write end
+                return
+            }
             guard let output = String(data: data, encoding: .utf8),
                   !output.isEmpty else { return }
 

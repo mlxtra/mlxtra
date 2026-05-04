@@ -38,6 +38,16 @@
 		8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001021 /* ChatViewModel+Messages.swift */; };
 		8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001022 /* ChatViewModel+Tooling.swift */; };
 		8A0100010000000000000023 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001023 /* UITestSupport.swift */; };
+		8A0100010000000000000024 /* ImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001024 /* ImageCache.swift */; };
+		8A0100010000000000000025 /* AudioPlayerCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001025 /* AudioPlayerCache.swift */; };
+		8A0100010000000000000026 /* StreamingMarkdownInstrumentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */; };
+		8A0100010000000000000027 /* StreamingMarkdownSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */; };
+		8A0100010000000000000028 /* MarkdownCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001028 /* MarkdownCache.swift */; };
+		8A0100010000000000000029 /* MarkdownBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001029 /* MarkdownBlock.swift */; };
+		8A010001000000000000002A /* MarkdownBlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102A /* MarkdownBlockRenderer.swift */; };
+		8A010001000000000000002B /* MarkdownAttributedRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102B /* MarkdownAttributedRenderer.swift */; };
+		8A010001000000000000002C /* ReasoningContentFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102C /* ReasoningContentFilter.swift */; };
+		8A010001000000000000002D /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 8A0100010000000000009002 /* Markdown */; };
 		8A0200010000000000000001 /* MLXHubGenerateRoutesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001001 /* MLXHubGenerateRoutesUITests.swift */; };
 		8A0200010000000000000002 /* MLXHubDownloadStatesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001002 /* MLXHubDownloadStatesUITests.swift */; };
 /* End PBXBuildFile section */
@@ -87,6 +97,15 @@
 		8A0100010000000000001021 /* ChatViewModel+Messages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Messages.swift"; sourceTree = "<group>"; };
 		8A0100010000000000001022 /* ChatViewModel+Tooling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Tooling.swift"; sourceTree = "<group>"; };
 		8A0100010000000000001023 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
+		8A0100010000000000001024 /* ImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCache.swift; sourceTree = "<group>"; };
+		8A0100010000000000001025 /* AudioPlayerCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerCache.swift; sourceTree = "<group>"; };
+		8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingMarkdownInstrumentation.swift; sourceTree = "<group>"; };
+		8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingMarkdownSplitter.swift; sourceTree = "<group>"; };
+		8A0100010000000000001028 /* MarkdownCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownCache.swift; sourceTree = "<group>"; };
+		8A0100010000000000001029 /* MarkdownBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlock.swift; sourceTree = "<group>"; };
+		8A010001000000000000102A /* MarkdownBlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockRenderer.swift; sourceTree = "<group>"; };
+		8A010001000000000000102B /* MarkdownAttributedRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownAttributedRenderer.swift; sourceTree = "<group>"; };
+		8A010001000000000000102C /* ReasoningContentFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningContentFilter.swift; sourceTree = "<group>"; };
 		8A0200010000000000001001 /* MLXHubGenerateRoutesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXHubGenerateRoutesUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001002 /* MLXHubDownloadStatesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXHubDownloadStatesUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001014 /* MLXHubUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MLXHubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -97,6 +116,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8A010001000000000000002D /* Markdown in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -129,6 +149,7 @@
 				8A0100010000000000003004 /* ViewModels */,
 				8A0100010000000000003005 /* Models */,
 				8A0100010000000000003006 /* Services */,
+				8A0100010000000000003014 /* Utilities */,
 				8A0100010000000000003008 /* Resources */,
 			);
 			path = MLXHub;
@@ -145,6 +166,7 @@
 				8A0100010000000000001019 /* ComposerView.swift */,
 				8A0100010000000000001008 /* MessageBubbleView.swift */,
 				8A0100010000000000001016 /* SettingsView.swift */,
+				8A0100010000000000003015 /* Components */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -248,6 +270,29 @@
 			path = MCP;
 			sourceTree = "<group>";
 		};
+		8A0100010000000000003014 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001024 /* ImageCache.swift */,
+				8A0100010000000000001025 /* AudioPlayerCache.swift */,
+				8A0100010000000000001029 /* MarkdownBlock.swift */,
+				8A010001000000000000102A /* MarkdownBlockRenderer.swift */,
+				8A010001000000000000102B /* MarkdownAttributedRenderer.swift */,
+				8A0100010000000000001028 /* MarkdownCache.swift */,
+				8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */,
+				8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003015 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				8A010001000000000000102C /* ReasoningContentFilter.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
 		8A0200010000000000003001 /* MLXHubUITests */ = {
 			isa = PBXGroup;
 			children = (
@@ -272,6 +317,9 @@
 			buildRules = (
 			);
 			dependencies = (
+			);
+			packageProductDependencies = (
+				8A0100010000000000009002 /* Markdown */,
 			);
 			name = MLXHub;
 			productName = MLXHub;
@@ -330,6 +378,9 @@
 			targets = (
 				8A0100010000000000004001 /* MLXHub */,
 				8A0200010000000000004001 /* MLXHubUITests */,
+			);
+			packageReferences = (
+				8A0100010000000000009001 /* XCRemoteSwiftPackageReference "swift-markdown" */,
 			);
 		};
 /* End PBXProject section */
@@ -415,6 +466,15 @@
 				8A010001000000000000000F /* RuntimeManager.swift in Sources */,
 				8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */,
 				8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */,
+				8A0100010000000000000024 /* ImageCache.swift in Sources */,
+				8A0100010000000000000025 /* AudioPlayerCache.swift in Sources */,
+				8A0100010000000000000029 /* MarkdownBlock.swift in Sources */,
+				8A010001000000000000002A /* MarkdownBlockRenderer.swift in Sources */,
+				8A010001000000000000002B /* MarkdownAttributedRenderer.swift in Sources */,
+				8A0100010000000000000028 /* MarkdownCache.swift in Sources */,
+				8A0100010000000000000026 /* StreamingMarkdownInstrumentation.swift in Sources */,
+				8A0100010000000000000027 /* StreamingMarkdownSplitter.swift in Sources */,
+				8A010001000000000000002C /* ReasoningContentFilter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -436,6 +496,25 @@
 			targetProxy = 8A0200010000000000008001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8A0100010000000000009001 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.7.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8A0100010000000000009002 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8A0100010000000000009001 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		8A0100010000000000006001 /* Debug */ = {

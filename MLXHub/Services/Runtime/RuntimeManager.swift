@@ -51,8 +51,9 @@ class RuntimeManager: ObservableObject {
     }
     
     private var appSupportURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("MLXHub")
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return baseURL.appendingPathComponent("MLXHub")
     }
 
     var checkpointsPath: URL {
@@ -182,14 +183,19 @@ class RuntimeManager: ObservableObject {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             throw RuntimeError.pythonValidationFailed(context, error.localizedDescription)
         }
 
+        // Read pipes before waitUntilExit() to prevent pipe-buffer deadlock
+        // when Python writes more than the pipe buffer can hold before exiting
+        let stdoutData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         guard process.terminationStatus == 0 else {
-            let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            let stdout = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
             let details = (stderr.isEmpty ? stdout : stderr)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw RuntimeError.pythonValidationFailed(context, details.isEmpty ? "Python exited with status \(process.terminationStatus)" : details)
