@@ -15,6 +15,16 @@ final class MarkdownRenderingTests: XCTestCase {
         XCTAssertFalse(AIContentRenderingPolicy.shouldUseFastPlainText(for: "**bold** text"))
     }
 
+    func testMarkdownDetectionRecognizesOrderedListsAndItalic() {
+        XCTAssertFalse(AIContentRenderingPolicy.shouldUseFastPlainText(for: "1. First\n2. Second"))
+        XCTAssertFalse(AIContentRenderingPolicy.shouldUseFastPlainText(for: "Use *emphasis* here"))
+    }
+
+    func testWaveformBarHeightScalesRatiosToGeometry() {
+        XCTAssertEqual(AudioWaveformScrubberMetrics.barHeight(ratio: 0.5, maxHeight: 40), 20)
+        XCTAssertEqual(AudioWaveformScrubberMetrics.barHeight(ratio: 0.1, maxHeight: 40), 7)
+    }
+
     // MARK: - Block parsing (via MarkdownBlockRenderer)
 
     func testHeadings() {

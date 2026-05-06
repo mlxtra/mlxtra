@@ -8,7 +8,10 @@ enum ReasoningContentFilter {
 
     static func visibleText(from text: String) -> String? {
         // Fast path: no reasoning tag markers at all.
-        guard text.contains("<think") || text.contains("<thinking") else {
+        guard text.contains("<think")
+            || text.contains("</think")
+            || text.contains("<thinking")
+            || text.contains("</thinking") else {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }

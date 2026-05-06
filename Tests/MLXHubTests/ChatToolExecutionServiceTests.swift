@@ -1161,6 +1161,39 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(viewModel.localEngineStatus.detail, "ACE-Step 1.5 Turbo is using memory locally.")
     }
 
+    func testCompletedTerminalToolCallCancelsGenerationTimeout() async throws {
+        resetPromptConfigurationDefaults()
+        let originalTimeout = ChatViewModel.generationTimeout
+        ChatViewModel.generationTimeout = 0.05
+        defer { ChatViewModel.generationTimeout = originalTimeout }
+
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                #"generate_image(prompt="Draw a quiet studio desk")"#,
+                usage: TokenUsage(promptTokens: 1, completionTokens: 2)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let toolExecutor = MockChatToolExecutionService(
+            mediaOutcome: .toolMessage("The generated image is already displayed in the app UI.")
+        )
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 && !viewModel.isGenerating }
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(executor.terminateCount, 0)
+    }
+
     private func makePlan(model: DownloadableModel? = nil) -> ChatMediaToolExecutionPlan {
         let resolvedModel = model ?? DownloadableModel(
             id: "image-model",

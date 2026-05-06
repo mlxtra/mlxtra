@@ -31,6 +31,68 @@ final class ChatPersistenceServiceTests: XCTestCase {
         XCTAssertEqual(loadedChats, [chat])
     }
 
+    func testFlushPendingSavePersistsDebouncedSnapshotImmediately() throws {
+        let storageDirectory = try makeTemporaryDirectory()
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
+
+        let service = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+        let chat = Chat(
+            title: "Pending chat",
+            messages: [
+                Message(
+                    content: "Saved before debounce fires",
+                    isUser: false,
+                    timestamp: Date(timeIntervalSince1970: 1_234)
+                )
+            ],
+            timestamp: Date(timeIntervalSince1970: 5_678),
+            icon: "message"
+        )
+
+        service.scheduleSave([chat], selectedChatId: chat.id)
+        service.flushPendingSave()
+
+        XCTAssertEqual(service.loadChats(), [chat])
+        XCTAssertEqual(service.loadSelectedChatId(), chat.id)
+    }
+
+    func testDeinitPersistsDebouncedSnapshot() throws {
+        let storageDirectory = try makeTemporaryDirectory()
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
+
+        let chat = Chat(
+            title: "Closing chat",
+            messages: [
+                Message(
+                    content: "Saved during teardown",
+                    isUser: false,
+                    timestamp: Date(timeIntervalSince1970: 2_468)
+                )
+            ],
+            timestamp: Date(timeIntervalSince1970: 1_357),
+            icon: "message"
+        )
+
+        var service: LocalChatPersistenceService? = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+        service?.scheduleSave([chat], selectedChatId: chat.id)
+        service = nil
+
+        let reloadedService = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+        XCTAssertEqual(reloadedService.loadChats(), [chat])
+        XCTAssertEqual(reloadedService.loadSelectedChatId(), chat.id)
+    }
+
     func testSelectedChatIdRoundTrip() throws {
         let storageDirectory = try makeTemporaryDirectory()
         let (defaults, suiteName) = try makeUserDefaults()

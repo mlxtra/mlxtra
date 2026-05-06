@@ -119,6 +119,8 @@ struct ChatSidebarMetadata {
 
 @MainActor
 class ChatViewModel: ObservableObject {
+    static var generationTimeout: TimeInterval = 300.0
+
     // MARK: - Performance Caches
     private var cachedRecentChats: [Chat] = []
     private var _cachedRecentChatsRevision: UInt = 0
@@ -1006,7 +1008,7 @@ class ChatViewModel: ObservableObject {
         var firstOutputAt: Date?
         var observedTokenEvents = 0
         var toolBufferTokenCount = 0
-        let overallTimeout: TimeInterval = 300.0  // 5 minute overall generation timeout
+        let overallTimeout = Self.generationTimeout
         var timeoutTask: Task<Void, Never>?
 #if DEBUG
         var tokenIndex = 0
@@ -1061,6 +1063,10 @@ class ChatViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             print("[ChatVM] Generation timed out after \(overallTimeout)s")
             await vlmExecutor?.terminate()
+        }
+        defer {
+            timeoutTask?.cancel()
+            timeoutTask = nil
         }
 
         for await event in stream {
@@ -1287,9 +1293,6 @@ class ChatViewModel: ObservableObject {
                 loadingMessage = message
             }
         }
-
-        timeoutTask?.cancel()
-        timeoutTask = nil
 
         if Task.isCancelled {
             renderStreamingResponse(force: true)

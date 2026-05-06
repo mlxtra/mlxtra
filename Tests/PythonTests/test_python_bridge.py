@@ -691,6 +691,44 @@ class TestAceStepForwarding(unittest.TestCase):
             assert lines[0]["type"] == "audio.generated"
             log_debug.assert_any_call("[ACE-Step stdout ignored] debug noise")
 
+    def test_forward_music_request_drains_stderr_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            helper = Path(temp_dir) / "helper.py"
+            helper.write_text(
+                "import json, sys\n"
+                "request = json.loads(sys.stdin.readline())\n"
+                "for _ in range(2000):\n"
+                "    print('stderr noise ' + ('x' * 80), file=sys.stderr, flush=True)\n"
+                "print(json.dumps({'type': 'audio.generated', 'request_id': request.get('request_id'), 'path': '/tmp/out.wav'}), flush=True)\n"
+            )
+
+            child = None
+            with patch("sys.stdout", new_callable=__import__("io").StringIO) as captured_stdout, patch.object(python_bridge, "log_debug"):
+                try:
+                    child = python_bridge._ensure_music_subprocess(sys.executable, helper)
+                    return_code = python_bridge._forward_music_request(
+                        child,
+                        {"request_id": "req-music", "type": "music.generate"},
+                    )
+                finally:
+                    if child is not None and child.poll() is None:
+                        python_bridge._terminate_child(child, timeout=1)
+                    if child is not None:
+                        for pipe in (child.stdin, child.stdout, child.stderr):
+                            if pipe is not None and not pipe.closed:
+                                pipe.close()
+                    python_bridge._music_process = None
+
+            assert return_code == 0
+            lines = [json.loads(line) for line in captured_stdout.getvalue().splitlines() if line.strip()]
+            assert lines == [
+                {
+                    "type": "audio.generated",
+                    "request_id": "req-music",
+                    "path": "/tmp/out.wav",
+                }
+            ]
+
 
 class TestImageModelLoading(unittest.TestCase):
     def test_passes_model_path_to_mflux(self):

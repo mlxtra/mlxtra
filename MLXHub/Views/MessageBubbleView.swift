@@ -553,8 +553,8 @@ private struct AudioWaveformScrubber: View {
             let size = geometry.size
 
             ZStack(alignment: .leading) {
-                waveformBars(color: Color(NSColor.separatorColor).opacity(0.42))
-                waveformBars(color: Color.accentColor)
+                waveformBars(size: size, color: Color(NSColor.separatorColor).opacity(0.42))
+                waveformBars(size: size, color: Color.accentColor)
                     .mask(alignment: .leading) {
                         Rectangle().frame(width: activeWidth)
                     }
@@ -585,12 +585,13 @@ private struct AudioWaveformScrubber: View {
         .accessibilityValue("\(Int(progress * 100)) percent")
     }
 
-    private func waveformBars(color: Color) -> some View {
+    private func waveformBars(size: CGSize, color: Color) -> some View {
         HStack(alignment: .center, spacing: barSpacing) {
             ForEach(0..<barCount, id: \.self) { index in
+                let ratio = barRatios[safe: index] ?? 0.5
                 RoundedRectangle(cornerRadius: barWidth / 2, style: .continuous)
                     .fill(color)
-                    .frame(width: barWidth, height: barRatios[safe: index] ?? 7)
+                    .frame(width: barWidth, height: AudioWaveformScrubberMetrics.barHeight(ratio: ratio, maxHeight: size.height))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -604,6 +605,12 @@ private struct AudioWaveformScrubber: View {
             let accent = abs(cos(Double(base) * 0.17))
             return 0.28 + (wave * 0.47) + (accent * 0.2)
         }
+    }
+}
+
+enum AudioWaveformScrubberMetrics {
+    static func barHeight(ratio: CGFloat, maxHeight: CGFloat) -> CGFloat {
+        max(7, maxHeight * ratio)
     }
 }
 
@@ -1122,17 +1129,23 @@ enum AIContentRenderingPolicy {
     }
 
     private static func hasItalicPair(_ text: String) -> Bool {
-        // Check for at least one *...* pair (not ** which is bold)
-        var lastWasStar = false
-        var starCount = 0
-        for ch in text {
-            if ch == "*" {
-                starCount += 1
-            } else if starCount > 0 {
-                if starCount == 1 && lastWasStar { return true }
-                lastWasStar = starCount == 2
-                starCount = 0
+        var openSingleStar = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            guard text[index] == "*" else {
+                index = text.index(after: index)
+                continue
             }
+
+            let next = text.index(after: index)
+            if next < text.endIndex, text[next] == "*" {
+                index = text.index(after: next)
+                continue
+            }
+
+            if openSingleStar { return true }
+            openSingleStar = true
+            index = next
         }
         return false
     }
@@ -1141,13 +1154,12 @@ enum AIContentRenderingPolicy {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         for line in lines {
             let trimmed = line.trimmingPrefix(while: { $0 == " " })
-            if let firstDot = trimmed.firstIndex(of: "."),
-               let firstParen = trimmed.firstIndex(of: ")") {
-                let end = Swift.min(firstDot, firstParen)
-                if let num = Int(trimmed[..<end]), num > 0, end < trimmed.endIndex {
-                    let next = trimmed[trimmed.index(after: end)]
-                    if next == " " { return true }
-                }
+            guard let markerEnd = trimmed.firstIndex(where: { $0 == "." || $0 == ")" }) else {
+                continue
+            }
+            if let num = Int(trimmed[..<markerEnd]), num > 0, markerEnd < trimmed.endIndex {
+                let next = trimmed[trimmed.index(after: markerEnd)]
+                if next == " " { return true }
             }
         }
         return false

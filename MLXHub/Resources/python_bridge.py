@@ -939,7 +939,7 @@ def _ensure_music_subprocess(ace_python, helper_path):
             [ace_python, str(helper_path)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
             env=os.environ.copy(),

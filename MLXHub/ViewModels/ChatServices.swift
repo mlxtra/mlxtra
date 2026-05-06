@@ -1,4 +1,4 @@
-import Foundation
+@preconcurrency import Foundation
 
 @MainActor
 protocol ChatPersistenceServicing: AnyObject {
@@ -95,6 +95,7 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     private let storageDirectory: URL
     private let writeQueue = DispatchQueue(label: "com.localstudio.mlxhub.chat-persistence", qos: .utility)
     private var pendingSaveWorkItem: DispatchWorkItem?
+    private var pendingSaveSnapshot: (chats: [Chat], selectedChatId: UUID?)?
     private let saveDebounceInterval: TimeInterval = 1.0
 
     init(
@@ -115,6 +116,28 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
 
     deinit {
         pendingSaveWorkItem?.cancel()
+        if let snapshot = pendingSaveSnapshot {
+            do {
+                try FileManager.default.createDirectory(
+                    at: storageDirectory,
+                    withIntermediateDirectories: true
+                )
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                let data = try encoder.encode(snapshot.chats)
+                let conversationsURL = storageDirectory.appendingPathComponent("conversations.json")
+                try data.write(to: conversationsURL, options: [.atomic])
+                MainActor.assumeIsolated {
+                    if let selectedChatId = snapshot.selectedChatId {
+                        userDefaults.set(selectedChatId.uuidString, forKey: selectedChatKey)
+                    } else {
+                        userDefaults.removeObject(forKey: selectedChatKey)
+                    }
+                }
+            } catch {
+                print("Failed to save pending conversation history: \(error)")
+            }
+        }
         // Use async to avoid deadlock if deinit is called from within the write queue
         writeQueue.async {}
     }
@@ -169,12 +192,9 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
 
     func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
         pendingSaveWorkItem?.cancel()
+        pendingSaveSnapshot = (chats, selectedChatId)
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.saveChats(chats)
-            if let id = selectedChatId {
-                self.saveSelectedChatId(id)
-            }
+            self?.writePendingSaveSnapshot()
         }
         pendingSaveWorkItem = workItem
         writeQueue.asyncAfter(deadline: .now() + saveDebounceInterval, execute: workItem)
@@ -183,14 +203,21 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     func flushPendingSave() {
         pendingSaveWorkItem?.cancel()
         pendingSaveWorkItem = nil
+        writePendingSaveSnapshot()
+    }
+
+    private func writePendingSaveSnapshot() {
+        guard let snapshot = pendingSaveSnapshot else { return }
+        pendingSaveSnapshot = nil
+        saveChats(snapshot.chats)
+        if let id = snapshot.selectedChatId {
+            saveSelectedChatId(id)
+        }
     }
 
     private func flushPendingWrites() {
         // Also flush any pending debounced save before sync-waiting.
-        if let workItem = pendingSaveWorkItem {
-            workItem.cancel()
-            pendingSaveWorkItem = nil
-        }
+        flushPendingSave()
         writeQueue.sync {}
     }
 
