@@ -11,19 +11,19 @@
     "pip": "venv/bin/pip"
   },
   "packages": [
-    "mlx==0.31.1",
-    "mlx-vlm==0.4.4",
-    "mlx-audio==0.4.2",
+    "mlx==0.31.2",
+    "mlx-vlm==0.5.0",
+    "mlx-audio==0.4.3",
     "mflux==0.17.5",
-    "transformers==5.5.4",
-    "huggingface-hub==1.10.2",
+    "transformers==5.8.0",
+    "huggingface-hub==1.14.0",
     "pillow==12.2.0",
     "numpy==2.4.4",
     "torch==2.11.0",
     "torchvision==0.26.0"
   ],
   "isolatedPackages": [
-    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@97ac5116c103c05532e4968a83b9046181248da6"
+    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
   ],
   "supportedBackends": [
     "vlm",
@@ -44,6 +44,10 @@
     "mlx-community/Qwen3.5-9B-MLX-4bit",
     "google/gemma-4-e4b-it",
     "mlx-community/Qwen3.5-2B-MLX-4bit",
+    "mlx-community/gemma-4-e2b-it-4bit",
+    "mlx-community/gemma-4-26b-a4b-it-4bit",
+    "mlx-community/Qwen3.6-27B-4bit",
+    "mlx-community/Qwen3.6-35B-A3B-4bit",
     "black-forest-labs/FLUX.2-klein-4B",
     "kugelaudio/kugelaudio-0-open",
     "ACE-Step/acestep-v15-turbo-continuous"

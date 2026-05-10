@@ -11,9 +11,11 @@ Tests the full end-to-end pipeline using the Python bridge subprocess.
 
 import json
 import os
+import queue
 import struct
 import subprocess
 import sys
+import threading
 import time
 import wave
 from pathlib import Path
@@ -404,11 +406,38 @@ class MLXHubIntegrationTest:
             )
 
             all_messages = []
+            stderr_lines = []
+            stdout_lines = queue.Queue()
             start_time = time.time()
+
+            def drain_stdout():
+                if proc.stdout is None:
+                    return
+                for line in proc.stdout:
+                    line = line.strip()
+                    if line:
+                        stdout_lines.put(line)
+
+            def drain_stderr():
+                if proc.stderr is None:
+                    return
+                for line in proc.stderr:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    stderr_lines.append(line)
+                    del stderr_lines[:-50]
+
+            stdout_thread = threading.Thread(target=drain_stdout, daemon=True)
+            stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
 
             for request in requests:
                 if time.time() - start_time > timeout:
                     self.log(f"Session timeout after {timeout}s", "ERROR")
+                    for line in stderr_lines[-20:]:
+                        self.log(f"  [stderr before timeout] {line[:150]}", "ERROR")
                     proc.terminate()
                     return all_messages, False
 
@@ -416,45 +445,78 @@ class MLXHubIntegrationTest:
                 proc.stdin.write(json.dumps(request) + "\n")
                 proc.stdin.flush()
 
-                # Read responses until we get a completion or timeout
+                # Read responses until we get the completion signal for this request.
+                # The bridge keeps model lifecycle events request-id agnostic for
+                # compatibility with older Swift callers, so only let model.loaded
+                # complete init. A late model.loaded must not finish a queued chat
+                # request before the assistant response arrives.
                 request_start = time.time()
-                request_timeout = (
-                    60 if request.get("type") == "chat.completions" else 300
-                )
+                request_type = request.get("type")
+                if request_type == "init":
+                    request_timeout = 420
+                elif request_type == "chat.completions":
+                    request_timeout = 300
+                else:
+                    request_timeout = 180
+                request_completed = False
 
                 while time.time() - request_start < request_timeout:
-                    import select
+                    try:
+                        line = stdout_lines.get(timeout=0.1)
+                    except queue.Empty:
+                        line = None
 
-                    # Check if there's output to read
-                    if select.select([proc.stdout], [], [], 0.1)[0]:
-                        line = proc.stdout.readline().strip()
-                        if line:
-                            try:
-                                msg = json.loads(line)
-                                all_messages.append(msg)
+                    if line:
+                        try:
+                            msg = json.loads(line)
+                            all_messages.append(msg)
 
-                                # Check for completion or error
-                                if msg.get("type") in (
-                                    "assistant",
-                                    "chat.completion.complete",
-                                    "error",
-                                ):
-                                    break
-                                elif msg.get("type") == "model.loaded":
-                                    # Model loaded, can proceed to next request
-                                    break
-                            except json.JSONDecodeError:
-                                pass
+                            # Check for completion or error
+                            message_type = msg.get("type")
+                            if message_type == "error":
+                                request_completed = True
+                                break
+                            if request_type == "init" and message_type == "model.loaded":
+                                # Model loaded, can proceed to next request
+                                request_completed = True
+                                break
+                            if request_type == "chat.completions" and message_type in (
+                                "assistant",
+                                "chat.completion.complete",
+                            ):
+                                request_completed = True
+                                break
+                        except json.JSONDecodeError:
+                            pass
 
                     # Check if process died
-                    if proc.poll() is not None:
+                    return_code = proc.poll()
+                    if return_code is not None:
+                        self.log(
+                            f"Bridge process exited during {request.get('type')} with code {return_code}",
+                            "ERROR",
+                        )
+                        for line in stderr_lines[-20:]:
+                            self.log(f"  [stderr] {line[:150]}", "ERROR")
                         break
+
+                if not request_completed and proc.poll() is None:
+                    self.log(
+                        f"Request {request_type} timed out after {request_timeout}s",
+                        "ERROR",
+                    )
+                    for line in stderr_lines[-20:]:
+                        self.log(f"  [stderr before timeout] {line[:150]}", "ERROR")
+                    proc.terminate()
+                    return all_messages, False
 
             proc.terminate()
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
 
             success = not any(m.get("type") == "error" for m in all_messages)
             return all_messages, success

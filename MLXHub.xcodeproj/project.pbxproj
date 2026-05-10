@@ -435,6 +435,7 @@
 			);
 			inputPaths = (
 				"$(SRCROOT)/Scripts/validate-runtime-bundle.sh",
+				"$(SRCROOT)/Scripts/runtime-dependencies.sh",
 				"$(SRCROOT)/MLXHub/Resources/python_bridge.py",
 				"$(SRCROOT)/MLXHub/Resources/acestep_bridge.py",
 				"$(SRCROOT)/MLXHub/Resources/bridge_utils.py",

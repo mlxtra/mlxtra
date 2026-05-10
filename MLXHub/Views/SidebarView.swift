@@ -33,6 +33,9 @@ struct SidebarView: View {
                             rowIcon: metadata.icon,
                             previewText: metadata.preview,
                             isSelected: viewModel.selectedChatId == chat.id,
+                            onRename: {
+                                beginRename(chat)
+                            },
                             onDelete: {
                                 viewModel.deleteChat(chat)
                             }
@@ -51,8 +54,7 @@ struct SidebarView: View {
                             .contentShape(Rectangle())
                             .contextMenu {
                                 Button("Rename") {
-                                    renamingChat = chat
-                                    renameTitle = chat.title
+                                    beginRename(chat)
                                 }
                                 Divider()
                                 Button("Delete", role: .destructive) {
@@ -100,6 +102,11 @@ struct SidebarView: View {
     private func clearRenameState() {
         renamingChat = nil
         renameTitle = ""
+    }
+
+    private func beginRename(_ chat: Chat) {
+        renamingChat = chat
+        renameTitle = ChatDisplayText.singleLine(chat.title, fallback: "")
     }
 }
 
@@ -203,9 +210,9 @@ struct ChatHistoryItem: View {
     let rowIcon: String
     let previewText: String
     let isSelected: Bool
+    let onRename: () -> Void
     let onDelete: () -> Void
     @State private var isHovered = false
-    @State private var isConfirmingDelete = false
     private let actionButtonHeight = MLXHubDesignSystem.Icon.avatar
     private let rowHorizontalOverhang = MLXHubDesignSystem.Spacing.xl
     private let actionTrailingInset = -MLXHubDesignSystem.Spacing.xs
@@ -215,7 +222,7 @@ struct ChatHistoryItem: View {
         ChatDisplayText.singleLine(chat.title, fallback: "Untitled")
     }
     private var showsActionButton: Bool {
-        isHovered || isConfirmingDelete
+        isHovered
     }
 
     var body: some View {
@@ -278,7 +285,7 @@ struct ChatHistoryItem: View {
 #endif
         .overlay(alignment: .trailing) {
             if showsActionButton {
-                deleteButton
+                actionMenu
                     .padding(.trailing, actionTrailingInset)
                     .transition(.opacity)
             }
@@ -286,37 +293,42 @@ struct ChatHistoryItem: View {
         .onHover { hovering in
             withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration)) {
                 isHovered = hovering
-                if !hovering {
-                    isConfirmingDelete = false
-                }
             }
         }
     }
 
-    private var deleteButton: some View {
-        Button(action: handleDeleteTap) {
-            Group {
-                if isConfirmingDelete {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: actionButtonHeight, height: actionButtonHeight)
-                        .background(Color.red, in: Circle())
-                } else {
-                    Image(systemName: "trash")
-                        .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: actionButtonHeight, height: actionButtonHeight)
-                        .background(
-                            Circle()
-                                .fill(Color.primary.opacity(0.06))
-                        )
-                }
+    private var actionMenu: some View {
+        Menu {
+            Button {
+                onRename()
+            } label: {
+                Label("Rename", systemImage: "pencil")
             }
+
+            Divider()
+
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: actionButtonHeight, height: actionButtonHeight)
+                .background(
+                    Circle()
+                        .fill(Color.primary.opacity(0.06))
+                )
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .help(isConfirmingDelete ? "Confirm delete" : "Delete chat")
-        .accessibilityIdentifier("sidebar.chat.delete")
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Chat actions")
+        .accessibilityLabel("Chat actions")
+        .accessibilityIdentifier("sidebar.chat.actions")
     }
 
     private var timestampLabel: some View {
@@ -374,15 +386,6 @@ struct ChatHistoryItem: View {
         return formatter
     }()
 
-    private func handleDeleteTap() {
-        if isConfirmingDelete {
-            onDelete()
-        } else {
-            withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration)) {
-                isConfirmingDelete = true
-            }
-        }
-    }
 }
 
 #Preview {

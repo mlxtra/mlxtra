@@ -2,6 +2,55 @@ import XCTest
 @testable import MLXHub
 
 final class ChatViewModelLogicTests: XCTestCase {
+    @MainActor
+    func testRenameChatNormalizesPersistsAndKeepsConversationOrderTimestamp() {
+        let chatId = UUID()
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let persistence = RecordingChatPersistenceService(
+            chats: [
+                Chat(
+                    id: chatId,
+                    title: "Old name",
+                    messages: [],
+                    timestamp: timestamp,
+                    icon: "message"
+                )
+            ],
+            selectedChatId: chatId
+        )
+        let viewModel = ChatViewModel(chatPersistence: persistence)
+
+        viewModel.renameChat(chatId, to: "  Product\nplanning  ")
+
+        XCTAssertEqual(viewModel.chats.first?.title, "Product planning")
+        XCTAssertEqual(viewModel.chats.first?.timestamp, timestamp)
+        XCTAssertEqual(persistence.savedChats.last?.title, "Product planning")
+        XCTAssertEqual(persistence.savedSelectedChatId, chatId)
+    }
+
+    @MainActor
+    func testRenameChatFallsBackForEmptyTitle() {
+        let chatId = UUID()
+        let persistence = RecordingChatPersistenceService(
+            chats: [
+                Chat(
+                    id: chatId,
+                    title: "Old name",
+                    messages: [],
+                    timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+                    icon: "message"
+                )
+            ],
+            selectedChatId: chatId
+        )
+        let viewModel = ChatViewModel(chatPersistence: persistence)
+
+        viewModel.renameChat(chatId, to: " \n\t ")
+
+        XCTAssertEqual(viewModel.chats.first?.title, "Untitled")
+        XCTAssertEqual(persistence.savedChats.last?.title, "Untitled")
+    }
+
     func testMusicReadinessSystemInstructionBlocksPrematureGeneration() {
         let instruction = MusicIntentState.needsInstrumentalOrVocals.systemInstruction
 
@@ -107,4 +156,39 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertEqual(state, .readyToGenerate)
         XCTAssertNil(state.blockedToolMessage)
     }
+}
+
+@MainActor
+private final class RecordingChatPersistenceService: ChatPersistenceServicing {
+    private let initialChats: [Chat]
+    private let initialSelectedChatId: UUID?
+    private(set) var savedChats: [Chat] = []
+    private(set) var savedSelectedChatId: UUID?
+
+    init(chats: [Chat], selectedChatId: UUID?) {
+        self.initialChats = chats
+        self.initialSelectedChatId = selectedChatId
+    }
+
+    func loadChats() -> [Chat] {
+        initialChats
+    }
+
+    func saveChats(_ chats: [Chat]) {
+        savedChats = chats
+    }
+
+    func loadSelectedChatId() -> UUID? {
+        initialSelectedChatId
+    }
+
+    func saveSelectedChatId(_ selectedChatId: UUID?) {
+        savedSelectedChatId = selectedChatId
+    }
+
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL] {
+        urls
+    }
+
+    func deleteAttachments(for chatId: UUID) {}
 }

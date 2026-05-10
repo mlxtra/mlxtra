@@ -4,6 +4,11 @@ import XCTest
 
 @MainActor
 final class ChatToolExecutionServiceTests: XCTestCase {
+    private static var defaultChatModelId: String {
+        ModelCapabilityProfile.bestProfile(for: .vision)?.modelId
+            ?? AIModel.defaultForCurrentHardware.modelId
+    }
+
     func testExecuteWebSearchReturnsContext() async {
         let executor = MockChatModelExecutor()
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
@@ -233,7 +238,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             .token("answer."),
             .complete("Plain answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
@@ -269,7 +274,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 )
             )
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
@@ -299,7 +304,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let executor = MockChatModelExecutor(events: [
             .toolCalls([toolCall])
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService()
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -327,7 +332,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let executor = MockChatModelExecutor(events: [
             .error(ExecutionError.pythonError("bridge failed"))
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
@@ -355,7 +360,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let executor = MockChatModelExecutor()
         executor.isReady = true
         executor.isModelLoaded = true
-        executor.currentModelId = AIModel.defaultForCurrentHardware.modelId
+        executor.currentModelId = Self.defaultChatModelId
         executor.currentModelBackend = .vlm
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
@@ -427,7 +432,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
     func testSelectedImageModeShowsNeedsDownloadBeforeSend() async {
         let executor = MockChatModelExecutor()
         let imageModelId = "black-forest-labs/FLUX.2-klein-4B"
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
@@ -450,7 +455,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
     func testPreflightDownloadStatusClearsAfterDownload() async {
         let executor = MockChatModelExecutor()
         let imageModelId = "black-forest-labs/FLUX.2-klein-4B"
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
@@ -471,7 +476,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
     func testAutoModeDoesNotKeepNonTextPreflightRequirement() async {
         let executor = MockChatModelExecutor()
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
@@ -495,7 +500,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
     func testMissingMusicModelBlocksExplicitMusicGenerationBeforeChatLoad() async {
         let executor = MockChatModelExecutor()
         let musicModelId = "ACE-Step/acestep-v15-turbo-continuous"
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
@@ -734,7 +739,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             .toolCalls([toolCall])
         ])
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [
-            AIModel.defaultForCurrentHardware.modelId,
+            Self.defaultChatModelId,
             musicModelId
         ])
         let toolExecutor = MockChatToolExecutionService()
@@ -794,7 +799,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             )
         ])
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [
-            AIModel.defaultForCurrentHardware.modelId,
+            Self.defaultChatModelId,
             musicModelId
         ])
         let toolExecutor = MockChatToolExecutionService()
@@ -831,7 +836,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 usage: TokenUsage(promptTokens: 1, completionTokens: 2)
             )
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService()
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -867,7 +872,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 usage: TokenUsage(promptTokens: 1, completionTokens: 2)
             )
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService()
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -907,7 +912,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let executor = MockChatModelExecutor(events: [
             .toolCalls([toolCall])
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService()
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -945,7 +950,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             )
         ])
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [
-            AIModel.defaultForCurrentHardware.modelId,
+            Self.defaultChatModelId,
             musicModelId
         ])
         let toolExecutor = MockChatToolExecutionService()
@@ -976,7 +981,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 usage: TokenUsage(promptTokens: 1, completionTokens: 2)
             )
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService()
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -1018,7 +1023,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let executor = MockChatModelExecutor(events: [
             .toolCalls([allowedToolCall, unsupportedToolCall])
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService()
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -1042,7 +1047,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let executor = MockChatModelExecutor(events: [
             .complete("Research answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 1))
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService(webSearchResult: "Source context")
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -1084,7 +1089,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 )
             ]
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService(webSearchResult: "Source context")
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -1118,7 +1123,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 usage: TokenUsage(promptTokens: 1, completionTokens: 2)
             )
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService(webSearchResult: "Source context")
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -1173,7 +1178,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 usage: TokenUsage(promptTokens: 1, completionTokens: 2)
             )
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [AIModel.defaultForCurrentHardware.modelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService(
             mediaOutcome: .toolMessage("The generated image is already displayed in the app UI.")
         )

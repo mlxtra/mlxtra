@@ -60,10 +60,10 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertFalse(embedded.isEmpty)
 
         let visionModels = embedded.filter { $0.modality == .vision }
-        XCTAssertEqual(visionModels.count, AIModel.allCases.count)
+        XCTAssertGreaterThanOrEqual(visionModels.count, AIModel.allCases.count)
     }
 
-    func testEmbeddedVisionModelsMirrorBuiltInCatalog() {
+    func testEmbeddedVisionModelsIncludeLegacyBuiltInCatalog() {
         let embeddedVisionModels = DownloadableModel.embedded.filter { $0.modality == .vision }
         let expectedVisionModels = AIModel.allCases.map { model in
             DownloadableModel(
@@ -77,7 +77,20 @@ final class DownloadableModelTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(embeddedVisionModels, expectedVisionModels)
+        for model in expectedVisionModels {
+            XCTAssertTrue(embeddedVisionModels.contains(model), "Missing \(model.modelId)")
+        }
+    }
+
+    func testEmbeddedVisionModelsIncludeAdditionalGemmaAndQwenSizes() {
+        let embeddedVisionModelIds = Set(DownloadableModel.embedded
+            .filter { $0.modality == .vision }
+            .map(\.modelId))
+
+        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/gemma-4-e2b-it-4bit"))
+        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
+        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
+        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
     }
 
     func testEmbeddedModelsContainsAllModalities() {

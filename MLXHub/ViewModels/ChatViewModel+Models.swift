@@ -152,7 +152,7 @@ extension ChatViewModel {
             return profile
         }
 
-        return ModelCapabilityProfile.profiles(for: modality).first
+        return ModelCapabilityProfile.visibleProfiles(for: modality).first
             ?? ModelCapabilityProfile.embedded.first!
     }
 

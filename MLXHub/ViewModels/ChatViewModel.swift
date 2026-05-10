@@ -396,7 +396,6 @@ class ChatViewModel: ObservableObject {
         guard let index = chats.firstIndex(where: { $0.id == chatId }) else { return }
 
         chats[index].title = normalizedTitle
-        chats[index].timestamp = Date()
         persistConversationHistory()
     }
 

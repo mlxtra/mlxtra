@@ -19,6 +19,10 @@ struct SettingsView: View {
     @State private var removalCandidate: DownloadableModel?
 
     private var allModels: [DownloadableModel] {
+        ModelCapabilityProfile.visibleProfiles().map(\.downloadableModel)
+    }
+
+    private var catalogModels: [DownloadableModel] {
         catalogService.profiles.map(\.downloadableModel)
     }
 
@@ -380,7 +384,7 @@ struct SettingsView: View {
 
     private var pendingModel: DownloadableModel? {
         guard !pendingDownloadModelId.isEmpty,
-              let model = allModels.first(where: { $0.modelId == pendingDownloadModelId })
+              let model = catalogModels.first(where: { $0.modelId == pendingDownloadModelId })
                 ?? DownloadableModel.embeddedModel(modelId: pendingDownloadModelId),
               downloadManager.state(for: model) != .downloaded else {
             return nil
@@ -390,7 +394,7 @@ struct SettingsView: View {
 
     private func clearPendingDownloadIfReady() {
         guard !pendingDownloadModelId.isEmpty,
-              let model = allModels.first(where: { $0.modelId == pendingDownloadModelId })
+              let model = catalogModels.first(where: { $0.modelId == pendingDownloadModelId })
                 ?? DownloadableModel.embeddedModel(modelId: pendingDownloadModelId),
               downloadManager.state(for: model) == .downloaded else {
             return

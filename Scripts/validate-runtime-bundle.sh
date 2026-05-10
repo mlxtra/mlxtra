@@ -8,6 +8,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
+source "${SCRIPT_DIR}/runtime-dependencies.sh"
 RUNTIME_DIR="${PROJECT_DIR}/MLXHub/Resources/runtime/macos-arm64"
 PYTHON_HOME="${RUNTIME_DIR}/python/Frameworks/Versions/3.12"
 MAIN_PYTHON="${RUNTIME_DIR}/venv/bin/python"
@@ -54,72 +55,58 @@ require_file "${RUNTIME_DIR}/hf_download_helper.py" "Hugging Face download helpe
 require_file "${RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
 
 validate_manifest() {
+    RUNTIME_EXPECTED_PACKAGES="$(printf '%s\n' "${RUNTIME_MAIN_PACKAGES[@]}")" \
+    RUNTIME_EXPECTED_BACKENDS="$(printf '%s\n' "${RUNTIME_SUPPORTED_BACKENDS[@]}")" \
+    RUNTIME_EXPECTED_CAPABILITIES="$(printf '%s\n' "${RUNTIME_CAPABILITIES[@]}")" \
+    RUNTIME_EXPECTED_MODELS="$(printf '%s\n' "${RUNTIME_SUPPORTED_MODELS[@]}")" \
     /usr/bin/python3 - "${MANIFEST}" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
 manifest_path = pathlib.Path(sys.argv[1])
 manifest = json.loads(manifest_path.read_text())
 
-expected_packages = {
-    "mlx": "0.31.1",
-    "mlx-vlm": "0.4.4",
-    "mlx-audio": "0.4.2",
-    "mflux": "0.17.5",
-    "transformers": "5.5.4",
-    "huggingface-hub": "1.10.2",
-    "pillow": "12.2.0",
-    "numpy": "2.4.4",
-    "torch": "2.11.0",
-    "torchvision": "0.26.0",
-}
+expected_packages = set(os.environ["RUNTIME_EXPECTED_PACKAGES"].splitlines())
 
 manifest_packages = set(manifest.get("packages", []))
-for package, version in expected_packages.items():
-    pinned = f"{package}=={version}"
-    if pinned not in manifest_packages:
-        raise SystemExit(f"runtime manifest is missing {pinned}")
+missing_packages = expected_packages - manifest_packages
+if missing_packages:
+    raise SystemExit(f"runtime manifest is missing packages: {sorted(missing_packages)}")
 
-expected_backends = {"vlm", "llm", "image", "audio", "music"}
+expected_backends = set(os.environ["RUNTIME_EXPECTED_BACKENDS"].splitlines())
 manifest_backends = set(manifest.get("supportedBackends", []))
 missing_backends = expected_backends - manifest_backends
 if missing_backends:
     raise SystemExit(f"runtime manifest is missing supported backends: {sorted(missing_backends)}")
 
-expected_capabilities = {
-    "chat",
-    "vision",
-    "image-generation",
-    "image-editing",
-    "speech-generation",
-    "music-generation",
-}
+expected_capabilities = set(os.environ["RUNTIME_EXPECTED_CAPABILITIES"].splitlines())
 manifest_capabilities = set(manifest.get("capabilities", []))
 missing_capabilities = expected_capabilities - manifest_capabilities
 if missing_capabilities:
     raise SystemExit(f"runtime manifest is missing capabilities: {sorted(missing_capabilities)}")
+
+expected_models = set(os.environ["RUNTIME_EXPECTED_MODELS"].splitlines())
+manifest_models = set(manifest.get("supportedModels", []))
+missing_models = expected_models - manifest_models
+if missing_models:
+    raise SystemExit(f"runtime manifest is missing supported models: {sorted(missing_models)}")
 PY
 }
 
 validate_runtime_python() {
+    RUNTIME_EXPECTED_PACKAGES="$(printf '%s\n' "${RUNTIME_MAIN_PACKAGES[@]}")" \
     PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${MAIN_PYTHON}" - <<'PY'
 import _csv
 import csv
 import importlib.metadata as metadata
+import os
 
-expected_packages = {
-    "mlx": "0.31.1",
-    "mlx-vlm": "0.4.4",
-    "mlx-audio": "0.4.2",
-    "mflux": "0.17.5",
-    "transformers": "5.5.4",
-    "huggingface-hub": "1.10.2",
-    "pillow": "12.2.0",
-    "numpy": "2.4.4",
-    "torch": "2.11.0",
-    "torchvision": "0.26.0",
-}
+expected_packages = {}
+for pinned in os.environ["RUNTIME_EXPECTED_PACKAGES"].splitlines():
+    package, version = pinned.split("==", 1)
+    expected_packages[package] = version
 
 for package, version in expected_packages.items():
     installed = metadata.version(package)

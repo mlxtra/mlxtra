@@ -36,6 +36,40 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
     }
 
+    func testPerModeSelectionFallsBackWhenRememberedModelIsTooLargeForHardware() {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelSelectionStore(userDefaults: defaults)
+        store.setSelectedModelId("mlx-community/Qwen3.6-35B-A3B-4bit", for: .vision)
+
+        XCTAssertNotEqual(
+            store.selectedProfile(for: .vision, hardwareMemoryGB: 8.0)?.modelId,
+            "mlx-community/Qwen3.6-35B-A3B-4bit"
+        )
+    }
+
+    func testVisibleProfilesHideHeavyGemmaAndQwenVariantsOnLowerMemoryHardware() {
+        let visibleModelIds = Set(ModelCapabilityProfile
+            .visibleProfiles(for: .vision, hardwareMemoryGB: 8.0)
+            .map(\.modelId))
+
+        XCTAssertTrue(visibleModelIds.contains(AIModel.gemma4.modelId))
+        XCTAssertFalse(visibleModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
+        XCTAssertFalse(visibleModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
+        XCTAssertFalse(visibleModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
+    }
+
+    func testVisibleProfilesIncludeLargeGemmaAndQwenVariantsOnHighMemoryHardware() {
+        let visibleModelIds = Set(ModelCapabilityProfile
+            .visibleProfiles(for: .vision, hardwareMemoryGB: 32.0)
+            .map(\.modelId))
+
+        XCTAssertTrue(visibleModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
+        XCTAssertTrue(visibleModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
+        XCTAssertTrue(visibleModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
+    }
+
     func testPerModeSelectionPersistsIndependentDefaultsForEachModality() {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }

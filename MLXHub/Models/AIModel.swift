@@ -272,7 +272,7 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
                 appVersion: Self.currentAppVersion
             )
             try saveCachedCatalog(catalogData)
-            catalog = refreshed
+            catalog = Self.catalogWithRequiredBuiltIns(refreshed)
             lastRefreshError = nil
         } catch {
             lastRefreshError = error.localizedDescription
@@ -304,19 +304,39 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
         loadCachedCatalog: Bool,
         loadBundledCatalog: Bool
     ) -> ModelCatalog {
-        if loadCachedCatalog,
-           let data = try? Data(contentsOf: cachedCatalogURL(fileManager: fileManager)),
-           let catalog = try? decodeCatalog(data: data) {
-            return catalog
+        let cachedCatalog: ModelCatalog? = {
+            guard loadCachedCatalog,
+                  let data = try? Data(contentsOf: cachedCatalogURL(fileManager: fileManager)) else {
+                return nil
+            }
+            return try? decodeCatalog(data: data)
+        }()
+
+        let bundledCatalog: ModelCatalog? = {
+            guard loadBundledCatalog,
+                  let data = bundledCatalogData(bundle: bundle) else {
+                return nil
+            }
+            return try? decodeCatalog(data: data)
+        }()
+
+        if let cachedCatalog, let bundledCatalog {
+            let preferred = VersionComparator.compare(
+                bundledCatalog.catalogVersion,
+                cachedCatalog.catalogVersion
+            ) == .orderedDescending ? bundledCatalog : cachedCatalog
+            return catalogWithRequiredBuiltIns(preferred)
         }
 
-        if loadBundledCatalog,
-           let data = bundledCatalogData(bundle: bundle),
-           let catalog = try? decodeCatalog(data: data) {
-            return catalog
+        if let cachedCatalog {
+            return catalogWithRequiredBuiltIns(cachedCatalog)
         }
 
-        return legacyFallbackCatalog
+        if let bundledCatalog {
+            return catalogWithRequiredBuiltIns(bundledCatalog)
+        }
+
+        return catalogWithRequiredBuiltIns(legacyFallbackCatalog)
     }
 
     private static func validate(_ catalog: ModelCatalog, appVersion: String?) throws {
@@ -386,6 +406,22 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
             catalogVersion: "fallback",
             minAppVersion: nil,
             models: LegacyModelCatalog.profiles
+        )
+    }
+
+    private static func catalogWithRequiredBuiltIns(_ catalog: ModelCatalog) -> ModelCatalog {
+        var models = catalog.models
+        var existingIds = Set(models.map(\.id))
+
+        for profile in LegacyModelCatalog.profiles where existingIds.insert(profile.id).inserted {
+            models.append(profile)
+        }
+
+        return ModelCatalog(
+            schemaVersion: catalog.schemaVersion,
+            catalogVersion: catalog.catalogVersion,
+            minAppVersion: catalog.minAppVersion,
+            models: models
         )
     }
 }
@@ -798,6 +834,10 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         ModelFit.classify(estimatedMemoryGB: estimatedMemoryGB, hardwareMemoryGB: hardwareMemoryGB)
     }
 
+    func isHardwareCompatible(hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB) -> Bool {
+        fit(hardwareMemoryGB: hardwareMemoryGB) != .heavy
+    }
+
     func isRuntimeCompatible(manifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()) -> Bool {
         runtime.isSatisfied(by: manifest) && (manifest?.supports(backend: backend) ?? true)
     }
@@ -816,6 +856,31 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 
     static func profiles(for modality: ModelModality) -> [ModelCapabilityProfile] {
         embedded.filter { $0.modality == modality }
+    }
+
+    static func visibleProfiles(
+        for modality: ModelModality,
+        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+    ) -> [ModelCapabilityProfile] {
+        let candidates = profiles(for: modality)
+        let compatible = candidates.filter { $0.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) }
+        if !compatible.isEmpty {
+            return compatible
+        }
+
+        return candidates.sorted { lhs, rhs in
+            isConstrainedFallbackSortedBefore(lhs, rhs)
+        }
+        .prefix(1)
+        .map { $0 }
+    }
+
+    static func visibleProfiles(
+        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+    ) -> [ModelCapabilityProfile] {
+        ModelModality.allCases.flatMap { modality in
+            visibleProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB)
+        }
     }
 
     static func bestProfile(
@@ -851,34 +916,79 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         for modality: ModelModality,
         hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
     ) -> [ModelCapabilityProfile] {
-        profiles(for: modality).sorted { lhs, rhs in
+        visibleProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).sorted { lhs, rhs in
             isRecommendationSortedBefore(lhs, rhs, hardwareMemoryGB: hardwareMemoryGB)
         }
     }
 
-    fileprivate static func chatParameters(for model: AIModel) -> [ModelParameterDefinition] {
-        [
-            ModelParameterDefinition(key: "temperature", label: "Temperature", type: .decimal, defaultValue: "\(model.temperatureRange.default)", range: model.temperatureRange.min...model.temperatureRange.max, step: 0.1),
-            ModelParameterDefinition(key: "max_tokens", label: "Max Tokens", type: .integer, defaultValue: "\(model.defaultMaxTokens)", range: 256...Double(model.maxContextWindow), step: 256),
-            ModelParameterDefinition(key: "top_p", label: "Top P", type: .decimal, defaultValue: "\(model.topP)", range: 0...1, step: 0.05, isAdvanced: true),
-            ModelParameterDefinition(key: "top_k", label: "Top K", type: .integer, defaultValue: "\(model.topK)", range: 0...100, step: 1, isAdvanced: true),
-            ModelParameterDefinition(key: "min_p", label: "Min P", type: .decimal, defaultValue: "\(model.minP)", range: 0...1, step: 0.01, isAdvanced: true),
-            ModelParameterDefinition(key: "repetition_penalty", label: "Repetition Penalty", type: .decimal, defaultValue: "\(model.repetitionPenalty)", range: 0.8...1.5, step: 0.05, isAdvanced: true),
-            ModelParameterDefinition(key: "enable_thinking", label: "Reasoning", type: .boolean, defaultValue: "\(model.enableThinking)", isAdvanced: true)
+    fileprivate static func chatParameters(
+        for model: AIModel,
+        maxContextWindow: Int? = nil
+    ) -> [ModelParameterDefinition] {
+        let defaults = ChatParameterDefaults(model: model)
+        let contextWindow = maxContextWindow ?? defaults.maxContextWindow
+
+        return [
+            ModelParameterDefinition(key: "temperature", label: "Temperature", type: .decimal, defaultValue: "\(defaults.temperature)", range: defaults.temperatureRange, step: 0.1),
+            ModelParameterDefinition(key: "max_tokens", label: "Max Tokens", type: .integer, defaultValue: "\(defaults.defaultMaxTokens)", range: 256...Double(contextWindow), step: 256),
+            ModelParameterDefinition(key: "top_p", label: "Top P", type: .decimal, defaultValue: "\(defaults.topP)", range: 0...1, step: 0.05, isAdvanced: true),
+            ModelParameterDefinition(key: "top_k", label: "Top K", type: .integer, defaultValue: "\(defaults.topK)", range: 0...100, step: 1, isAdvanced: true),
+            ModelParameterDefinition(key: "min_p", label: "Min P", type: .decimal, defaultValue: "\(defaults.minP)", range: 0...1, step: 0.01, isAdvanced: true),
+            ModelParameterDefinition(key: "repetition_penalty", label: "Repetition Penalty", type: .decimal, defaultValue: "\(defaults.repetitionPenalty)", range: 0.8...1.5, step: 0.05, isAdvanced: true),
+            ModelParameterDefinition(key: "enable_thinking", label: "Reasoning", type: .boolean, defaultValue: "\(defaults.enableThinking)", isAdvanced: true)
         ]
     }
 
     fileprivate static func chatPresets(for model: AIModel) -> [ModelParameterPreset] {
-        [
+        let defaults = ChatParameterDefaults(model: model)
+
+        return [
             ModelParameterPreset(id: "balanced", label: "Balanced", values: [
-                "temperature": "\(model.temperatureRange.default)",
-                "max_tokens": "\(model.defaultMaxTokens)"
+                "temperature": "\(defaults.temperature)",
+                "max_tokens": "\(defaults.defaultMaxTokens)"
             ]),
             ModelParameterPreset(id: "focused", label: "Focused", values: [
                 "temperature": "0.2",
-                "top_p": "\(min(model.topP, 0.8))"
+                "top_p": "\(min(defaults.topP, 0.8))"
             ])
         ]
+    }
+
+    private struct ChatParameterDefaults {
+        let maxContextWindow: Int
+        let defaultMaxTokens: Int
+        let temperatureRange: ClosedRange<Double>
+        let temperature: Double
+        let topP: Double
+        let topK: Int
+        let minP: Double
+        let repetitionPenalty: Double
+        let enableThinking: Bool
+
+        init(model: AIModel) {
+            switch model {
+            case .qwen35, .mini:
+                maxContextWindow = 32768
+                defaultMaxTokens = 4096
+                temperatureRange = 0...2
+                temperature = 0.7
+                topP = 0.8
+                topK = 20
+                minP = 0
+                repetitionPenalty = 1
+                enableThinking = false
+            case .gemma4:
+                maxContextWindow = 8192
+                defaultMaxTokens = 4096
+                temperatureRange = 0...2
+                temperature = 0.7
+                topP = 1
+                topK = 0
+                minP = 0
+                repetitionPenalty = 1
+                enableThinking = false
+            }
+        }
     }
 
     private static func isRecommendationSortedBefore(
@@ -1007,6 +1117,50 @@ private enum LegacyModelCatalog {
             icon: "bolt",
             ranking: ModelRanking(quality: 70, speed: 92, defaultForMemoryGB: 4)
         ),
+        chatProfile(
+            name: "Gemma 4 E2B",
+            subtitle: "Compact Google vision model (E2B)",
+            modelId: "mlx-community/gemma-4-e2b-it-4bit",
+            maxContextWindow: 32768,
+            memoryRequirementGB: 4.0,
+            downloadSizeGB: 3.6,
+            icon: "sparkle",
+            ranking: ModelRanking(quality: 76, speed: 88),
+            parameterTemplate: .gemma4
+        ),
+        chatProfile(
+            name: "Gemma 4 26B A4B",
+            subtitle: "Large Google vision model (26B A4B)",
+            modelId: "mlx-community/gemma-4-26b-a4b-it-4bit",
+            maxContextWindow: 32768,
+            memoryRequirementGB: 17.5,
+            downloadSizeGB: 15.6,
+            icon: "sparkles",
+            ranking: ModelRanking(quality: 108, speed: 42),
+            parameterTemplate: .gemma4
+        ),
+        chatProfile(
+            name: "Qwen 3.6 27B",
+            subtitle: "Large vision language model (27B parameters)",
+            modelId: "mlx-community/Qwen3.6-27B-4bit",
+            maxContextWindow: 32768,
+            memoryRequirementGB: 18.0,
+            downloadSizeGB: 16.1,
+            icon: "eye",
+            ranking: ModelRanking(quality: 110, speed: 38),
+            parameterTemplate: .qwen35
+        ),
+        chatProfile(
+            name: "Qwen 3.6 35B A3B",
+            subtitle: "High-capability vision model (35B A3B)",
+            modelId: "mlx-community/Qwen3.6-35B-A3B-4bit",
+            maxContextWindow: 32768,
+            memoryRequirementGB: 23.0,
+            downloadSizeGB: 20.4,
+            icon: "eye.circle",
+            ranking: ModelRanking(quality: 116, speed: 34),
+            parameterTemplate: .qwen35
+        ),
         ModelCapabilityProfile(
             id: "black-forest-labs/FLUX.2-klein-4B",
             name: "FLUX.2-klein-4B",
@@ -1097,9 +1251,35 @@ private enum LegacyModelCatalog {
         icon: String,
         ranking: ModelRanking
     ) -> ModelCapabilityProfile {
+        chatProfile(
+            name: aiModel.rawValue,
+            subtitle: subtitle,
+            modelId: modelId,
+            maxContextWindow: maxContextWindow,
+            memoryRequirementGB: memoryRequirementGB,
+            downloadSizeGB: downloadSizeGB,
+            icon: icon,
+            ranking: ranking,
+            parameterTemplate: aiModel,
+            aiModel: aiModel
+        )
+    }
+
+    private static func chatProfile(
+        name: String,
+        subtitle: String,
+        modelId: String,
+        maxContextWindow: Int,
+        memoryRequirementGB: Double,
+        downloadSizeGB: Double,
+        icon: String,
+        ranking: ModelRanking,
+        parameterTemplate: AIModel,
+        aiModel: AIModel? = nil
+    ) -> ModelCapabilityProfile {
         ModelCapabilityProfile(
             id: modelId,
-            name: aiModel.rawValue,
+            name: name,
             subtitle: subtitle,
             modelId: modelId,
             modality: .vision,
@@ -1111,8 +1291,8 @@ private enum LegacyModelCatalog {
             downloadSizeGB: downloadSizeGB,
             estimatedMemoryGB: memoryRequirementGB,
             ranking: ranking,
-            parameters: ModelCapabilityProfile.chatParameters(for: aiModel),
-            presets: ModelCapabilityProfile.chatPresets(for: aiModel),
+            parameters: ModelCapabilityProfile.chatParameters(for: parameterTemplate, maxContextWindow: maxContextWindow),
+            presets: ModelCapabilityProfile.chatPresets(for: parameterTemplate),
             aiModel: aiModel
         )
     }
@@ -1144,7 +1324,8 @@ struct ModelSelectionStore {
     ) -> ModelCapabilityProfile? {
         if let modelId = selectedModelId(for: modality),
            let profile = ModelCapabilityProfile.embeddedProfile(modelId: modelId),
-           profile.modality == modality {
+           profile.modality == modality,
+           profile.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) {
             return profile
         }
 
