@@ -106,6 +106,26 @@ def send_json(
     print(json.dumps(payload), flush=True)
 
 
+def send_model_loading(
+    model_id: str,
+    phase: str,
+    *,
+    backend: str,
+    request: Optional[dict] = None,
+    detail: Optional[str] = None,
+):
+    payload = {
+        "type": "model.loading",
+        "model": model_id,
+        "backend": backend,
+        "status": phase,
+        "phase": phase,
+    }
+    if detail:
+        payload["detail"] = detail
+    send_json(payload, request=request)
+
+
 def setup_environment():
     """Setup Python environment for bundled runtime"""
     resources_dir = Path(__file__).resolve().parent
@@ -159,9 +179,12 @@ def load_model_if_needed(model_id: str, request: Optional[dict] = None):
     from mlx_vlm import load
     from mlx_vlm.utils import load_config
 
-    send_json(
-        {"type": "model.loading", "model": model_id, "status": "downloading"},
+    send_model_loading(
+        model_id,
+        "loading_weights",
+        backend="vlm",
         request=request,
+        detail="Loading model weights",
     )
 
     try:
@@ -172,6 +195,13 @@ def load_model_if_needed(model_id: str, request: Optional[dict] = None):
 
         MODEL_REGISTRY[model_id] = (model, processor, config)
 
+        send_model_loading(
+            model_id,
+            "warming",
+            backend="vlm",
+            request=request,
+            detail="Warming model",
+        )
         send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Model {model_id} loaded successfully")
 
@@ -192,9 +222,12 @@ def load_image_model_if_needed(
         )
         return IMAGE_MODEL_REGISTRY[cache_key]
 
-    send_json(
-        {"type": "model.loading", "model": model_id, "status": "downloading"},
+    send_model_loading(
+        model_id,
+        "loading_weights",
+        backend="image",
         request=request,
+        detail="Loading image model",
     )
 
     try:
@@ -211,6 +244,13 @@ def load_image_model_if_needed(
 
         IMAGE_MODEL_REGISTRY[cache_key] = model
 
+        send_model_loading(
+            model_id,
+            "warming",
+            backend="image",
+            request=request,
+            detail="Warming image model",
+        )
         send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Image model {model_id} loaded successfully")
 
@@ -226,9 +266,12 @@ def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
         log_debug(f"[Python Bridge] Audio model {model_id} already loaded, using cache")
         return AUDIO_MODEL_REGISTRY[model_id]
 
-    send_json(
-        {"type": "model.loading", "model": model_id, "status": "downloading"},
+    send_model_loading(
+        model_id,
+        "loading_weights",
+        backend="audio",
         request=request,
+        detail="Loading speech model",
     )
 
     try:
@@ -239,6 +282,13 @@ def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
         model = load_model(model_id)
         AUDIO_MODEL_REGISTRY[model_id] = model
 
+        send_model_loading(
+            model_id,
+            "warming",
+            backend="audio",
+            request=request,
+            detail="Warming speech model",
+        )
         send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Audio model {model_id} loaded successfully")
 
@@ -258,9 +308,12 @@ def load_music_model_if_needed(model_id: str, request: Optional[dict] = None):
         unload_models(keep_registry=MUSIC_MODEL_REGISTRY, keep_key=model_id)
         return MUSIC_MODEL_REGISTRY[model_id]
 
-    send_json(
-        {"type": "model.loading", "model": model_id, "status": "downloading"},
+    send_model_loading(
+        model_id,
+        "loading_weights",
+        backend="music",
         request=request,
+        detail="Loading music model",
     )
 
     try:
@@ -300,6 +353,13 @@ def load_music_model_if_needed(model_id: str, request: Optional[dict] = None):
             llm_handler = LLMHandler()
         MUSIC_MODEL_REGISTRY[model_id] = (dit_handler, llm_handler)
 
+        send_model_loading(
+            model_id,
+            "warming",
+            backend="music",
+            request=request,
+            detail="Warming music model",
+        )
         send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Music model {model_id} loaded successfully")
 

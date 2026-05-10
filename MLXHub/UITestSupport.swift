@@ -19,13 +19,27 @@ extension ChatViewModel {
             webSearchService: UITestWebSearchService()
         )
 
-        return ChatViewModel(
+        let viewModel = ChatViewModel(
             chatPersistence: persistence,
             vlmExecutor: executor,
             runtimeManager: runtimeManager,
             toolExecutor: toolExecutor,
             userDefaults: defaults
         )
+
+        if ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_FORCE_MODEL_LOADING_INDICATOR"] == "1" {
+            let profile = viewModel.activeModelProfile
+            viewModel.isModelLoading = true
+            viewModel.loadingMessage = "Loading model weights"
+            viewModel.modelLoadProgress = ModelLoadProgress(
+                modelId: profile.modelId,
+                backend: profile.backend,
+                phase: .loadingWeights,
+                detail: "Loading model weights"
+            )
+        }
+
+        return viewModel
     }
 }
 
@@ -94,6 +108,32 @@ private final class UITestModelExecutor: ChatModelExecuting {
         currentModelBackend = request.backend
 
         let events = try events(for: request)
+        let shouldDelayForLoadingProbe = ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_DELAY_MODEL_LOADING"] == "1" || request.messages.contains {
+            $0.role == .user && ($0.content?.localizedCaseInsensitiveContains("ui test loading indicator") ?? false)
+        }
+
+        if shouldDelayForLoadingProbe {
+            let modelId = request.modelId
+            let backend = request.backend
+            return AsyncStream { continuation in
+                Task { @MainActor in
+                    self.delegate?.modelLoadingProgress(
+                        ModelLoadProgress(
+                            modelId: modelId,
+                            backend: backend,
+                            phase: .loadingWeights,
+                            detail: "Loading model weights"
+                        )
+                    )
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                    for event in events {
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                }
+            }
+        }
+
         return AsyncStream { continuation in
             for event in events {
                 continuation.yield(event)
@@ -144,14 +184,92 @@ private final class UITestModelExecutor: ChatModelExecuting {
                 .complete("", usage: TokenUsage(promptTokens: 0, completionTokens: 0)),
             ]
         case .vlm, .llm:
-            let response = "UI test chat response"
+            let response = chatResponse(for: request)
             return [
                 .started,
                 .token(response),
-                .complete(response, usage: TokenUsage(promptTokens: 1, completionTokens: 4)),
+                .complete(response, usage: TokenUsage(promptTokens: 1, completionTokens: response.split(separator: " ").count)),
             ]
         }
     }
+
+    private func chatResponse(for request: ExecutionRequest) -> String {
+        let prompt = request.messages.last { $0.role == .user }?.content ?? ""
+
+        if prompt.localizedCaseInsensitiveContains("ui test multi turn first") {
+            return "First deterministic turn."
+        }
+
+        if prompt.localizedCaseInsensitiveContains("ui test multi turn second") {
+            let hasPreviousAssistantTurn = request.messages.contains {
+                $0.role == .assistant && ($0.content?.contains("First deterministic turn.") ?? false)
+            }
+            return hasPreviousAssistantTurn
+                ? "Second deterministic turn with prior context."
+                : "Second deterministic turn without prior context."
+        }
+
+        if prompt.localizedCaseInsensitiveContains("ui test long scroll response") {
+            return Self.longScrollResponse
+        }
+
+        if prompt.localizedCaseInsensitiveContains("ui test plain rail response") {
+            return Self.plainRailResponse
+        }
+
+        if prompt.localizedCaseInsensitiveContains("ui test markdown rendering") {
+            return Self.markdownResponse
+        }
+
+        if prompt.localizedCaseInsensitiveContains("ui test loading indicator") {
+            return "UI test delayed loading response."
+        }
+
+        if prompt.localizedCaseInsensitiveContains("ui test very long multi-line input") {
+            return "Long multi-line input accepted."
+        }
+
+        return "UI test chat response"
+    }
+
+    private static let longScrollResponse: String = {
+        var sections = [
+            "# Long Scroll Probe",
+            "Long scroll response begins."
+        ]
+
+        for index in 1...38 {
+            sections.append(
+                "Long scroll paragraph \(index): This deterministic paragraph keeps enough rendered text on screen to force the transcript to scroll while the floating composer remains fixed at the bottom."
+            )
+        }
+
+        sections.append("Long scroll response ends.")
+        return sections.joined(separator: "\n\n")
+    }()
+
+    private static let plainRailResponse: String = {
+        let sentence = "Plain rail response keeps a native text view constrained to the same visual rail as the composer input field while wrapping a long assistant message."
+        return "Plain rail response begins. " + Array(repeating: sentence, count: 10).joined(separator: " ")
+    }()
+
+    private static let markdownResponse = """
+    # Markdown Rendering Probe
+
+    This response includes **bold text**, `inline code`, and a compact list.
+
+    - First rendered bullet
+    - Second rendered bullet
+
+    ```swift
+    let value = "rendered"
+    print(value)
+    ```
+
+    | Key | Value |
+    | --- | --- |
+    | Status | Rendered |
+    """
 
     private func generatedImageURL(in directory: URL?) throws -> URL {
         let directory = try resolvedOutputDirectory(directory)

@@ -362,6 +362,8 @@ extension ChatViewModel {
                     draft = response
                 case .progress(let message):
                     loadingMessage = message
+                case .modelLoadProgress(let progress):
+                    loadingMessage = progress.detail ?? progress.phase.displayTitle
                 case .error(let error):
                     throw error
                 case .started, .image, .audio, .toolCalls:

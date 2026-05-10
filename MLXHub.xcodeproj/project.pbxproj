@@ -29,6 +29,9 @@
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
 		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
+		8A0100010000000000000030 /* model-catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102D /* model-catalog.json */; };
+		8A0100010000000000000031 /* stable-channel.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102E /* stable-channel.json */; };
+		8A0300010000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8A0300010000000000001001 /* Assets.xcassets */; };
 		8A010001000000000000001B /* LocalEngineStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101B /* LocalEngineStatus.swift */; };
 		8A010001000000000000001C /* PromptConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101C /* PromptConfiguration.swift */; };
 		8A010001000000000000001D /* ChatComposerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101D /* ChatComposerModels.swift */; };
@@ -48,8 +51,10 @@
 		8A010001000000000000002B /* MarkdownAttributedRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102B /* MarkdownAttributedRenderer.swift */; };
 		8A010001000000000000002C /* ReasoningContentFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102C /* ReasoningContentFilter.swift */; };
 		8A010001000000000000002D /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 8A0100010000000000009002 /* Markdown */; };
+		8A0100010000000000000032 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102F /* DesignSystem.swift */; };
 		8A0200010000000000000001 /* MLXHubGenerateRoutesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001001 /* MLXHubGenerateRoutesUITests.swift */; };
 		8A0200010000000000000002 /* MLXHubDownloadStatesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001002 /* MLXHubDownloadStatesUITests.swift */; };
+		8A0200010000000000000003 /* MLXHubChatLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001003 /* MLXHubChatLayoutUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -106,8 +111,13 @@
 		8A010001000000000000102A /* MarkdownBlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockRenderer.swift; sourceTree = "<group>"; };
 		8A010001000000000000102B /* MarkdownAttributedRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownAttributedRenderer.swift; sourceTree = "<group>"; };
 		8A010001000000000000102C /* ReasoningContentFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningContentFilter.swift; sourceTree = "<group>"; };
+		8A010001000000000000102D /* model-catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "model-catalog.json"; sourceTree = "<group>"; };
+		8A010001000000000000102E /* stable-channel.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "stable-channel.json"; sourceTree = "<group>"; };
+		8A010001000000000000102F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		8A0300010000000000001001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		8A0200010000000000001001 /* MLXHubGenerateRoutesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXHubGenerateRoutesUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001002 /* MLXHubDownloadStatesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXHubDownloadStatesUITests.swift; sourceTree = "<group>"; };
+		8A0200010000000000001003 /* MLXHubChatLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXHubChatLayoutUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001014 /* MLXHubUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MLXHubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -159,6 +169,7 @@
 			isa = PBXGroup;
 			children = (
 				8A0100010000000000001002 /* ContentView.swift */,
+				8A010001000000000000102F /* DesignSystem.swift */,
 				8A0100010000000000001003 /* SidebarView.swift */,
 				8A0100010000000000001004 /* MainContentView.swift */,
 				8A0100010000000000001005 /* WelcomeView.swift */,
@@ -223,6 +234,9 @@
 				8A0100010000000000001011 /* python_bridge.py */,
 				8A0100010000000000001018 /* acestep_bridge.py */,
 				8A010001000000000000101A /* bridge_utils.py */,
+				8A010001000000000000102D /* model-catalog.json */,
+				8A010001000000000000102E /* stable-channel.json */,
+				8A0300010000000000001001 /* Assets.xcassets */,
 				8A0100010000000000001012 /* runtime */,
 			);
 			path = Resources;
@@ -295,10 +309,11 @@
 		};
 		8A0200010000000000003001 /* MLXHubUITests */ = {
 			isa = PBXGroup;
-			children = (
-				8A0200010000000000001001 /* MLXHubGenerateRoutesUITests.swift */,
-				8A0200010000000000001002 /* MLXHubDownloadStatesUITests.swift */,
-			);
+				children = (
+					8A0200010000000000001001 /* MLXHubGenerateRoutesUITests.swift */,
+					8A0200010000000000001002 /* MLXHubDownloadStatesUITests.swift */,
+					8A0200010000000000001003 /* MLXHubChatLayoutUITests.swift */,
+				);
 			path = MLXHubUITests;
 			sourceTree = "<group>";
 		};
@@ -393,6 +408,9 @@
 				8A0100010000000000000010 /* python_bridge.py in Resources */,
 				8A0100010000000000000018 /* acestep_bridge.py in Resources */,
 				8A010001000000000000001A /* bridge_utils.py in Resources */,
+				8A0100010000000000000030 /* model-catalog.json in Resources */,
+				8A0100010000000000000031 /* stable-channel.json in Resources */,
+				8A0300010000000000000001 /* Assets.xcassets in Resources */,
 				8A0100010000000000000011 /* runtime in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -441,6 +459,7 @@
 			files = (
 				8A0100010000000000000001 /* MLXHubApp.swift in Sources */,
 				8A0100010000000000000002 /* ContentView.swift in Sources */,
+				8A0100010000000000000032 /* DesignSystem.swift in Sources */,
 				8A0100010000000000000003 /* SidebarView.swift in Sources */,
 				8A0100010000000000000004 /* MainContentView.swift in Sources */,
 				8A0100010000000000000005 /* WelcomeView.swift in Sources */,
@@ -481,10 +500,11 @@
 		8A0200010000000000002003 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (
-				8A0200010000000000000001 /* MLXHubGenerateRoutesUITests.swift in Sources */,
-				8A0200010000000000000002 /* MLXHubDownloadStatesUITests.swift in Sources */,
-			);
+				files = (
+					8A0200010000000000000001 /* MLXHubGenerateRoutesUITests.swift in Sources */,
+					8A0200010000000000000002 /* MLXHubDownloadStatesUITests.swift in Sources */,
+					8A0200010000000000000003 /* MLXHubChatLayoutUITests.swift in Sources */,
+				);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
@@ -632,6 +652,7 @@
 		8A0100010000000000006003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -658,6 +679,7 @@
 		8A0100010000000000006004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;

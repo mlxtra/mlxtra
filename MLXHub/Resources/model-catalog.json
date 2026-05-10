@@ -1,0 +1,673 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026.05.09",
+  "minAppVersion": "0.1.0",
+  "models": [
+    {
+      "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "name": "Qwen 3.5",
+      "subtitle": "Vision language model (9B parameters)",
+      "modelId": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "modality": "vision",
+      "backend": "vlm",
+      "icon": "eye",
+      "capabilities": ["chat", "vision"],
+      "maxContextWindow": 32768,
+      "defaultMaxTokens": 4096,
+      "downloadSizeGB": 5.6,
+      "estimatedMemoryGB": 6.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 100,
+        "speed": 62,
+        "defaultForMemoryGB": 16
+      },
+      "parameters": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "type": "decimal",
+          "defaultValue": "0.7",
+          "range": { "min": 0, "max": 2 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "max_tokens",
+          "label": "Max Tokens",
+          "type": "integer",
+          "defaultValue": "4096",
+          "range": { "min": 256, "max": 32768 },
+          "step": 256,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "top_p",
+          "label": "Top P",
+          "type": "decimal",
+          "defaultValue": "0.8",
+          "range": { "min": 0, "max": 1 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "top_k",
+          "label": "Top K",
+          "type": "integer",
+          "defaultValue": "20",
+          "range": { "min": 0, "max": 100 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "min_p",
+          "label": "Min P",
+          "type": "decimal",
+          "defaultValue": "0.0",
+          "range": { "min": 0, "max": 1 },
+          "step": 0.01,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "repetition_penalty",
+          "label": "Repetition Penalty",
+          "type": "decimal",
+          "defaultValue": "1.0",
+          "range": { "min": 0.8, "max": 1.5 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "enable_thinking",
+          "label": "Reasoning",
+          "type": "boolean",
+          "defaultValue": "false",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "balanced",
+          "label": "Balanced",
+          "values": {
+            "temperature": "0.7",
+            "max_tokens": "4096"
+          }
+        },
+        {
+          "id": "focused",
+          "label": "Focused",
+          "values": {
+            "temperature": "0.2",
+            "top_p": "0.8"
+          }
+        }
+      ],
+      "aiModel": "Qwen 3.5"
+    },
+    {
+      "id": "google/gemma-4-e4b-it",
+      "name": "Gemma 4",
+      "subtitle": "Google vision model (4B parameters)",
+      "modelId": "google/gemma-4-e4b-it",
+      "modality": "vision",
+      "backend": "vlm",
+      "icon": "sparkles",
+      "capabilities": ["chat", "vision"],
+      "maxContextWindow": 8192,
+      "defaultMaxTokens": 4096,
+      "downloadSizeGB": 2.5,
+      "estimatedMemoryGB": 3.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "google/gemma-4-e4b-it",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 82,
+        "speed": 78,
+        "defaultForMemoryGB": 8
+      },
+      "parameters": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "type": "decimal",
+          "defaultValue": "0.7",
+          "range": { "min": 0, "max": 2 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "max_tokens",
+          "label": "Max Tokens",
+          "type": "integer",
+          "defaultValue": "4096",
+          "range": { "min": 256, "max": 8192 },
+          "step": 256,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "top_p",
+          "label": "Top P",
+          "type": "decimal",
+          "defaultValue": "1.0",
+          "range": { "min": 0, "max": 1 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "top_k",
+          "label": "Top K",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 100 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "min_p",
+          "label": "Min P",
+          "type": "decimal",
+          "defaultValue": "0.0",
+          "range": { "min": 0, "max": 1 },
+          "step": 0.01,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "repetition_penalty",
+          "label": "Repetition Penalty",
+          "type": "decimal",
+          "defaultValue": "1.0",
+          "range": { "min": 0.8, "max": 1.5 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "enable_thinking",
+          "label": "Reasoning",
+          "type": "boolean",
+          "defaultValue": "false",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "balanced",
+          "label": "Balanced",
+          "values": {
+            "temperature": "0.7",
+            "max_tokens": "4096"
+          }
+        },
+        {
+          "id": "focused",
+          "label": "Focused",
+          "values": {
+            "temperature": "0.2",
+            "top_p": "0.8"
+          }
+        }
+      ],
+      "aiModel": "Gemma 4"
+    },
+    {
+      "id": "mlx-community/Qwen3.5-2B-MLX-4bit",
+      "name": "Qwen 3.5 Mini",
+      "subtitle": "Lightweight vision model (2B parameters)",
+      "modelId": "mlx-community/Qwen3.5-2B-MLX-4bit",
+      "modality": "vision",
+      "backend": "vlm",
+      "icon": "bolt",
+      "capabilities": ["chat", "vision"],
+      "maxContextWindow": 32768,
+      "defaultMaxTokens": 4096,
+      "downloadSizeGB": 1.5,
+      "estimatedMemoryGB": 3.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "mlx-community/Qwen3.5-2B-MLX-4bit",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 70,
+        "speed": 92,
+        "defaultForMemoryGB": 4
+      },
+      "parameters": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "type": "decimal",
+          "defaultValue": "0.7",
+          "range": { "min": 0, "max": 2 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "max_tokens",
+          "label": "Max Tokens",
+          "type": "integer",
+          "defaultValue": "4096",
+          "range": { "min": 256, "max": 32768 },
+          "step": 256,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "top_p",
+          "label": "Top P",
+          "type": "decimal",
+          "defaultValue": "0.8",
+          "range": { "min": 0, "max": 1 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "top_k",
+          "label": "Top K",
+          "type": "integer",
+          "defaultValue": "20",
+          "range": { "min": 0, "max": 100 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "min_p",
+          "label": "Min P",
+          "type": "decimal",
+          "defaultValue": "0.0",
+          "range": { "min": 0, "max": 1 },
+          "step": 0.01,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "repetition_penalty",
+          "label": "Repetition Penalty",
+          "type": "decimal",
+          "defaultValue": "1.0",
+          "range": { "min": 0.8, "max": 1.5 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "enable_thinking",
+          "label": "Reasoning",
+          "type": "boolean",
+          "defaultValue": "false",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "balanced",
+          "label": "Balanced",
+          "values": {
+            "temperature": "0.7",
+            "max_tokens": "4096"
+          }
+        },
+        {
+          "id": "focused",
+          "label": "Focused",
+          "values": {
+            "temperature": "0.2",
+            "top_p": "0.8"
+          }
+        }
+      ],
+      "aiModel": "Qwen 3.5 Mini"
+    },
+    {
+      "id": "black-forest-labs/FLUX.2-klein-4B",
+      "name": "FLUX.2-klein-4B",
+      "subtitle": "Image generation model",
+      "modelId": "black-forest-labs/FLUX.2-klein-4B",
+      "modality": "image",
+      "backend": "image",
+      "icon": "photo",
+      "capabilities": ["image-generation", "image-editing"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 15.0,
+      "estimatedMemoryGB": 13.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "black-forest-labs/FLUX.2-klein-4B",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 100,
+        "speed": 70
+      },
+      "parameters": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "integer",
+          "defaultValue": "1024",
+          "range": { "min": 512, "max": 1536 },
+          "step": 128,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "type": "integer",
+          "defaultValue": "1024",
+          "range": { "min": 512, "max": 1536 },
+          "step": 128,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "type": "integer",
+          "defaultValue": "4",
+          "range": { "min": 1, "max": 12 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance",
+          "type": "decimal",
+          "defaultValue": "1",
+          "range": { "min": 1, "max": 4 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "seed",
+          "label": "Seed",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 2147483647 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": { "steps": "4" }
+        },
+        {
+          "id": "detail",
+          "label": "Detailed",
+          "values": { "steps": "8" }
+        }
+      ]
+    },
+    {
+      "id": "kugelaudio/kugelaudio-0-open",
+      "name": "KugelAudio 0 Open",
+      "subtitle": "Speech generation model",
+      "modelId": "kugelaudio/kugelaudio-0-open",
+      "modality": "audio",
+      "backend": "audio",
+      "icon": "waveform",
+      "capabilities": ["speech-generation"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 15.0,
+      "estimatedMemoryGB": 19.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "kugelaudio/kugelaudio-0-open",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 100,
+        "speed": 55
+      },
+      "parameters": [
+        {
+          "key": "cfg_scale",
+          "label": "Clarity",
+          "type": "decimal",
+          "defaultValue": "3",
+          "range": { "min": 1, "max": 10 },
+          "step": 0.5,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "ddpm_steps",
+          "label": "Steps",
+          "type": "integer",
+          "defaultValue": "10",
+          "range": { "min": 4, "max": 40 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": { "ddpm_steps": "8" }
+        },
+        {
+          "id": "quality",
+          "label": "Clear",
+          "values": {
+            "ddpm_steps": "16",
+            "cfg_scale": "3.5"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ACE-Step/acestep-v15-turbo-continuous",
+      "name": "ACE-Step 1.5 Turbo",
+      "subtitle": "Music generation model",
+      "modelId": "ACE-Step/acestep-v15-turbo-continuous",
+      "modality": "music",
+      "backend": "music",
+      "icon": "music.note",
+      "capabilities": ["music-generation"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 4.8,
+      "estimatedMemoryGB": 4.0,
+      "source": {
+        "type": "component_bundle",
+        "repo": "ACE-Step/acestep-v15-turbo-continuous",
+        "revision": "main",
+        "components": ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 100,
+        "speed": 85
+      },
+      "parameters": [
+        {
+          "key": "duration",
+          "label": "Duration",
+          "type": "integer",
+          "defaultValue": "30",
+          "range": { "min": 10, "max": 600 },
+          "step": 5,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "instrumental",
+          "label": "Instrumental",
+          "type": "boolean",
+          "defaultValue": "false",
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "bpm",
+          "label": "BPM",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 300 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "keyscale",
+          "label": "Key",
+          "type": "text",
+          "defaultValue": "",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "timesignature",
+          "label": "Time Signature",
+          "type": "option",
+          "defaultValue": "",
+          "step": 1,
+          "options": ["", "2", "3", "4", "6"],
+          "isAdvanced": true
+        },
+        {
+          "key": "vocal_language",
+          "label": "Vocal Language",
+          "type": "option",
+          "defaultValue": "unknown",
+          "step": 1,
+          "options": ["unknown", "en", "zh", "ja", "es", "fr", "de", "it", "pt", "tr"],
+          "isAdvanced": true
+        },
+        {
+          "key": "inference_steps",
+          "label": "Steps",
+          "type": "integer",
+          "defaultValue": "8",
+          "range": { "min": 4, "max": 40 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "shift",
+          "label": "Shift",
+          "type": "decimal",
+          "defaultValue": "3",
+          "range": { "min": 1, "max": 6 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "infer_method",
+          "label": "Method",
+          "type": "option",
+          "defaultValue": "ode",
+          "step": 1,
+          "options": ["ode", "euler"],
+          "isAdvanced": true
+        },
+        {
+          "key": "thinking",
+          "label": "Planner",
+          "type": "boolean",
+          "defaultValue": "false",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "seed",
+          "label": "Seed",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 2147483647 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": {
+            "duration": "20",
+            "inference_steps": "6"
+          }
+        },
+        {
+          "id": "full",
+          "label": "Full",
+          "values": {
+            "duration": "45",
+            "inference_steps": "12"
+          }
+        }
+      ]
+    }
+  ]
+}

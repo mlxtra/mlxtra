@@ -44,6 +44,25 @@ def send_json(
     print(json.dumps(payload), flush=True)
 
 
+def send_model_loading(
+    model_id: str,
+    phase: str,
+    *,
+    request: Optional[dict] = None,
+    detail: Optional[str] = None,
+) -> None:
+    payload = {
+        "type": "model.loading",
+        "model": model_id,
+        "backend": "music",
+        "status": phase,
+        "phase": phase,
+    }
+    if detail:
+        payload["detail"] = detail
+    send_json(payload, request=request)
+
+
 def last_user_prompt(messages: list[dict]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
@@ -86,9 +105,11 @@ def generate_music_once(request: dict) -> None:
     )
     config_path = os.environ.get("ACESTEP_CONFIG_PATH") or normalized_id
 
-    send_json(
-        {"type": "model.loading", "model": model_id, "status": "loading"},
+    send_model_loading(
+        model_id,
+        "loading_weights",
         request=request,
+        detail="Loading music model",
     )
     with contextlib.redirect_stdout(sys.stderr):
         dit_handler = AceStepHandler()
@@ -107,6 +128,12 @@ def generate_music_once(request: dict) -> None:
         return
     with contextlib.redirect_stdout(sys.stderr):
         llm_handler = LLMHandler()
+    send_model_loading(
+        model_id,
+        "warming",
+        request=request,
+        detail="Warming music model",
+    )
     send_json({"type": "model.loaded", "model": model_id}, request=request)
 
     output_dir.mkdir(parents=True, exist_ok=True)

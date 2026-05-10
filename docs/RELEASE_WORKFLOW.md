@@ -1,0 +1,134 @@
+# Catalog and Runtime Release Workflow
+
+MLXHub has two update lanes:
+
+- **Catalog-only update**: add or rerank curated models that the current runtime already supports.
+- **Runtime update**: ship executable Python/runtime code. This must be immutable, checksum-verified, and explicitly installed by the user.
+
+The app must always keep working with the bundled catalog and bundled runtime if remote metadata is unavailable or invalid.
+
+## Release Files
+
+`MLXHub/Resources/model-catalog.json`
+
+- Bundled fallback catalog.
+- Uses schema version `1`.
+- Contains curated model profiles, source metadata, runtime requirements, parameters, presets, and ranking.
+- Remote catalog assets should be uploaded unchanged to an immutable GitHub Release.
+
+`MLXHub/Resources/stable-channel.json`
+
+- Stable pointer to the current catalog and runtime assets.
+- Contains version, URL, size, and SHA-256 for each asset.
+- This file is the only metadata that should move forward between immutable asset releases.
+
+Runtime archive
+
+- Filename: `runtime-macos-arm64-<version>.zip`.
+- Root can be the runtime directory itself or a single containing directory; the app normalizes both during install.
+- Must contain `runtime-manifest.json`, `venv/bin/python`, bundled Python, and download helpers.
+
+## Validate Metadata
+
+Run this before preparing or publishing release assets:
+
+```bash
+Scripts/validate-release-metadata.py
+```
+
+While the runtime archive checksum is still a local placeholder, use:
+
+```bash
+Scripts/validate-release-metadata.py --allow-runtime-placeholders
+```
+
+The validator checks catalog schema, required model fields, source metadata, parameter/preset consistency, channel checksums, channel sizes, and whether the bundled runtime manifest declares the backends and capabilities required by the catalog.
+
+## Prepare Local Release Assets
+
+Generate a release staging directory:
+
+```bash
+Scripts/prepare-release-assets.sh --repo kimistudio/MLXHub
+```
+
+This creates:
+
+- `.build/release/model-catalog.json`
+- `.build/release/runtime-macos-arm64-<version>.zip`
+- `.build/release/stable-channel.json`
+
+The script computes SHA-256 and size values, writes a channel candidate, and validates the generated metadata.
+
+To update the bundled channel file after generating a real runtime archive:
+
+```bash
+Scripts/prepare-release-assets.sh --repo kimistudio/MLXHub --write-channel
+```
+
+If you only want to stage the catalog/channel shape without zipping the 3GB runtime:
+
+```bash
+Scripts/prepare-release-assets.sh --skip-runtime-archive
+```
+
+## Catalog-Only Update
+
+1. Edit `MLXHub/Resources/model-catalog.json`.
+2. Keep the model set curated. Do not add a generic Hugging Face browser or arbitrary local paths in v1.
+3. Ensure each new model has:
+   - source metadata
+   - runtime compatibility
+   - memory and download size estimates
+   - ranking values
+   - parameters and presets
+4. Run:
+
+```bash
+Scripts/validate-release-metadata.py --allow-runtime-placeholders
+swift test --filter ModelCapabilityProfileTests
+```
+
+5. Upload `model-catalog.json` to an immutable GitHub Release tag such as `catalog-2026.05.09`.
+6. Update `stable-channel.json` to point to the new catalog URL, size, and SHA-256.
+7. Publish the new `stable-channel.json`.
+
+## Runtime Update
+
+1. Build the runtime bundle:
+
+```bash
+Scripts/build-runtime-bundle.sh
+```
+
+2. Validate it:
+
+```bash
+Scripts/validate-runtime-bundle.sh
+```
+
+3. Stage the release assets and update local channel metadata:
+
+```bash
+Scripts/prepare-release-assets.sh --repo kimistudio/MLXHub --write-channel
+```
+
+4. Upload `.build/release/runtime-macos-arm64-<version>.zip` to an immutable GitHub Release tag such as `runtime-0.1.0`.
+5. Upload `.build/release/model-catalog.json` to the catalog release tag if the catalog changed.
+6. Publish `.build/release/stable-channel.json` as the stable channel pointer.
+7. Run one smoke test per backend before announcing the release:
+
+```bash
+swift test
+cd Tests/PythonTests
+PYTHONPATH=../../../MLXHub/Resources python3 test_python_bridge.py -v
+PYTHONPATH=../../../MLXHub/Resources python3 test_acestep_bridge.py -v
+cd ../..
+xcodebuild -project MLXHub.xcodeproj -scheme MLXHub -configuration Debug build
+```
+
+## Rollback
+
+Do not mutate published catalog or runtime assets. To roll back, publish a new `stable-channel.json` that points back to the previous known-good catalog/runtime asset versions.
+
+Remote failure, bad checksums, incompatible schema, and invalid runtime bundles should all leave users on the bundled fallback path.

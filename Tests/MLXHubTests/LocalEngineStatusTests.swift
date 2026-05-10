@@ -52,6 +52,74 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertTrue(status.isVisibleInComposer)
     }
 
+    func testLoadingStateCarriesIndeterminateProgress() {
+        let progress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-4B",
+            backend: .vlm,
+            phase: .loadingWeights,
+            detail: "Loading model weights"
+        )
+
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .ready,
+            isPythonLoading: false,
+            isModelLoading: true,
+            isGenerating: false,
+            loadingMessage: "Loading Qwen...",
+            loadProgress: progress,
+            isExecutorReady: true,
+            isModelLoaded: false,
+            selectedModelName: "Qwen 3.5",
+            activeModelName: "Qwen 3.5",
+            activeModelRole: .chat,
+            pendingDownloadModelId: nil,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: nil
+        )
+
+        XCTAssertEqual(status.state, .loadingModel)
+        XCTAssertEqual(status.loadProgress, progress)
+        XCTAssertNil(status.loadProgress?.fractionCompleted)
+        XCTAssertEqual(status.detail, "Loading model weights")
+    }
+
+    func testBridgePercentIsClampedForDeterminateProgress() {
+        let progress = ModelLoadProgress.bridgeEvent(
+            [
+                "type": "model.loading",
+                "model": "mlx-community/Qwen3.5-4B",
+                "backend": "vlm",
+                "phase": "loading_weights",
+                "percent": 125
+            ],
+            fallbackModelId: "fallback",
+            fallbackBackend: .image
+        )
+
+        XCTAssertEqual(progress.modelId, "mlx-community/Qwen3.5-4B")
+        XCTAssertEqual(progress.backend, .vlm)
+        XCTAssertEqual(progress.phase, .loadingWeights)
+        XCTAssertEqual(progress.fractionCompleted, 1.0)
+    }
+
+    func testBridgeFractionIsClampedForDeterminateProgress() {
+        let progress = ModelLoadProgress.bridgeEvent(
+            [
+                "type": "model.loading",
+                "status": "warming",
+                "fraction": -0.2
+            ],
+            fallbackModelId: "fallback-model",
+            fallbackBackend: .audio
+        )
+
+        XCTAssertEqual(progress.modelId, "fallback-model")
+        XCTAssertEqual(progress.backend, .audio)
+        XCTAssertEqual(progress.phase, .warming)
+        XCTAssertEqual(progress.fractionCompleted, 0.0)
+    }
+
     func testMusicReadyUsesModalityLabel() {
         let status = LocalEngineStatus.resolve(
             runtimeState: .ready,

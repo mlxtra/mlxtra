@@ -3,9 +3,18 @@ import SwiftUI
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @Environment(\.openSettings) private var openSettings
+    @State private var composerHeight: CGFloat = 118
     let chatId: UUID
 
     private let bottomAnchorID = "chat-bottom-anchor"
+    private var transcriptBottomSpacerHeight: CGFloat {
+        max(
+            MLXHubDesignSystem.Layout.defaultTranscriptBottomSpacer,
+            composerHeight
+                + MLXHubDesignSystem.Layout.floatingAccessoryBottomPadding
+                + MLXHubDesignSystem.Layout.composerTranscriptGap
+        )
+    }
 
     // Access chat through viewModel so updates are observed
     var chat: Chat? {
@@ -27,70 +36,87 @@ struct ChatView: View {
             && !viewModel.isModelLoading
     }
 
+    private var latestMessageContent: String {
+        chat?.messages.last?.content ?? ""
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Chat title in toolbar area
-            HStack {
-                Spacer()
-                Text(chat?.title ?? "Chat")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.vertical, 8)
-            .background(Color(NSColor.windowBackgroundColor))
-
-            // Messages list
+        ZStack(alignment: .bottom) {
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 16) {
-                        ForEach(chat?.messages ?? []) { message in
-                            MessageBubble(
-                                message: message,
-                                isStreaming: message.isStreaming,
-                                streamingContent: viewModel.streamingContent(for: message.id),
-                                onOpenModels: { openSettings() },
-                                onRestartLocalEngine: viewModel.restartLocalEngine
-                            )
-                            .id(message.id)
+                transcriptScrollView
+                    .onAppear {
+                        DispatchQueue.main.async {
+                            scrollToBottom(proxy)
                         }
-
-                        if shouldShowTypingIndicator {
-                            TypingIndicator()
-                                .id(streamingAssistantMessage?.id)
-                        }
-
-                        Color.clear
-                            .frame(height: 1)
-                            .id(bottomAnchorID)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                }
-                .onAppear {
-                    DispatchQueue.main.async {
+                    .onChange(of: chat?.messages.count) { _, _ in
                         scrollToBottom(proxy)
                     }
-                }
-                .onChange(of: chat?.messages.count) { _, _ in
-                    scrollToBottom(proxy)
-                }
-                .onChange(of: viewModel.isGenerating) { _, isGenerating in
-                    if isGenerating {
+                    .onChange(of: viewModel.isGenerating) { _, _ in
                         scrollToBottom(proxy)
                     }
-                }
+                    .onChange(of: latestMessageContent) { _, _ in
+                        scrollToBottom(proxy)
+                    }
+                    .onChange(of: composerHeight) { _, _ in
+                        scrollToBottom(proxy)
+                    }
             }
 
-            // Input area
             ComposerView(viewModel: viewModel)
-                .frame(maxWidth: 720)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
+                .frame(maxWidth: MLXHubDesignSystem.Layout.composerMaxWidth)
+                .padding(.horizontal, MLXHubDesignSystem.Layout.chatHorizontalPadding)
+                .padding(.bottom, MLXHubDesignSystem.Layout.floatingAccessoryBottomPadding)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .preference(key: ChatComposerHeightPreferenceKey.self, value: proxy.size.height)
+                    }
+                }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .onPreferenceChange(ChatComposerHeightPreferenceKey.self) { height in
+            guard height > 0 else { return }
+            composerHeight = height
+        }
+        .background(MLXHubDesignSystem.Palette.windowBackground)
+    }
+
+    @ViewBuilder
+    private var transcriptScrollView: some View {
+        let scrollView = ScrollView {
+            LazyVStack(spacing: MLXHubDesignSystem.Spacing.xl) {
+                ForEach(chat?.messages ?? []) { message in
+                    MessageBubble(
+                        message: message,
+                        isStreaming: message.isStreaming,
+                        streamingContent: viewModel.streamingContent(for: message.id),
+                        onOpenModels: { openSettings() },
+                        onRestartLocalEngine: viewModel.restartLocalEngine
+                    )
+                    .id(message.id)
+                }
+
+                if shouldShowTypingIndicator {
+                    TypingIndicator()
+                        .id(streamingAssistantMessage?.id)
+                }
+
+                Color.clear
+                    .frame(height: transcriptBottomSpacerHeight)
+                    .id(bottomAnchorID)
+            }
+            .padding(.top, MLXHubDesignSystem.Layout.chatHorizontalPadding)
+            .frame(maxWidth: MLXHubDesignSystem.Layout.transcriptMaxWidth, alignment: .leading)
+            .padding(.horizontal, MLXHubDesignSystem.Layout.transcriptHorizontalPadding)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .accessibilityIdentifier("chat.transcript")
+
+        if #available(macOS 26.0, *) {
+            scrollView.scrollEdgeEffectStyle(.hard, for: .bottom)
+        } else {
+            scrollView
+        }
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -100,24 +126,25 @@ struct ChatView: View {
     }
 }
 
+private struct ChatComposerHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct TypingIndicator: View {
     @State private var animating = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 14))
-                .foregroundStyle(Color.white)
-                .frame(width: 28, height: 28)
-                .background(Color.accentColor)
-                .clipShape(Circle())
-
-            HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: MLXHubDesignSystem.Spacing.xl) {
+            HStack(spacing: MLXHubDesignSystem.Spacing.md) {
                 Text("Responding")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(MLXHubDesignSystem.Typography.compactBodyMedium)
                     .foregroundStyle(.secondary)
 
-                HStack(spacing: 4) {
+                HStack(spacing: MLXHubDesignSystem.Spacing.xs) {
                     ForEach(0..<3) { index in
                         Circle()
                             .fill(Color.secondary)
@@ -133,13 +160,13 @@ struct TypingIndicator: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, MLXHubDesignSystem.Spacing.xl)
+            .padding(.vertical, MLXHubDesignSystem.Spacing.md)
             .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.media))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 1)
+                RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.media)
+                    .stroke(MLXHubDesignSystem.Surface.hairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
             )
 
             Spacer(minLength: 40)

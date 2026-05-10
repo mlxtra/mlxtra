@@ -2,158 +2,89 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.openSettings) private var openSettings
     @State private var searchText: String = ""
     @State private var renamingChat: Chat?
     @State private var renameTitle: String = ""
-    @Environment(\.openSettings) private var openSettings
 
     private var filteredChats: [Chat] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return viewModel.recentChats }
 
         return viewModel.recentChats.filter { chat in
-            chat.title.localizedCaseInsensitiveContains(query)
+            ChatDisplayText.singleLine(chat.title, fallback: "Untitled").localizedCaseInsensitiveContains(query)
                 || chat.messages.contains { $0.content.localizedCaseInsensitiveContains(query) }
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Chats")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Spacer()
-
-                Button(action: {
-                    viewModel.createNewChat()
-                }) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 14, weight: .medium))
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut("n", modifiers: .command)
-                .help("New Chat (⌘N)")
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-
-                TextField("Search", text: $searchText)
-                    .font(.system(size: 13))
-                    .textFieldStyle(.plain)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+            SidebarHeader(
+                searchText: $searchText,
+                onNewChat: viewModel.createNewChat
             )
-            .padding(.horizontal, 14)
-            .padding(.bottom, 8)
 
             List {
-                ForEach(filteredChats) { chat in
-                    let metadata = viewModel.sidebarMetadata(for: chat)
-                    ChatHistoryItem(
-                        chat: chat,
-                        rowIcon: metadata.icon,
-                        previewText: metadata.preview,
-                        isSelected: viewModel.selectedChatId == chat.id,
-                        onDelete: {
-                            viewModel.deleteChat(chat)
-                        }
-                    )
-                        .tag(chat.id)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            viewModel.selectChat(chat)
-                        }
-                        .contextMenu {
-                            Button("Delete") {
+                Section {
+                    ForEach(filteredChats) { chat in
+                        let metadata = viewModel.sidebarMetadata(for: chat)
+                        ChatHistoryItem(
+                            chat: chat,
+                            rowIcon: metadata.icon,
+                            previewText: metadata.preview,
+                            isSelected: viewModel.selectedChatId == chat.id,
+                            onDelete: {
                                 viewModel.deleteChat(chat)
                             }
-                            Divider()
-                            Button("Rename") {
-                                renamingChat = chat
-                                renameTitle = chat.title
+                        )
+                            .onTapGesture {
+                                viewModel.selectChat(chat)
                             }
-                        }
-                }
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(
+                                top: MLXHubDesignSystem.Spacing.hairline,
+                                leading: 0,
+                                bottom: MLXHubDesignSystem.Spacing.hairline,
+                                trailing: 0
+                            ))
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button("Rename") {
+                                    renamingChat = chat
+                                    renameTitle = chat.title
+                                }
+                                Divider()
+                                Button("Delete", role: .destructive) {
+                                    viewModel.deleteChat(chat)
+                                }
+                            }
+                    }
 
-                if filteredChats.isEmpty {
-                    Text("No chats found")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 18)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+                    if filteredChats.isEmpty {
+                        Text("No chats found")
+                            .font(MLXHubDesignSystem.Typography.compactBody)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, MLXHubDesignSystem.Spacing.xxxl + MLXHubDesignSystem.Spacing.xxs)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 0, leading: MLXHubDesignSystem.Spacing.md, bottom: 0, trailing: MLXHubDesignSystem.Spacing.md))
+                    }
                 }
             }
             .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
-
-            Rectangle()
-                .fill(Color(NSColor.separatorColor).opacity(0.28))
-                .frame(height: 1)
-
-            Button(action: {
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SidebarSettingsFooter(openSettings: {
                 openSettings()
-            }) {
-                HStack(spacing: 9) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .regular))
-                        .frame(width: 20, height: 20)
-
-                    Text("Settings")
-                        .font(.system(size: 13))
-
-                    Spacer()
-                }
-                .foregroundStyle(.primary)
-                .frame(minHeight: 30)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .contentShape(Rectangle())
-                .background {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.thinMaterial.opacity(0.45))
-                        .opacity(0.001)
-                }
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(",", modifiers: .command)
-            .help("Settings (⌘,)")
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
+            })
         }
-        .frame(minWidth: 240, idealWidth: 280)
-        .background(.regularMaterial)
-        .overlay(alignment: .trailing) {
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.16),
-                    Color(NSColor.separatorColor).opacity(0.18)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 1)
-        }
+        .navigationTitle("Chats")
+        .frame(
+            minWidth: MLXHubDesignSystem.Layout.sidebarMinWidth,
+            idealWidth: MLXHubDesignSystem.Layout.sidebarIdealWidth,
+            maxWidth: MLXHubDesignSystem.Layout.sidebarMaxWidth
+        )
         .sheet(item: $renamingChat, onDismiss: clearRenameState) { chat in
             RenameChatSheet(
                 title: $renameTitle,
@@ -172,6 +103,101 @@ struct SidebarView: View {
     }
 }
 
+private struct SidebarHeader: View {
+    @Binding var searchText: String
+    let onNewChat: () -> Void
+    @State private var isNewChatHovered = false
+
+    var body: some View {
+        VStack(spacing: MLXHubDesignSystem.Spacing.md) {
+            Button(action: onNewChat) {
+                HStack(spacing: MLXHubDesignSystem.Spacing.md) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: MLXHubDesignSystem.Icon.regular, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: MLXHubDesignSystem.Icon.sidebarRowFrame, height: MLXHubDesignSystem.Icon.sidebarRowFrame)
+
+                    Text("New chat")
+                        .font(MLXHubDesignSystem.Typography.compactBodyMedium)
+                        .foregroundStyle(.primary)
+
+                    Spacer(minLength: MLXHubDesignSystem.Spacing.md)
+                }
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .padding(.horizontal, MLXHubDesignSystem.Spacing.xxxl)
+                .contentShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.row, style: .continuous))
+                .background {
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.row, style: .continuous)
+                        .fill(isNewChatHovered ? MLXHubDesignSystem.Surface.hoverFill : Color.clear)
+                        .padding(.horizontal, MLXHubDesignSystem.Spacing.md)
+                }
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("n", modifiers: .command)
+            .help("New chat")
+            .accessibilityIdentifier("sidebar.newChat")
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration)) {
+                    isNewChatHovered = hovering
+                }
+            }
+
+            NativeSearchField(placeholder: "Search", text: $searchText)
+                .frame(height: 30)
+                .padding(.horizontal, MLXHubDesignSystem.Spacing.xxxl)
+        }
+        .padding(.top, MLXHubDesignSystem.Spacing.xl)
+        .padding(.bottom, MLXHubDesignSystem.Spacing.md)
+        .background(.regularMaterial)
+    }
+}
+
+private struct SidebarSettingsFooter: View {
+    let openSettings: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .opacity(0.55)
+
+            Button(action: openSettings) {
+                HStack(spacing: MLXHubDesignSystem.Spacing.md) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: MLXHubDesignSystem.Icon.regular, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: MLXHubDesignSystem.Icon.sidebarRowFrame, height: MLXHubDesignSystem.Icon.sidebarRowFrame)
+
+                    Text("Settings")
+                        .font(MLXHubDesignSystem.Typography.compactBodyMedium)
+                        .foregroundStyle(.primary)
+
+                    Spacer(minLength: MLXHubDesignSystem.Spacing.md)
+                }
+                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                .padding(.horizontal, MLXHubDesignSystem.Spacing.xxxl)
+                .contentShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.row, style: .continuous))
+                .background {
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.row, style: .continuous)
+                        .fill(isHovered ? MLXHubDesignSystem.Surface.hoverFill : Color.clear)
+                        .padding(.horizontal, MLXHubDesignSystem.Spacing.md)
+                }
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(",", modifiers: .command)
+            .help("Settings")
+            .accessibilityIdentifier("sidebar.settings")
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration)) {
+                    isHovered = hovering
+                }
+            }
+            .padding(.vertical, MLXHubDesignSystem.Spacing.sm)
+        }
+        .background(.regularMaterial)
+    }
+}
+
 struct ChatHistoryItem: View {
     let chat: Chat
     let rowIcon: String
@@ -180,79 +206,85 @@ struct ChatHistoryItem: View {
     let onDelete: () -> Void
     @State private var isHovered = false
     @State private var isConfirmingDelete = false
-    private let actionButtonHeight: CGFloat = 28
+    private let actionButtonHeight = MLXHubDesignSystem.Icon.avatar
+    private let rowHorizontalOverhang = MLXHubDesignSystem.Spacing.xl
+    private let actionTrailingInset = -MLXHubDesignSystem.Spacing.xs
+    private let timestampReserveWidth: CGFloat = 66
+    private let timestampTrailingOffset = MLXHubDesignSystem.Spacing.xxl
+    private var displayTitle: String {
+        ChatDisplayText.singleLine(chat.title, fallback: "Untitled")
+    }
+    private var showsActionButton: Bool {
+        isHovered || isConfirmingDelete
+    }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(alignment: .top, spacing: MLXHubDesignSystem.Spacing.sm) {
             Image(systemName: rowIcon)
-                .font(.system(size: 14, weight: .regular))
+                .font(.system(size: MLXHubDesignSystem.Icon.regular, weight: .regular))
                 .foregroundStyle(isSelected ? .primary : .secondary)
-                .frame(width: 20, height: 20)
+                .frame(width: MLXHubDesignSystem.Icon.sidebarRowFrame, height: MLXHubDesignSystem.Icon.sidebarRowFrame)
+                .padding(.top, MLXHubDesignSystem.Spacing.xxs + 1)
+                .accessibilityIdentifier("sidebar.chat.icon")
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(chat.title.isEmpty ? "New chat" : chat.title)
-                    .font(.system(size: 13, weight: .medium))
+            VStack(alignment: .leading, spacing: MLXHubDesignSystem.Spacing.xxs) {
+                Text(displayTitle)
+                    .font(MLXHubDesignSystem.Typography.rowTitle)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(displayTitle)
+                    .accessibilityValue(displayTitle)
+                    .accessibilityIdentifier("sidebar.chat.title")
 
-                Text(previewText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-
-            Spacer()
-
-            if isHovered || isConfirmingDelete {
-                Button(action: handleDeleteTap) {
-                    Group {
-                        if isConfirmingDelete {
-                            Text("Confirm")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Color.white)
-                                .padding(.horizontal, 12)
-                                .frame(height: actionButtonHeight)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.red)
-                                )
-                        } else {
-                            Image(systemName: "trash")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .frame(width: actionButtonHeight, height: actionButtonHeight)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.white.opacity(isSelected ? 0.12 : 0.08))
-                                )
-                        }
+                HStack(alignment: .firstTextBaseline, spacing: MLXHubDesignSystem.Spacing.sm) {
+                    Text(previewText)
+                        .font(MLXHubDesignSystem.Typography.rowPreview)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("sidebar.chat.preview")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, showsActionButton ? 0 : timestampReserveWidth + MLXHubDesignSystem.Spacing.sm)
+                .overlay(alignment: .trailing) {
+                    if !showsActionButton {
+                        timestampLabel
+                            .offset(x: timestampTrailingOffset)
                     }
                 }
-                .buttonStyle(.plain)
-                .help(isConfirmingDelete ? "Confirm delete" : "Delete chat")
-                .transition(.opacity)
-            } else {
-                Text(timestampText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, showsActionButton ? actionButtonHeight + MLXHubDesignSystem.Spacing.xs : 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+        .padding(.leading, -MLXHubDesignSystem.Spacing.xs)
+        .padding(.trailing, MLXHubDesignSystem.Spacing.lg)
+        .padding(.vertical, MLXHubDesignSystem.Spacing.xxs + 1)
+        .background {
+            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.row, style: .continuous)
+                .fill(rowBackground)
+                .padding(.horizontal, -rowHorizontalOverhang)
+        }
+#if DEBUG
+        .overlay {
+            uiTestSelectionFrameProbe
+                .padding(.horizontal, -rowHorizontalOverhang)
+        }
+#endif
+        .overlay(alignment: .trailing) {
+            if showsActionButton {
+                deleteButton
+                    .padding(.trailing, actionTrailingInset)
+                    .transition(.opacity)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(rowBackground)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(rowBorder, lineWidth: 1)
-        }
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.12)) {
+            withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration)) {
                 isHovered = hovering
                 if !hovering {
                     isConfirmingDelete = false
@@ -261,25 +293,64 @@ struct ChatHistoryItem: View {
         }
     }
 
+    private var deleteButton: some View {
+        Button(action: handleDeleteTap) {
+            Group {
+                if isConfirmingDelete {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: actionButtonHeight, height: actionButtonHeight)
+                        .background(Color.red, in: Circle())
+                } else {
+                    Image(systemName: "trash")
+                        .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: actionButtonHeight, height: actionButtonHeight)
+                        .background(
+                            Circle()
+                                .fill(Color.primary.opacity(0.06))
+                        )
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(isConfirmingDelete ? "Confirm delete" : "Delete chat")
+        .accessibilityIdentifier("sidebar.chat.delete")
+    }
+
+    private var timestampLabel: some View {
+        Text(timestampText)
+            .font(MLXHubDesignSystem.Typography.micro)
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityIdentifier("sidebar.chat.timestamp")
+    }
+
     private var rowBackground: AnyShapeStyle {
         if isSelected {
-            return AnyShapeStyle(.thinMaterial)
+            return AnyShapeStyle(MLXHubDesignSystem.Surface.selectedSidebarFill)
         }
 
         if isHovered {
-            return AnyShapeStyle(Color.white.opacity(0.08))
+            return AnyShapeStyle(MLXHubDesignSystem.Surface.hoverFill)
         }
 
         return AnyShapeStyle(Color.clear)
     }
 
-    private var rowBorder: Color {
-        guard isSelected else {
-            return Color.clear
+#if DEBUG
+    @ViewBuilder
+    private var uiTestSelectionFrameProbe: some View {
+        if isSelected && ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_MODE"] == "1" {
+            Color.primary.opacity(0.001)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Selected chat row")
+                .accessibilityIdentifier("sidebar.chat.selectedRow")
         }
-
-        return Color.white.opacity(0.18)
     }
+#endif
 
     private var timestampText: String {
         if Calendar.current.isDateInToday(chat.timestamp) {
@@ -307,7 +378,7 @@ struct ChatHistoryItem: View {
         if isConfirmingDelete {
             onDelete()
         } else {
-            withAnimation(.easeInOut(duration: 0.12)) {
+            withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration)) {
                 isConfirmingDelete = true
             }
         }

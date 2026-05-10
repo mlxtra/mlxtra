@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ComposerView: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.openSettings) private var openSettings
     @State private var isTextInputFocused = false
     @State private var isDropTargeted = false
@@ -37,19 +38,44 @@ struct ComposerView: View {
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: MLXHubDesignSystem.Spacing.md) {
             attachmentTray
-            textInput
-            modeDraftControls
-            Divider().padding(.horizontal, 18)
-            footerControls
+            VStack(alignment: .leading, spacing: MLXHubDesignSystem.Spacing.sm) {
+                textInput
+                modeDraftControls
+
+                HStack(alignment: .center, spacing: MLXHubDesignSystem.Spacing.md) {
+                    attachmentButton
+                    ToolSelectorInline(viewModel: viewModel)
+                    Spacer(minLength: MLXHubDesignSystem.Spacing.xl)
+                    ComposerModelControl(
+                        viewModel: viewModel,
+                        onOpenModels: { openSettings() },
+                        onRestart: viewModel.restartLocalEngine,
+                        onFreeMemory: viewModel.freeLocalEngineMemory
+                    )
+                    primaryControl
+                }
+                .padding(.horizontal, MLXHubDesignSystem.Spacing.xxs)
+            }
+            .frame(maxWidth: .infinity)
         }
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 24))
-        .shadow(color: Color(NSColor.shadowColor).opacity(0.2), radius: 16, x: 0, y: 4)
+        .padding(MLXHubDesignSystem.Layout.composerSurfacePadding)
+        .nativeGlassSurface(cornerRadius: MLXHubDesignSystem.Radius.composer, interactive: true)
+        .shadow(
+            color: Color(NSColor.shadowColor).opacity(MLXHubDesignSystem.Elevation.floatingShadowOpacity),
+            radius: MLXHubDesignSystem.Elevation.floatingShadowRadius,
+            x: 0,
+            y: MLXHubDesignSystem.Elevation.floatingShadowY
+        )
         .overlay(composerBorder)
-        .animation(.easeInOut(duration: 0.18), value: borderIsActive)
+        .animation(.easeInOut(duration: MLXHubDesignSystem.Motion.focusDuration), value: borderIsActive)
+        .onAppear {
+            viewModel.refreshLocalEngineDownloadStatus()
+        }
         .onDrop(of: acceptedDropTypes, isTargeted: $isDropTargeted, perform: handleImageDrop)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.composer")
     }
 
     @ViewBuilder
@@ -66,9 +92,9 @@ struct ComposerView: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 8)
-            .padding(.bottom, -8)
+            .padding(.horizontal, MLXHubDesignSystem.Spacing.xxxl)
+            .padding(.top, MLXHubDesignSystem.Spacing.xs)
+            .padding(.bottom, MLXHubDesignSystem.Spacing.xxs)
         }
     }
 
@@ -76,99 +102,96 @@ struct ComposerView: View {
         ZStack(alignment: .topLeading) {
             MultilineTextInput(
                 text: $viewModel.inputText,
+                placeholder: viewModel.composerPlaceholder,
                 isFocused: $isTextInputFocused,
                 isEditable: !viewModel.isInputDisabled,
                 onPasteImages: handlePasteboardImages,
+                accessibilityIdentifier: "composer.input",
+                accessibilityLabel: "Composer input",
                 onSubmit: {
                     viewModel.performComposerPrimaryAction()
                 }
             )
-
-            if viewModel.inputText.isEmpty {
-                Text(viewModel.composerPlaceholder)
-                    .font(.system(size: 16))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 6)
-                    .allowsHitTesting(false)
-            }
         }
-        .frame(minHeight: viewModel.hasSelectedImages ? 20 : 32, maxHeight: 80)
-        .padding(.horizontal, 18)
-        .padding(.top, 14)
-        .padding(.bottom, 4)
+        .frame(height: textInputHeight)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, MLXHubDesignSystem.Spacing.xxl)
+        .padding(.vertical, MLXHubDesignSystem.Spacing.xxs)
+        .background {
+            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.composerField, style: .continuous)
+                .fill(textInputSurface)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.composerField, style: .continuous)
+                .stroke(borderIsActive ? MLXHubDesignSystem.Surface.focusHairline : MLXHubDesignSystem.Surface.quietHairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
+        }
         .overlay(alignment: .center) {
             if isDropTargeted {
                 Text("Drop images to attach")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(MLXHubDesignSystem.Typography.compactBodyMedium)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.ultraThinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal, MLXHubDesignSystem.Spacing.xl)
+                    .padding(.vertical, MLXHubDesignSystem.Spacing.sm + 1)
+                    .designPanelSurface(cornerRadius: MLXHubDesignSystem.Radius.control)
                     .allowsHitTesting(false)
             }
         }
+        .accessibilityIdentifier("composer.inputField")
     }
 
-    private var footerControls: some View {
-        HStack(spacing: 8) {
-            Button(action: showFilePicker) {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 16))
+    private var attachmentButton: some View {
+        Button(action: showFilePicker) {
+            Image(systemName: "plus")
+                .font(.system(size: MLXHubDesignSystem.Icon.large, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: MLXHubDesignSystem.Icon.composerButton, height: MLXHubDesignSystem.Icon.composerButton)
+                .background(
+                    Circle()
+                        .fill(MLXHubDesignSystem.Surface.controlFill(colorScheme: colorScheme))
+                )
+                .overlay {
+                    Circle()
+                        .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(attachmentHelp)
+    }
+
+    @ViewBuilder
+    private var primaryControl: some View {
+        if viewModel.isGenerating {
+            Button(action: {
+                viewModel.cancelGeneration()
+            }) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: MLXHubDesignSystem.Icon.regular, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .frame(width: MLXHubDesignSystem.Icon.composerButton, height: MLXHubDesignSystem.Icon.composerButton)
+                    .background(
+                        Circle()
+                            .fill(MLXHubDesignSystem.Surface.controlFill(colorScheme: colorScheme))
+                    )
+                    .overlay {
+                        Circle()
+                            .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
+                    }
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(attachmentHelp)
-
-            ToolSelectorInline(viewModel: viewModel)
-
-            Spacer()
-
-            if viewModel.localEngineStatus.isVisibleInComposer {
-                LocalEngineStatusPill(
-                    status: viewModel.localEngineStatus,
-                    canFreeMemory: viewModel.canFreeLocalEngineMemory,
-                    onOpenModels: { openSettings() },
-                    onRestart: viewModel.restartLocalEngine,
-                    onFreeMemory: viewModel.freeLocalEngineMemory
-                )
-            }
-
-            if viewModel.isGenerating {
-                Button(action: {
-                    viewModel.cancelGeneration()
-                }) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 34, height: 34)
-                        .background(Color(NSColor.controlColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
+            .help("Stop generating")
+        } else {
+            SendActionButton(
+                isEnabled: canSend,
+                title: viewModel.composerPrimaryActionTitle,
+                systemImage: viewModel.composerPrimaryActionSystemImage,
+                help: viewModel.composerPrimaryActionHelp,
+                disabledHelp: viewModel.composerPrimaryActionDisabledHelp,
+                action: {
+                    viewModel.performComposerPrimaryAction()
                 }
-                .buttonStyle(.plain)
-                .help("Stop generating")
-            } else {
-                ModelParameterButton(viewModel: viewModel)
-                ModelSelectorInline(viewModel: viewModel)
-                SendActionButton(
-                    isEnabled: canSend,
-                    title: viewModel.composerPrimaryActionTitle,
-                    systemImage: viewModel.composerPrimaryActionSystemImage,
-                    help: viewModel.composerPrimaryActionHelp,
-                    disabledHelp: viewModel.composerPrimaryActionDisabledHelp,
-                    action: {
-                        viewModel.performComposerPrimaryAction()
-                    }
-                )
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .onAppear {
-            viewModel.refreshLocalEngineDownloadStatus()
+            )
         }
     }
 
@@ -181,23 +204,45 @@ struct ComposerView: View {
                 viewModel: viewModel,
                 onAttachReference: showFilePicker
             )
-                .padding(.horizontal, 18)
-                .padding(.top, 4)
-                .padding(.bottom, 10)
+                .padding(.top, MLXHubDesignSystem.Spacing.xs)
+                .padding(.bottom, MLXHubDesignSystem.Spacing.xs)
         }
     }
 
     @ViewBuilder
     private var composerBorder: some View {
-        if viewModel.isGenerating {
-            AnimatedComposerBorder(cornerRadius: 24)
-        } else {
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(
-                    borderIsActive ? Color.primary.opacity(0.18) : Color(NSColor.separatorColor).opacity(0.5),
-                    lineWidth: borderIsActive ? 1.5 : 1
-                )
+        RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.composer, style: .continuous)
+            .stroke(
+                borderIsActive ? MLXHubDesignSystem.Surface.focusHairline : MLXHubDesignSystem.Surface.quietHairline,
+                lineWidth: MLXHubDesignSystem.Spacing.hairline
+            )
+            .allowsHitTesting(false)
+    }
+
+    private var textInputSurface: Color {
+        MLXHubDesignSystem.Surface.fieldFill(colorScheme: colorScheme)
+    }
+
+    private var textInputHeight: CGFloat {
+        guard !viewModel.inputText.isEmpty else {
+            return MLXHubDesignSystem.Layout.composerMinTextHeight
         }
+
+        let explicitLineCount = viewModel.inputText
+            .components(separatedBy: .newlines)
+            .count
+        let minimumVisibleLines = MLXHubDesignSystem.Layout.composerMinimumVisibleInputLines
+        guard explicitLineCount > minimumVisibleLines else {
+            return MLXHubDesignSystem.Layout.composerMinTextHeight
+        }
+
+        let visibleLines = min(explicitLineCount, MLXHubDesignSystem.Layout.composerMaxVisibleInputLines)
+        let addedLines = max(visibleLines - minimumVisibleLines, 0)
+        return min(
+            MLXHubDesignSystem.Layout.composerMinTextHeight
+                + CGFloat(addedLines) * MLXHubDesignSystem.Layout.composerTextLineHeight,
+            MLXHubDesignSystem.Layout.composerMaxTextHeight
+        )
     }
 
     private func showFilePicker() {
@@ -289,6 +334,10 @@ private struct ModeDraftControls: View {
     let draft: ComposerDraft
     @ObservedObject var viewModel: ChatViewModel
     let onAttachReference: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isLyricsFocused = false
+
+    private let controlTextRailInset = MLXHubDesignSystem.Spacing.xxl
 
     private var promptIsEmpty: Bool {
         !viewModel.hasMusicDraftPrompt
@@ -302,7 +351,7 @@ private struct ModeDraftControls: View {
         draft.showsMusicControls
             && viewModel.musicVocalMode != .instrumental
             && (
-                !promptIsEmpty
+                viewModel.musicVocalMode == .vocals
                     || !lyricsAreEmpty
                     || viewModel.isMusicLyricsEditorVisible
                     || viewModel.musicComposerPrompt == .needsLyrics
@@ -313,24 +362,27 @@ private struct ModeDraftControls: View {
         VStack(alignment: .leading, spacing: 8) {
             if draft.showsMusicControls {
                 musicSetupRow
+                    .padding(.horizontal, controlTextRailInset)
             }
 
             ForEach(draft.slots) { slot in
                 ComposerDraftSlotRow(slot: slot) { action in
                     perform(slotAction: action)
                 }
+                .padding(.horizontal, controlTextRailInset)
             }
 
             if shouldShowLyricsEditor {
                 lyricsEditor
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var musicSetupRow: some View {
         HStack(spacing: 10) {
             Text("Vocals")
-                .font(.system(size: 12, weight: .semibold))
+                .font(MLXHubDesignSystem.Typography.captionMedium)
                 .foregroundStyle(.secondary)
 
             Picker("", selection: vocalModeBinding) {
@@ -342,17 +394,6 @@ private struct ModeDraftControls: View {
             .frame(width: 300)
 
             Spacer(minLength: 0)
-
-            if shouldShowLyricsEditor {
-                Button {
-                    viewModel.rewriteMusicLyrics()
-                } label: {
-                    Label(lyricsButtonTitle, systemImage: "pencil.and.sparkles")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(promptIsEmpty || viewModel.isDraftingMusicLyrics)
-            }
         }
     }
 
@@ -372,37 +413,54 @@ private struct ModeDraftControls: View {
     }
 
     private var lyricsEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $viewModel.musicLyricsText)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .frame(minHeight: 78, maxHeight: 110)
-
-                if viewModel.musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("Paste lyrics here.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 16)
-                        .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: MLXHubDesignSystem.Spacing.sm) {
+            HStack {
+                Spacer(minLength: 0)
+                Button {
+                    viewModel.rewriteMusicLyrics()
+                } label: {
+                    Label(lyricsButtonTitle, systemImage: "sparkles")
                 }
+                .font(MLXHubDesignSystem.Typography.captionMedium)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(promptIsEmpty || viewModel.isDraftingMusicLyrics)
             }
-            .background(Color(NSColor.textBackgroundColor).opacity(0.72))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, controlTextRailInset)
+
+            MultilineTextInput(
+                text: $viewModel.musicLyricsText,
+                placeholder: "Add lyrics...",
+                isFocused: $isLyricsFocused,
+                isEditable: !viewModel.isInputDisabled,
+                submitsOnReturn: false,
+                accessibilityIdentifier: "composer.musicLyricsInput",
+                accessibilityLabel: "Music lyrics"
+            )
+            .frame(height: MLXHubDesignSystem.Layout.musicLyricsTextHeight)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, MLXHubDesignSystem.Spacing.xxl)
+            .padding(.vertical, MLXHubDesignSystem.Spacing.xxs)
+            .background {
+                RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.composerField, style: .continuous)
+                    .fill(MLXHubDesignSystem.Surface.fieldFill(colorScheme: colorScheme))
+            }
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(NSColor.separatorColor).opacity(0.55), lineWidth: 1)
+                RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.composerField, style: .continuous)
+                    .stroke(
+                        isLyricsFocused ? MLXHubDesignSystem.Surface.focusHairline : MLXHubDesignSystem.Surface.quietHairline,
+                        lineWidth: MLXHubDesignSystem.Spacing.hairline
+                    )
             }
         }
+        .accessibilityIdentifier("composer.musicLyricsEditor")
     }
 
     private var lyricsButtonTitle: String {
         if viewModel.isDraftingMusicLyrics {
             return "Generating..."
         }
-        return lyricsAreEmpty ? "Generate from idea" : "Regenerate"
+        return lyricsAreEmpty ? "Draft lyrics" : "Refresh lyrics"
     }
 }
 
@@ -416,16 +474,15 @@ private struct ComposerDraftSlotRow: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(iconColor)
                 .frame(width: 22, height: 22)
-                .background(iconColor.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .designTintSurface(iconColor, cornerRadius: 6)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(slot.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(MLXHubDesignSystem.Typography.captionMedium)
 
                 if let subtitle = slot.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .font(MLXHubDesignSystem.Typography.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -445,9 +502,9 @@ private struct ComposerDraftSlotRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(backgroundColor)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous)
                 .stroke(borderColor, lineWidth: 1)
         }
     }
@@ -461,7 +518,7 @@ private struct ComposerDraftSlotRow: View {
         case .needed:
             return Color.accentColor.opacity(0.07)
         case .neutral:
-            return Color(NSColor.controlColor).opacity(0.48)
+            return Color.primary.opacity(0.035)
         }
     }
 
@@ -486,34 +543,25 @@ private struct SendActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: title == nil ? 0 : 7) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .bold))
-                if let title {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                }
-            }
-            .frame(width: title == nil ? 36 : nil, height: 34)
-            .padding(.horizontal, title == nil ? 0 : 12)
+            Image(systemName: systemImage)
+                .font(.system(size: MLXHubDesignSystem.Icon.medium + 1, weight: .bold))
+                .frame(width: MLXHubDesignSystem.Icon.composerButton, height: MLXHubDesignSystem.Icon.composerButton)
             .foregroundStyle(isEnabled ? Color.white : Color.secondary.opacity(0.65))
             .background {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                Circle()
                     .fill(background)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .strokeBorder(borderColor, lineWidth: 1)
+                        Circle()
+                            .strokeBorder(borderColor, lineWidth: MLXHubDesignSystem.Spacing.hairline)
                     }
             }
             .shadow(
                 color: shadowColor,
-                radius: isEnabled ? (isHovered ? 10 : 7) : 0,
+                radius: isEnabled ? (isHovered ? 7 : 4) : 0,
                 x: 0,
-                y: isHovered ? 4 : 2
+                y: isHovered ? MLXHubDesignSystem.Spacing.xxs + 1 : MLXHubDesignSystem.Spacing.hairline
             )
-            .fixedSize(horizontal: title != nil, vertical: false)
-            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
@@ -521,7 +569,7 @@ private struct SendActionButton: View {
         .accessibilityIdentifier("composer.primaryAction")
         .accessibilityLabel(help)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.14)) {
+            withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.controlDuration)) {
                 isHovered = hovering
             }
         }
@@ -529,103 +577,18 @@ private struct SendActionButton: View {
 
     private var background: AnyShapeStyle {
         if isEnabled {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        Color.accentColor,
-                        Color(red: 0.10, green: 0.47, blue: 0.96)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+            return AnyShapeStyle(Color.accentColor)
         }
 
-        return AnyShapeStyle(Color(NSColor.controlColor).opacity(0.7))
+        return AnyShapeStyle(Color.primary.opacity(0.06))
     }
 
     private var borderColor: Color {
-        isEnabled ? Color.white.opacity(0.18) : Color(NSColor.separatorColor).opacity(0.28)
+        isEnabled ? Color.white.opacity(0.18) : MLXHubDesignSystem.Palette.separator.opacity(0.28)
     }
 
     private var shadowColor: Color {
-        isEnabled ? Color.accentColor.opacity(0.22) : Color.clear
-    }
-}
-
-private struct LocalEngineStatusPill: View {
-    let status: LocalEngineStatus
-    let canFreeMemory: Bool
-    let onOpenModels: () -> Void
-    let onRestart: () -> Void
-    let onFreeMemory: () -> Void
-
-    @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
-    @State private var isPresented = false
-
-    var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: status.systemImage)
-                    .font(.system(size: 12, weight: .semibold))
-
-                Text(compactTitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(tint)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(tint.opacity(0.10))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(tint.opacity(0.20), lineWidth: 1)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(status.detail)
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            LocalEngineStatusPopover(
-                status: status,
-                canFreeMemory: canFreeMemory,
-                onOpenModels: {
-                    isPresented = false
-                    if let modelId = status.primaryActionModelId {
-                        pendingDownloadModelId = modelId
-                    }
-                    onOpenModels()
-                },
-                onRestart: {
-                    isPresented = false
-                    onRestart()
-                },
-                onFreeMemory: {
-                    isPresented = false
-                    onFreeMemory()
-                }
-            )
-        }
-    }
-
-    private var tint: Color {
-        status.tone.color
-    }
-
-    private var compactTitle: String {
-        switch status.state {
-        case .ready:
-            return "Ready"
-        case .needsDownload:
-            return "Download needed"
-        case .memoryFreed:
-            return "Unloaded"
-        default:
-            return status.title
-        }
+        isEnabled ? MLXHubDesignSystem.Palette.accent.opacity(0.16) : Color.clear
     }
 }
 
@@ -641,15 +604,15 @@ private struct LocalEngineStatusPopover: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: status.systemImage)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(status.tone.color)
+                    .foregroundStyle(iconTint)
                     .frame(width: 24, height: 24)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(status.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(MLXHubDesignSystem.Typography.compactBodySemibold)
 
                     Text(status.detail)
-                        .font(.system(size: 12))
+                        .font(MLXHubDesignSystem.Typography.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -687,13 +650,360 @@ private struct LocalEngineStatusPopover: View {
                     .buttonStyle(.bordered)
 
                     Text("The model will load again when needed.")
-                        .font(.system(size: 11))
+                        .font(MLXHubDesignSystem.Typography.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(14)
         .frame(width: 280, alignment: .leading)
+    }
+
+    private var iconTint: Color {
+        status.state == .ready ? MLXHubDesignSystem.Palette.secondaryLabel : status.tone.color
+    }
+}
+
+struct ComposerModelControl: View {
+    @ObservedObject var viewModel: ChatViewModel
+    let onOpenModels: () -> Void
+    let onRestart: () -> Void
+    let onFreeMemory: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @StateObject private var downloadManager = ModelDownloadManager.shared
+    @State private var isModelPickerPresented = false
+    @State private var isSettingsPresented = false
+    @State private var isStatusPresented = false
+    @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
+
+    private var profile: ModelCapabilityProfile {
+        viewModel.activeModelProfile
+    }
+
+    private var status: LocalEngineStatus {
+        viewModel.localEngineStatus
+    }
+
+    private var isLoading: Bool {
+        status.state == .preparing
+            || status.state == .loadingModel
+            || (status.loadProgress != nil && (viewModel.isGenerating || viewModel.isModelLoading || viewModel.isPythonLoading))
+    }
+
+    private var showsLoadingLine: Bool {
+        isLoading || status.loadProgress != nil
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button {
+                isModelPickerPresented.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: profile.icon)
+                        .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .medium))
+                        .foregroundStyle(isLoading ? Color.accentColor : MLXHubDesignSystem.Palette.secondaryLabel)
+                        .frame(width: 16)
+
+                    Text(compactModelTitle)
+                        .font(MLXHubDesignSystem.Typography.compactBodyMedium)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: MLXHubDesignSystem.Icon.micro, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 9)
+                .frame(maxWidth: 188, minHeight: MLXHubDesignSystem.Icon.composerButton)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Choose model")
+            .popover(isPresented: $isModelPickerPresented, arrowEdge: .bottom) {
+                ComposerModelPickerPopover(
+                    viewModel: viewModel,
+                    downloadManager: downloadManager,
+                    isPresented: $isModelPickerPresented
+                )
+                .frame(width: 330)
+            }
+            .accessibilityIdentifier("composer.modelDropdown")
+
+            segmentDivider
+
+            Button {
+                isSettingsPresented.toggle()
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .medium))
+                    .foregroundStyle(MLXHubDesignSystem.Palette.secondaryLabel)
+                    .frame(width: MLXHubDesignSystem.Icon.composerButton, height: MLXHubDesignSystem.Icon.composerButton)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Model settings")
+            .popover(isPresented: $isSettingsPresented, arrowEdge: .bottom) {
+                ModelParameterPopover(viewModel: viewModel, profile: profile)
+                    .frame(width: 320)
+            }
+            .accessibilityIdentifier("composer.modelSettings")
+
+            segmentDivider
+
+            Button {
+                isStatusPresented.toggle()
+            } label: {
+                Image(systemName: status.systemImage)
+                    .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .semibold))
+                    .foregroundStyle(statusIconTint)
+                    .frame(width: MLXHubDesignSystem.Icon.composerButton, height: MLXHubDesignSystem.Icon.composerButton)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(status.detail)
+            .popover(isPresented: $isStatusPresented, arrowEdge: .bottom) {
+                LocalEngineStatusPopover(
+                    status: status,
+                    canFreeMemory: viewModel.canFreeLocalEngineMemory,
+                    onOpenModels: {
+                        isStatusPresented = false
+                        if let modelId = status.primaryActionModelId {
+                            pendingDownloadModelId = modelId
+                        }
+                        onOpenModels()
+                    },
+                    onRestart: {
+                        isStatusPresented = false
+                        onRestart()
+                    },
+                    onFreeMemory: {
+                        isStatusPresented = false
+                        onFreeMemory()
+                    }
+                )
+            }
+            .accessibilityIdentifier("composer.modelStatus")
+        }
+        .frame(height: MLXHubDesignSystem.Icon.composerButton)
+        .background(
+            Capsule()
+                .fill(MLXHubDesignSystem.Surface.controlFill(colorScheme: colorScheme))
+        )
+        .overlay {
+            Capsule()
+                .stroke(borderColor, lineWidth: MLXHubDesignSystem.Spacing.hairline)
+        }
+        .overlay(alignment: .bottom) {
+            if showsLoadingLine {
+                ZStack {
+                    ComposerModelLoadProgressLine(progress: status.loadProgress)
+                    Text("Model loading")
+                        .font(.system(size: 1))
+                        .foregroundStyle(.clear)
+                        .frame(height: 2)
+                        .accessibilityLabel("Model loading")
+                        .accessibilityIdentifier("composer.modelLoadingIndicator")
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 1)
+            }
+        }
+        .clipShape(Capsule())
+        .fixedSize(horizontal: true, vertical: true)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("composer.modelControl")
+        .onAppear {
+            downloadManager.refreshStatuses()
+        }
+    }
+
+    private var compactModelTitle: String {
+        if let progress = status.loadProgress {
+            return progress.compactTitle(modelName: profile.name)
+        }
+
+        if isLoading {
+            return "Loading \(profile.name.split(separator: " ").first.map(String.init) ?? "model")"
+        }
+
+        return profile.name
+    }
+
+    private var statusIconTint: Color {
+        switch status.state {
+        case .ready, .idle, .memoryFreed:
+            return MLXHubDesignSystem.Palette.secondaryLabel
+        default:
+            return status.tone.color
+        }
+    }
+
+    private var borderColor: Color {
+        isLoading ? Color.accentColor.opacity(0.20) : MLXHubDesignSystem.Surface.quietHairline
+    }
+
+    private var segmentDivider: some View {
+        Rectangle()
+            .fill(MLXHubDesignSystem.Surface.quietHairline)
+            .frame(width: MLXHubDesignSystem.Spacing.hairline, height: 18)
+    }
+}
+
+private struct ComposerModelLoadProgressLine: View {
+    let progress: ModelLoadProgress?
+    @State private var indeterminateOffset: CGFloat = -0.35
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.accentColor.opacity(0.14))
+
+                if let fraction = progress?.fractionCompleted {
+                    Capsule()
+                        .fill(Color.accentColor.opacity(0.82))
+                        .frame(width: max(2, width * fraction))
+                } else {
+                    Capsule()
+                        .fill(Color.accentColor.opacity(0.82))
+                        .frame(width: max(26, width * 0.30))
+                        .offset(x: width * indeterminateOffset)
+                }
+            }
+        }
+        .frame(height: 2)
+        .clipped()
+        .onAppear {
+            guard progress?.fractionCompleted == nil else { return }
+            indeterminateOffset = -0.35
+            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: false)) {
+                indeterminateOffset = 1.05
+            }
+        }
+    }
+}
+
+private struct ComposerModelPickerPopover: View {
+    @ObservedObject var viewModel: ChatViewModel
+    @ObservedObject var downloadManager: ModelDownloadManager
+    @Binding var isPresented: Bool
+
+    private var readyProfiles: [ModelCapabilityProfile] {
+        compatibleProfiles.filter { profile in
+            downloadManager.state(for: profile.downloadableModel) == .downloaded
+        }
+    }
+
+    private var compatibleProfiles: [ModelCapabilityProfile] {
+        viewModel.availableProfilesForCurrentMode.filter { $0.isRuntimeCompatible() }
+    }
+
+    private var hasResolvedModelStates: Bool {
+        compatibleProfiles.allSatisfy { profile in
+            downloadManager.states[profile.downloadableModel.id] != nil
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if readyProfiles.isEmpty {
+                Text(hasResolvedModelStates ? "No ready models" : "Checking ready models")
+                    .font(MLXHubDesignSystem.Typography.captionMedium)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .accessibilityIdentifier("composer.modelPicker.empty")
+            } else {
+                ForEach(readyProfiles) { profile in
+                    ComposerModelProfileRow(
+                        profile: profile,
+                        isSelected: viewModel.isModelProfileSelected(profile),
+                        action: {
+                            viewModel.selectModelProfile(profile)
+                            downloadManager.refreshStatuses()
+                            isPresented = false
+                        }
+                    )
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .designPanelSurface(cornerRadius: MLXHubDesignSystem.Radius.popover)
+        .shadow(
+            color: Color.black.opacity(MLXHubDesignSystem.Elevation.popoverShadowOpacity),
+            radius: MLXHubDesignSystem.Elevation.popoverShadowRadius,
+            x: 0,
+            y: MLXHubDesignSystem.Elevation.popoverShadowY
+        )
+        .onAppear {
+            downloadManager.refreshStatuses()
+        }
+    }
+}
+
+private struct ComposerModelProfileRow: View {
+    let profile: ModelCapabilityProfile
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: profile.icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.accentColor : MLXHubDesignSystem.Palette.secondaryLabel)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(profile.name)
+                        .font(MLXHubDesignSystem.Typography.compactBodyMedium)
+                        .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Text(profile.subtitle)
+                        .font(MLXHubDesignSystem.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 10)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(isHovered ? MLXHubDesignSystem.Surface.hoverFill : Color.clear)
+        .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .accessibilityIdentifier("composer.modelProfile.\(profile.modelId.accessibilityIdentifierComponent)")
+    }
+}
+
+private extension String {
+    var accessibilityIdentifierComponent: String {
+        lowercased()
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+            .replacingOccurrences(of: "_", with: "-")
     }
 }
 
@@ -714,54 +1024,9 @@ private extension LocalEngineStatus.Tone {
     }
 }
 
-struct AnimatedComposerBorder: View {
-    let cornerRadius: CGFloat
-    @State private var rotation = Angle.degrees(0)
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .stroke(animatedGradient(opacity: 0.44), lineWidth: 10)
-                .blur(radius: 14)
-                .padding(-7)
-
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .stroke(animatedGradient(opacity: 0.38), lineWidth: 5)
-                .blur(radius: 5)
-                .padding(-2)
-
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(Color.white.opacity(0.64), lineWidth: 1.2)
-
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(animatedGradient(opacity: 0.24), lineWidth: 1)
-        }
-        .allowsHitTesting(false)
-        .onAppear {
-            withAnimation(.linear(duration: 6.0).repeatForever(autoreverses: false)) {
-                rotation = .degrees(360)
-            }
-        }
-    }
-
-    private func animatedGradient(opacity: Double) -> AngularGradient {
-        AngularGradient(
-            colors: [
-                Color(red: 1.00, green: 0.48, blue: 0.82).opacity(opacity),
-                Color(red: 0.72, green: 0.58, blue: 1.00).opacity(opacity * 0.85),
-                Color(red: 0.44, green: 0.88, blue: 1.00).opacity(opacity),
-                Color(red: 0.82, green: 0.96, blue: 0.80).opacity(opacity * 0.72),
-                Color(red: 1.00, green: 0.80, blue: 0.58).opacity(opacity * 0.82),
-                Color(red: 1.00, green: 0.48, blue: 0.82).opacity(opacity)
-            ],
-            center: .center,
-            angle: rotation
-        )
-    }
-}
-
 struct ToolSelectorInline: View {
     @ObservedObject var viewModel: ChatViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var downloadManager = ModelDownloadManager.shared
     @State private var isShowingPopover = false
 
@@ -775,21 +1040,23 @@ struct ToolSelectorInline: View {
         }) {
             HStack(spacing: 6) {
                 Image(systemName: viewModel.selectedTool.icon)
-                    .font(.system(size: 14))
+                    .font(.system(size: MLXHubDesignSystem.Icon.regular))
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                 Text(viewModel.selectedTool.rawValue)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(MLXHubDesignSystem.Typography.compactBody)
+                    .foregroundStyle(.primary)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10))
+                    .font(.system(size: MLXHubDesignSystem.Icon.micro))
+                    .foregroundStyle(.tertiary)
             }
-            .foregroundStyle(isActive ? Color.accentColor : .secondary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(isActive ? Color.accentColor.opacity(0.15) : Color(NSColor.controlColor))
+                    .fill(MLXHubDesignSystem.Surface.controlFill(colorScheme: colorScheme))
                     .overlay(
                         Capsule()
-                            .stroke(isActive ? Color.accentColor : Color.clear, lineWidth: 1)
+                            .stroke(isActive ? Color.accentColor.opacity(0.18) : MLXHubDesignSystem.Surface.quietHairline, lineWidth: 1)
                     )
             )
         }
@@ -806,6 +1073,7 @@ struct ToolSelectorInline: View {
             downloadManager.refreshStatuses()
         }
         .fixedSize()
+        .accessibilityIdentifier("toolbar.modelSelector")
         .accessibilityIdentifier("composer.toolSelector")
     }
 }
@@ -831,15 +1099,8 @@ struct ToolSelectorPopover: View {
             }
         }
         .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(NSColor.controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color(NSColor.separatorColor).opacity(0.3), lineWidth: 1)
-                )
-                .shadow(color: Color.black.opacity(0.1), radius: 16, x: 0, y: 4)
-        )
+        .designPanelSurface(cornerRadius: 14)
+        .shadow(color: Color.black.opacity(0.08), radius: 16, x: 0, y: 4)
     }
 }
 
@@ -860,10 +1121,10 @@ struct ToolRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tool.rawValue)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(MLXHubDesignSystem.Typography.compactBodyMedium)
                         .foregroundStyle(isSelected ? Color.accentColor : .primary)
                     Text(tool.subtitle)
-                        .font(.system(size: 11))
+                        .font(MLXHubDesignSystem.Typography.caption)
                         .foregroundStyle(.secondary)
                 }
 
@@ -884,7 +1145,7 @@ struct ToolRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(isHovered ? Color(NSColor.selectedControlColor).opacity(0.1) : Color.clear)
+        .background(isHovered ? MLXHubDesignSystem.Surface.hoverFill : Color.clear)
         .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
         .onHover { hovering in
             isHovered = hovering
@@ -897,28 +1158,28 @@ struct ToolRow: View {
         switch state {
         case .downloaded:
             Label("Ready", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.green)
+                .font(MLXHubDesignSystem.Typography.microMedium)
+                .foregroundStyle(MLXHubDesignSystem.Palette.secondaryLabel)
                 .labelStyle(.titleAndIcon)
         case .downloading:
             Label("Loading", systemImage: "arrow.down.circle.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .font(MLXHubDesignSystem.Typography.microMedium)
                 .foregroundStyle(Color.accentColor)
                 .labelStyle(.titleAndIcon)
         case .paused:
             Label("Paused", systemImage: "pause.circle.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .font(MLXHubDesignSystem.Typography.microMedium)
                 .foregroundStyle(Color.orange)
                 .labelStyle(.titleAndIcon)
         case .failed(let message):
             let failedState = ModelDownloadManager.DownloadState.failed(message)
             Label(failedState.failureBadgeTitle, systemImage: failedState.failureBadgeIcon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(MLXHubDesignSystem.Typography.microMedium)
                 .foregroundStyle(failedState.failureBadgeTint)
                 .labelStyle(.titleAndIcon)
         case .notDownloaded:
             Label("Missing", systemImage: "arrow.down.circle")
-                .font(.system(size: 10, weight: .semibold))
+                .font(MLXHubDesignSystem.Typography.microMedium)
                 .foregroundStyle(.secondary)
                 .labelStyle(.titleAndIcon)
         case nil:
@@ -927,130 +1188,18 @@ struct ToolRow: View {
     }
 }
 
-struct ModelSelectorInline: View {
-    @ObservedObject var viewModel: ChatViewModel
-    @StateObject private var downloadManager = ModelDownloadManager.shared
-
-    var body: some View {
-        Menu {
-            ForEach(viewModel.availableProfilesForCurrentMode) { profile in
-                Button(action: {
-                    viewModel.selectModelProfile(profile)
-                }) {
-                    HStack {
-                        Image(systemName: profile.icon)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(profile.name)
-                                .font(.system(size: 13))
-                            Text(profile.subtitle)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Spacer()
-
-                        HStack(spacing: 5) {
-                            modelBadges(for: profile)
-                        }
-
-                        if viewModel.isModelProfileSelected(profile) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(viewModel.activeModelProfile.name)
-                    .font(.system(size: 13))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10))
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-        }
-        .menuStyle(.borderlessButton)
-        .onAppear {
-            downloadManager.refreshStatuses()
-        }
-        .fixedSize()
-    }
-
-    @ViewBuilder
-    private func modelBadges(for profile: ModelCapabilityProfile) -> some View {
-        let fit = profile.fit()
-        Label(fit.shortTitle, systemImage: fit.systemImage)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(fit.tint)
-            .labelStyle(.titleAndIcon)
-
-        switch downloadManager.state(for: profile.downloadableModel) {
-        case .downloaded:
-            Label("Ready", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.green)
-                .labelStyle(.titleAndIcon)
-        case .downloading:
-            Label("Loading", systemImage: "arrow.down.circle.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .labelStyle(.titleAndIcon)
-        case .paused:
-            Label("Paused", systemImage: "pause.circle.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.orange)
-                .labelStyle(.titleAndIcon)
-        case .failed(let message):
-            let failedState = ModelDownloadManager.DownloadState.failed(message)
-            Label(failedState.failureBadgeTitle, systemImage: failedState.failureBadgeIcon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(failedState.failureBadgeTint)
-                .labelStyle(.titleAndIcon)
-        case .notDownloaded:
-            Label("Missing", systemImage: "arrow.down.circle")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .labelStyle(.titleAndIcon)
-        }
-    }
-}
-
-private struct ModelParameterButton: View {
-    @ObservedObject var viewModel: ChatViewModel
-    @State private var isPresented = false
-
-    var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 30, height: 30)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Model settings")
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            ModelParameterPopover(viewModel: viewModel)
-                .frame(width: 320)
-        }
-    }
-}
-
 private struct ModelParameterPopover: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var showAdvanced = false
+    private let explicitProfile: ModelCapabilityProfile?
+
+    init(viewModel: ChatViewModel, profile: ModelCapabilityProfile? = nil) {
+        self.viewModel = viewModel
+        self.explicitProfile = profile
+    }
 
     private var profile: ModelCapabilityProfile {
-        viewModel.activeModelProfile
+        explicitProfile ?? viewModel.activeModelProfile
     }
 
     private var basicParameters: [ModelParameterDefinition] {
@@ -1074,9 +1223,10 @@ private struct ModelParameterPopover: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(profile.name)
                         .font(.system(size: 14, weight: .semibold))
-                    Text(profile.fit().title)
+                    Text(profile.subtitle)
                         .font(.caption)
-                        .foregroundStyle(profile.fit().tint)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
                 Spacer()
@@ -1140,7 +1290,7 @@ private struct ModelParameterPopover: View {
             }
         }
         .padding(14)
-        .background(Color(NSColor.controlBackgroundColor))
+        .designPanelSurface(cornerRadius: MLXHubDesignSystem.Radius.card)
     }
 }
 
@@ -1212,17 +1362,6 @@ private struct ParameterControl: View {
     }
 }
 
-private extension ModelFit {
-    var tint: Color {
-        switch self {
-        case .recommended: return .green
-        case .compatible: return .accentColor
-        case .heavy: return .orange
-        case .unknown: return .secondary
-        }
-    }
-}
-
 struct ImageThumbnailView: View {
     let imageURL: URL
     let filename: String
@@ -1263,31 +1402,42 @@ struct ImageThumbnailView: View {
 
 struct MultilineTextInput: NSViewRepresentable {
     @Binding var text: String
+    var placeholder: String
     @Binding var isFocused: Bool
     var isEditable: Bool = true
     var onPasteImages: () -> Bool = { false }
-    var onSubmit: () -> Void
+    var submitsOnReturn: Bool = true
+    var accessibilityIdentifier: String = "composer.input"
+    var accessibilityLabel: String = "Composer input"
+    var onSubmit: () -> Void = {}
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
-        scrollView.setAccessibilityIdentifier("composer.input")
+        scrollView.setAccessibilityIdentifier(accessibilityIdentifier)
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.scrollerStyle = .overlay
+        scrollView.drawsBackground = false
+        scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
 
-        let textView = NSTextView()
-        textView.setAccessibilityIdentifier("composer.input")
-        textView.setAccessibilityLabel("Composer input")
+        let textView = ComposerTextView()
+        textView.setAccessibilityIdentifier(accessibilityIdentifier)
+        textView.setAccessibilityLabel(accessibilityLabel)
         textView.delegate = context.coordinator
-        textView.font = NSFont.systemFont(ofSize: 16)
+        textView.font = MLXHubDesignSystem.Typography.nativeComposerInputFont()
+        textView.placeholder = placeholder
         textView.isRichText = false
         textView.isSelectable = true
         textView.isEditable = isEditable
         textView.backgroundColor = NSColor.clear
+        textView.drawsBackground = false
         textView.textColor = NSColor.labelColor
         textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainerInset = NSSize(width: 0, height: 6)
+        textView.textContainerInset = NSSize(
+            width: 0,
+            height: MLXHubDesignSystem.Layout.composerTextContainerInset
+        )
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -1302,17 +1452,23 @@ struct MultilineTextInput: NSViewRepresentable {
         context.coordinator.parent = self
 
         guard let textView = nsView.documentView as? NSTextView else { return }
+        if let composerTextView = textView as? ComposerTextView {
+            composerTextView.placeholder = placeholder
+        }
         if textView.string != text {
             textView.string = text
+            textView.needsDisplay = true
         }
         textView.isEditable = isEditable
         textView.textColor = isEditable ? NSColor.labelColor : NSColor.secondaryLabelColor
+        textView.font = MLXHubDesignSystem.Typography.nativeComposerInputFont()
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
+    @MainActor
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MultilineTextInput
         var textView: NSTextView?
@@ -1323,7 +1479,7 @@ struct MultilineTextInput: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
+            syncText(from: textView)
         }
 
         func textDidBeginEditing(_ notification: Notification) {
@@ -1331,6 +1487,9 @@ struct MultilineTextInput: NSViewRepresentable {
         }
 
         func textDidEndEditing(_ notification: Notification) {
+            if let textView = notification.object as? NSTextView {
+                syncText(from: textView)
+            }
             parent.isFocused = false
         }
 
@@ -1343,16 +1502,56 @@ struct MultilineTextInput: NSViewRepresentable {
 
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 let event = NSApp.currentEvent
-                if event?.modifierFlags.contains(.shift) == true {
+                if !parent.submitsOnReturn || event?.modifierFlags.contains(.shift) == true {
                     textView.insertNewline(nil)
                     return true
                 } else {
+                    syncText(from: textView)
                     parent.onSubmit()
                     return true
                 }
             }
             return false
         }
+
+        private func syncText(from textView: NSTextView) {
+            if parent.text != textView.string {
+                parent.text = textView.string
+            }
+            textView.needsDisplay = true
+        }
+    }
+}
+
+private final class ComposerTextView: NSTextView {
+    var placeholder: String = "" {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard string.isEmpty, !placeholder.isEmpty else { return }
+        let placeholderFont = font ?? MLXHubDesignSystem.Typography.nativeComposerInputFont()
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byTruncatingTail
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: placeholderFont,
+            .foregroundColor: NSColor.placeholderTextColor,
+            .paragraphStyle: paragraphStyle
+        ]
+        let origin = textContainerOrigin
+        let caretGap = MLXHubDesignSystem.Layout.composerPlaceholderCaretGap
+        let rect = NSRect(
+            x: origin.x + caretGap,
+            y: origin.y,
+            width: max(bounds.width - origin.x - caretGap, 0),
+            height: ceil(placeholderFont.ascender - placeholderFont.descender + placeholderFont.leading) + 2
+        )
+        placeholder.draw(in: rect, withAttributes: attributes)
     }
 }
 

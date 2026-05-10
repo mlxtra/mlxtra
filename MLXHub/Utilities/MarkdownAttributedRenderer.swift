@@ -3,7 +3,7 @@ import AppKit
 
 // MARK: - Render style
 
-struct MarkdownRenderStyle {
+struct MarkdownRenderStyle: @unchecked Sendable {
     let fontSize: CGFloat
     let textColor: NSColor
     let codeFont: NSFont

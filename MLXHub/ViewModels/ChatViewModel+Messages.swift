@@ -37,6 +37,9 @@ extension ChatViewModel {
             switch update {
             case .progress(let message):
                 self.loadingMessage = message
+            case .modelLoadProgress(let progress):
+                self.modelLoadProgress = progress
+                self.loadingMessage = progress.detail ?? progress.phase.displayTitle
             case .generatedAsset(let url, let kind):
                 if let messageId = self.streamingMessageId {
                     self.attachGeneratedAsset(url, kind: kind, toMessage: messageId)
@@ -304,17 +307,31 @@ extension ChatViewModel {
 
 extension ChatViewModel: VLMExecutionDelegate {
     func modelLoadingStarted(modelId: String) {
-        // Already handled in generateResponse
+        if modelLoadProgress == nil {
+            modelLoadProgress = ModelLoadProgress(
+                modelId: modelId,
+                backend: activeModelProfile.backend,
+                phase: .preparing,
+                detail: "Preparing \(activeModelProfile.name)"
+            )
+        }
+    }
+
+    func modelLoadingProgress(_ progress: ModelLoadProgress) {
+        modelLoadProgress = progress
+        loadingMessage = progress.detail ?? progress.phase.displayTitle
     }
 
     func modelLoadingCompleted(modelId: String) {
         isModelLoading = false
         loadingMessage = ""
+        modelLoadProgress = nil
     }
 
     func modelLoadingFailed(modelId: String, error: Error) {
         isModelLoading = false
         loadingMessage = ""
+        modelLoadProgress = nil
         // Note: handleGenerationError is called by the main task catch block
     }
 

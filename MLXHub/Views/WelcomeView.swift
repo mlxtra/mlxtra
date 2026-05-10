@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct WelcomeView: View {
@@ -16,7 +17,6 @@ struct WelcomeView: View {
         "Ready when you are",
         "What's on your mind?",
         "What would you like to create?",
-        "Let's build something amazing",
         "Ask me anything"
     ]
 
@@ -27,64 +27,64 @@ struct WelcomeView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
+        ZStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 16) {
+                Spacer(minLength: 0)
 
-            greeting
+                greeting
 
-            WelcomePromptChips { item in
-                viewModel.selectTool(item.tool)
-                if !item.prompt.isEmpty {
-                    viewModel.inputText = item.prompt
-                }
-            }
-            .frame(maxWidth: 720)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 16)
-
-            if !hasSeenFirstRunGuide {
-                FirstRunGuideView(
-                    modelName: viewModel.activeModelProfile.name,
-                    onOpenModels: {
-                        pendingDownloadModelId = viewModel.activeModelProfile.modelId
-                        openSettings()
-                    },
-                    onDeepResearch: {
-                        viewModel.selectTool(.research)
-                        hasSeenFirstRunGuide = true
-                    },
-                    onDismiss: {
-                        hasSeenFirstRunGuide = true
+                WelcomePromptChips { item in
+                    viewModel.selectTool(item.tool)
+                    if !item.prompt.isEmpty {
+                        viewModel.inputText = item.prompt
                     }
-                )
-                .frame(maxWidth: 720)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
+                }
+                .frame(maxWidth: MLXHubDesignSystem.Layout.messageMaxWidth)
+
+                if !hasSeenFirstRunGuide {
+                    FirstRunGuideView(
+                        modelName: viewModel.activeModelProfile.name,
+                        onOpenModels: {
+                            pendingDownloadModelId = viewModel.activeModelProfile.modelId
+                            openSettings()
+                        },
+                        onDeepResearch: {
+                            viewModel.selectTool(.research)
+                            hasSeenFirstRunGuide = true
+                        },
+                        onDismiss: {
+                            hasSeenFirstRunGuide = true
+                        }
+                    )
+                    .frame(maxWidth: MLXHubDesignSystem.Layout.messageMaxWidth)
+                }
+
+                Spacer(minLength: 126)
             }
+            .frame(maxWidth: MLXHubDesignSystem.Layout.messageMaxWidth, maxHeight: .infinity, alignment: .leading)
+            .padding(.horizontal, MLXHubDesignSystem.Layout.chatHorizontalPadding)
 
             ComposerView(viewModel: viewModel)
-                .frame(maxWidth: 720)
-                .padding(.horizontal, 24)
-
-            Spacer()
+                .frame(maxWidth: MLXHubDesignSystem.Layout.composerMaxWidth)
+                .padding(.horizontal, MLXHubDesignSystem.Layout.chatHorizontalPadding)
+                .padding(.bottom, MLXHubDesignSystem.Layout.floatingAccessoryBottomPadding)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(MLXHubDesignSystem.Palette.windowBackground)
     }
 
     private var greeting: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Hi \(userName)")
-                .font(.system(size: 42, weight: .regular))
+                .font(MLXHubDesignSystem.Typography.welcomeDisplay)
                 .foregroundStyle(.primary)
 
             Text(welcomeMessage)
-                .font(.system(size: 42, weight: .regular))
+                .font(MLXHubDesignSystem.Typography.welcomeSecondary)
                 .foregroundStyle(.tertiary)
         }
-        .frame(maxWidth: 720, alignment: .leading)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 48)
+        .frame(maxWidth: MLXHubDesignSystem.Layout.messageMaxWidth, alignment: .leading)
+        .padding(.bottom, MLXHubDesignSystem.Spacing.loose - MLXHubDesignSystem.Spacing.xs)
         .onAppear {
             chooseWelcomeMessage()
         }
@@ -162,35 +162,101 @@ private struct WelcomePromptChips: View {
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
             ForEach(items) { item in
-                Button {
+                WelcomePromptChip(item: item) {
                     onSelect(item)
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: item.icon)
-                            .font(.system(size: 13, weight: .semibold))
-                            .frame(width: 18, height: 18)
-
-                        Text(item.title)
-                            .font(.system(size: 13, weight: .medium))
-                            .lineLimit(1)
-
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 11)
-                    .frame(height: 36)
-                    .background(.thinMaterial.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    }
                 }
-                .buttonStyle(.plain)
-                .help(item.title)
-                .accessibilityIdentifier("welcome.tool.\(item.tool.id)")
             }
         }
+    }
+}
+
+private struct WelcomePromptChip: View {
+    let item: WelcomePromptItem
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: MLXHubDesignSystem.Spacing.md) {
+                Image(systemName: item.icon)
+                    .font(.system(size: MLXHubDesignSystem.Icon.medium, weight: .semibold))
+                    .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+                    .frame(
+                        width: MLXHubDesignSystem.Icon.large + MLXHubDesignSystem.Spacing.xxs,
+                        height: MLXHubDesignSystem.Icon.large + MLXHubDesignSystem.Spacing.xxs
+                    )
+
+                Text(item.title)
+                    .font(MLXHubDesignSystem.Typography.compactBodySemibold)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, MLXHubDesignSystem.Spacing.xl)
+            .frame(height: 38)
+            .contentShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
+        }
+        .buttonStyle(WelcomePromptChipButtonStyle(isHovered: isHovered))
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.controlDuration)) {
+                isHovered = hovering
+            }
+        }
+        .help(item.title)
+        .accessibilityLabel(item.title)
+        .accessibilityHint("Starts \(item.title)")
+        .accessibilityIdentifier("welcome.tool.\(item.tool.id)")
+    }
+}
+
+private struct WelcomePromptChipButtonStyle: ButtonStyle {
+    let isHovered: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous)
+        let isActive = isHovered || configuration.isPressed
+
+        configuration.label
+            .background(chipFill(isPressed: configuration.isPressed), in: shape)
+            .overlay {
+                shape.stroke(chipStroke(isActive: isActive), lineWidth: 1)
+            }
+            .shadow(
+                color: Color.black.opacity(isHovered ? 0.055 : 0),
+                radius: isHovered ? 7 : 0,
+                x: 0,
+                y: isHovered ? 2 : 0
+            )
+            .scaleEffect(configuration.isPressed ? 0.985 : (isHovered ? 1.01 : 1))
+            .animation(.easeInOut(duration: MLXHubDesignSystem.Motion.controlDuration), value: isHovered)
+            .animation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration), value: configuration.isPressed)
+    }
+
+    private func chipFill(isPressed: Bool) -> Color {
+        if isPressed {
+            return Color.accentColor.opacity(colorScheme == .dark ? 0.18 : 0.12)
+        }
+
+        if isHovered {
+            return Color.accentColor.opacity(colorScheme == .dark ? 0.14 : 0.08)
+        }
+
+        return colorScheme == .dark
+            ? Color.white.opacity(0.075)
+            : Color(NSColor.controlBackgroundColor).opacity(0.86)
+    }
+
+    private func chipStroke(isActive: Bool) -> Color {
+        if isActive {
+            return Color.accentColor.opacity(colorScheme == .dark ? 0.34 : 0.28)
+        }
+
+        return colorScheme == .dark
+            ? Color.white.opacity(0.14)
+            : MLXHubDesignSystem.Surface.hairline
     }
 }
 
@@ -206,14 +272,13 @@ private struct FirstRunGuideView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 30, height: 30)
-                .background(Color.accentColor.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .designTintSurface(Color.accentColor, cornerRadius: MLXHubDesignSystem.Radius.control)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Start with \(modelName)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(MLXHubDesignSystem.Typography.compactBodySemibold)
                 Text("Download once, then chat locally. Research uses live web results when selected.")
-                    .font(.system(size: 12))
+                    .font(MLXHubDesignSystem.Typography.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -244,12 +309,7 @@ private struct FirstRunGuideView: View {
             .help("Dismiss")
         }
         .padding(12)
-        .background(.thinMaterial.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
+        .designPanelSurface(cornerRadius: MLXHubDesignSystem.Radius.card)
     }
 }
 

@@ -1,5 +1,223 @@
 import Foundation
 import Combine
+import CryptoKit
+
+struct RuntimeManifest: Codable, Equatable {
+    let runtimeVersion: String
+    let compatibilityApi: Int
+    let platform: String
+    let arch: String
+    let channel: String?
+    let pythonVersion: String?
+    let pythonPath: String?
+    let executables: [String: String]?
+    let packages: [String]
+    let isolatedPackages: [String]
+    let supportedModels: [String]?
+    let supportedBackends: [RuntimeBackend]
+    let capabilities: [String]
+
+    init(
+        runtimeVersion: String,
+        compatibilityApi: Int,
+        platform: String = "macos",
+        arch: String = "arm64",
+        channel: String? = "stable",
+        pythonVersion: String? = nil,
+        pythonPath: String? = nil,
+        executables: [String: String]? = nil,
+        packages: [String] = [],
+        isolatedPackages: [String] = [],
+        supportedModels: [String]? = nil,
+        supportedBackends: [RuntimeBackend] = [],
+        capabilities: [String] = []
+    ) {
+        self.runtimeVersion = runtimeVersion
+        self.compatibilityApi = compatibilityApi
+        self.platform = platform
+        self.arch = arch
+        self.channel = channel
+        self.pythonVersion = pythonVersion
+        self.pythonPath = pythonPath
+        self.executables = executables
+        self.packages = packages
+        self.isolatedPackages = isolatedPackages
+        self.supportedModels = supportedModels
+        self.supportedBackends = supportedBackends
+        self.capabilities = capabilities
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case runtimeVersion
+        case compatibilityApi
+        case platform
+        case arch
+        case channel
+        case pythonVersion
+        case pythonPath
+        case executables
+        case packages
+        case isolatedPackages
+        case supportedModels
+        case supportedBackends
+        case capabilities
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        runtimeVersion = try container.decode(String.self, forKey: .runtimeVersion)
+        compatibilityApi = try container.decode(Int.self, forKey: .compatibilityApi)
+        platform = try container.decodeIfPresent(String.self, forKey: .platform) ?? "macos"
+        arch = try container.decodeIfPresent(String.self, forKey: .arch) ?? "arm64"
+        channel = try container.decodeIfPresent(String.self, forKey: .channel)
+        pythonVersion = try container.decodeIfPresent(String.self, forKey: .pythonVersion)
+        pythonPath = try container.decodeIfPresent(String.self, forKey: .pythonPath)
+        executables = try container.decodeIfPresent([String: String].self, forKey: .executables)
+        packages = try container.decodeIfPresent([String].self, forKey: .packages) ?? []
+        isolatedPackages = try container.decodeIfPresent([String].self, forKey: .isolatedPackages) ?? []
+        supportedModels = try container.decodeIfPresent([String].self, forKey: .supportedModels)
+        supportedBackends = try container.decodeIfPresent([RuntimeBackend].self, forKey: .supportedBackends) ?? []
+        capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+    }
+
+    func supports(backend: RuntimeBackend) -> Bool {
+        if supportedBackends.isEmpty {
+            return true
+        }
+        return supportedBackends.contains(backend)
+    }
+
+    func supports(profile: ModelCapabilityProfile) -> Bool {
+        profile.runtime.isSatisfied(by: self)
+            && supports(backend: profile.backend)
+            && (supportedModels?.contains(profile.modelId) ?? true)
+    }
+}
+
+enum SHA256Checksum {
+    static func hexDigest(for data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func hexDigest(for url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        return hexDigest(for: data)
+    }
+}
+
+@MainActor
+final class RuntimeUpdateManager: ObservableObject {
+    static let shared = RuntimeUpdateManager()
+
+    enum InstallState: Equatable {
+        case idle
+        case checking
+        case available(RuntimeReleaseAsset)
+        case installing(Double?)
+        case installed(String)
+        case failed(String)
+    }
+
+    @Published private(set) var state: InstallState = .idle
+    @Published private(set) var channel: ReleaseChannelManifest?
+
+    var availableRuntime: RuntimeReleaseAsset? {
+        if case .available(let asset) = state {
+            return asset
+        }
+        return nil
+    }
+
+    func refreshStableChannel(
+        channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
+        reportFailures: Bool = true
+    ) async {
+        state = .checking
+        do {
+            let (data, response) = try await URLSession.shared.data(from: channelURL)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200...299).contains(httpResponse.statusCode) {
+                throw RuntimeUpdateError.channelUnavailable
+            }
+
+            let manifest = try JSONDecoder().decode(ReleaseChannelManifest.self, from: data)
+            channel = manifest
+
+            if let asset = bestRuntimeAsset(in: manifest) {
+                state = .available(asset)
+            } else {
+                state = .idle
+            }
+        } catch {
+            state = reportFailures ? .failed(error.localizedDescription) : .idle
+        }
+    }
+
+    func installRuntime(_ asset: RuntimeReleaseAsset) async {
+        state = .installing(nil)
+        do {
+            let archiveURL = try await fetchRuntimeArchive(asset)
+            let actualChecksum = try SHA256Checksum.hexDigest(for: archiveURL)
+            guard actualChecksum.caseInsensitiveCompare(asset.sha256) == .orderedSame else {
+                throw RuntimeUpdateError.checksumMismatch
+            }
+
+            let installedURL = try RuntimeManager.installRuntimeArchive(archiveURL)
+            guard let manifest = RuntimeManager.runtimeManifest(at: installedURL) else {
+                throw RuntimeUpdateError.invalidRuntime
+            }
+            state = .installed(manifest.runtimeVersion)
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    private func bestRuntimeAsset(in manifest: ReleaseChannelManifest) -> RuntimeReleaseAsset? {
+        let current = RuntimeManager.activeRuntimeManifest()
+        return manifest.runtimes
+            .filter { $0.platform == "macos" && $0.arch == "arm64" }
+            .filter { asset in
+                guard let current else { return true }
+                guard asset.compatibilityApi == current.compatibilityApi else { return false }
+                return VersionComparator.compare(asset.version, current.runtimeVersion) == .orderedDescending
+            }
+            .sorted { VersionComparator.compare($0.version, $1.version) == .orderedDescending }
+            .first
+    }
+
+    private func fetchRuntimeArchive(_ asset: RuntimeReleaseAsset) async throws -> URL {
+        if asset.url.isFileURL {
+            return asset.url
+        }
+
+        let (downloadURL, _) = try await URLSession.shared.download(from: asset.url)
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MLXHub-runtime-\(UUID().uuidString)")
+            .appendingPathExtension(asset.url.pathExtension.isEmpty ? "zip" : asset.url.pathExtension)
+        try FileManager.default.moveItem(at: downloadURL, to: destination)
+        return destination
+    }
+}
+
+enum RuntimeUpdateError: LocalizedError {
+    case channelUnavailable
+    case checksumMismatch
+    case invalidRuntime
+    case unsupportedArchive
+
+    var errorDescription: String? {
+        switch self {
+        case .channelUnavailable:
+            return "No runtime update channel is available yet"
+        case .checksumMismatch:
+            return "Runtime archive checksum did not match"
+        case .invalidRuntime:
+            return "Downloaded runtime did not pass validation"
+        case .unsupportedArchive:
+            return "Runtime archive format is not supported"
+        }
+    }
+}
 
 /// Manages Python runtime lifecycle and bundle
 @MainActor
@@ -28,36 +246,174 @@ class RuntimeManager: ObservableObject {
     }
     
     private var runtimeBundleURL: URL {
-        // Try multiple locations for the runtime bundle
-        let possiblePaths = [
-            // Bundled app path
-            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/runtime/macos-arm64"),
-            // Xcode build path (development)
-            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Resources/runtime/macos-arm64"),
-            // Project root path
-            Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/runtime/macos-arm64"),
-        ]
-
-        for path in possiblePaths {
-            if FileManager.default.fileExists(atPath: path.path) {
-                print("[RuntimeManager] Found runtime bundle at: \(path.path)")
-                return path
-            }
-        }
-
-        // Return default path even if not found (error will be thrown later)
-        print("[RuntimeManager] Runtime bundle not found in expected locations, using default")
-        return possiblePaths[0]
+        Self.activeRuntimeBundleURL()
     }
     
     private var appSupportURL: URL {
-        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
-        return baseURL.appendingPathComponent("MLXHub")
+        Self.appSupportURL()
     }
 
     var checkpointsPath: URL {
         appSupportURL.appendingPathComponent("checkpoints")
+    }
+
+    nonisolated static func appSupportURL(fileManager: FileManager = .default) -> URL {
+        let baseURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser
+        return baseURL.appendingPathComponent("MLXHub")
+    }
+
+    nonisolated static func installedRuntimeURL(fileManager: FileManager = .default) -> URL {
+        appSupportURL(fileManager: fileManager)
+            .appendingPathComponent("runtimes")
+            .appendingPathComponent("macos-arm64")
+            .appendingPathComponent("current")
+    }
+
+    nonisolated static func bundledRuntimeCandidates(bundle: Bundle = .main) -> [URL] {
+        [
+            bundle.bundleURL.appendingPathComponent("Contents/Resources/runtime/macos-arm64"),
+            bundle.bundleURL.deletingLastPathComponent().appendingPathComponent("Resources/runtime/macos-arm64"),
+            bundle.bundleURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/runtime/macos-arm64"),
+        ]
+    }
+
+    nonisolated static func activeRuntimeBundleURL(
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let installed = installedRuntimeURL(fileManager: fileManager)
+        return preferredRuntimeBundleURL(
+            installed: installed,
+            bundledCandidates: bundledRuntimeCandidates(bundle: bundle),
+            fileManager: fileManager
+        )
+    }
+
+    nonisolated static func preferredRuntimeBundleURL(
+        installed: URL,
+        bundledCandidates candidates: [URL],
+        fileManager: FileManager = .default
+    ) -> URL {
+        if isRuntimeBundleStructurallyValid(installed, fileManager: fileManager) {
+            print("[RuntimeManager] Using installed runtime bundle at: \(installed.path)")
+            return installed
+        }
+
+        for path in candidates where fileManager.fileExists(atPath: path.path) {
+            print("[RuntimeManager] Found bundled runtime bundle at: \(path.path)")
+            return path
+        }
+
+        print("[RuntimeManager] Runtime bundle not found in expected locations, using default")
+        return candidates[0]
+    }
+
+    nonisolated static func activeRuntimeManifest() -> RuntimeManifest? {
+        runtimeManifest(at: activeRuntimeBundleURL())
+    }
+
+    nonisolated static func runtimeManifest(at runtimeURL: URL) -> RuntimeManifest? {
+        let manifestURL = runtimeURL.appendingPathComponent("runtime-manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL) else { return nil }
+        return try? JSONDecoder().decode(RuntimeManifest.self, from: data)
+    }
+
+    nonisolated static func isRuntimeBundleStructurallyValid(
+        _ runtimeURL: URL,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: runtimeURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              runtimeManifest(at: runtimeURL) != nil else {
+            return false
+        }
+
+        let requiredFiles = [
+            "venv/bin/python",
+            "python/Frameworks/Versions/3.12",
+            "hf_download_helper.py",
+            "acestep_download_helper.py",
+            "runtime-manifest.json",
+        ]
+        return requiredFiles.allSatisfy { relativePath in
+            fileManager.fileExists(atPath: runtimeURL.appendingPathComponent(relativePath).path)
+        }
+    }
+
+    nonisolated static func installRuntimeArchive(
+        _ archiveURL: URL,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        let installRoot = installedRuntimeURL(fileManager: fileManager).deletingLastPathComponent()
+        let stagingURL = installRoot.appendingPathComponent("staging-\(UUID().uuidString)")
+        let extractedURL = stagingURL.appendingPathComponent("extract")
+        try fileManager.createDirectory(at: extractedURL, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: stagingURL) }
+
+        if archiveURL.hasDirectoryPath {
+            try fileManager.copyItem(at: archiveURL, to: extractedURL.appendingPathComponent(archiveURL.lastPathComponent))
+        } else if archiveURL.pathExtension.lowercased() == "zip" {
+            try extractZipArchive(archiveURL, to: extractedURL)
+        } else {
+            throw RuntimeUpdateError.unsupportedArchive
+        }
+
+        let runtimeRoot = try normalizedRuntimeRoot(in: extractedURL, fileManager: fileManager)
+        guard isRuntimeBundleStructurallyValid(runtimeRoot, fileManager: fileManager) else {
+            throw RuntimeUpdateError.invalidRuntime
+        }
+
+        let currentURL = installedRuntimeURL(fileManager: fileManager)
+        let nextURL = installRoot.appendingPathComponent("next-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: installRoot, withIntermediateDirectories: true)
+        try fileManager.moveItem(at: runtimeRoot, to: nextURL)
+
+        let previousURL = installRoot.appendingPathComponent("previous-\(UUID().uuidString)")
+        if fileManager.fileExists(atPath: currentURL.path) {
+            try fileManager.moveItem(at: currentURL, to: previousURL)
+        }
+        do {
+            try fileManager.moveItem(at: nextURL, to: currentURL)
+            try? fileManager.removeItem(at: previousURL)
+        } catch {
+            if fileManager.fileExists(atPath: previousURL.path) {
+                try? fileManager.moveItem(at: previousURL, to: currentURL)
+            }
+            throw error
+        }
+        return currentURL
+    }
+
+    private nonisolated static func extractZipArchive(_ archiveURL: URL, to destinationURL: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", archiveURL.path, destinationURL.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw RuntimeUpdateError.unsupportedArchive
+        }
+    }
+
+    private nonisolated static func normalizedRuntimeRoot(
+        in extractedURL: URL,
+        fileManager: FileManager
+    ) throws -> URL {
+        if isRuntimeBundleStructurallyValid(extractedURL, fileManager: fileManager) {
+            return extractedURL
+        }
+
+        let children = try fileManager.contentsOfDirectory(
+            at: extractedURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+        for child in children where isRuntimeBundleStructurallyValid(child, fileManager: fileManager) {
+            return child
+        }
+        throw RuntimeUpdateError.invalidRuntime
     }
     
     /// Initialize the Python runtime
@@ -121,8 +477,27 @@ class RuntimeManager: ObservableObject {
     /// Validate only the runtime pieces needed to download this model.
     /// Downloading should not require unrelated model runtimes to be present.
     func validateDownloadSupport(for modelId: String) throws {
+        try validateDownloadSupport(
+            for: DownloadableModel(
+                id: modelId,
+                name: modelId,
+                subtitle: "",
+                modelId: modelId,
+                modality: .vision,
+                downloadSizeGB: 0
+            )
+        )
+    }
+
+    /// Validate only the runtime pieces needed to download this model.
+    /// Downloading should not require unrelated model runtimes to be present.
+    func validateDownloadSupport(for model: DownloadableModel) throws {
         let bundlePath = runtimeBundleURL
         try validateRequiredDirectory(bundlePath, error: .bundleNotFound(bundlePath.path))
+
+        guard model.isRuntimeCompatible else {
+            throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
+        }
 
         let pythonHome = pythonHomePath()
         try validateRequiredDirectory(
@@ -130,7 +505,7 @@ class RuntimeManager: ObservableObject {
             error: .runtimeComponentNotFound("Bundled Python home", pythonHome.path)
         )
 
-        if modelId.hasPrefix("ACE-Step/") {
+        if model.source.usesComponentBundle {
             let aceStepPython = acestepPythonExecutablePath()
             try validateRequiredFile(
                 aceStepPython,
@@ -284,9 +659,16 @@ class RuntimeManager: ObservableObject {
         Self.modelCachePath(modelId: modelId)
     }
 
-    nonisolated static func modelCachePath(modelId: String) -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+    nonisolated static func huggingFaceCacheRoot(fileManager: FileManager = .default) -> URL {
+        fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/huggingface/hub")
+    }
+
+    nonisolated static func modelCachePath(
+        modelId: String,
+        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
+    ) -> URL {
+        huggingFaceCacheRoot
             .appendingPathComponent("models--" + modelId.replacingOccurrences(of: "/", with: "--"))
     }
 
@@ -297,6 +679,14 @@ class RuntimeManager: ObservableObject {
             return checkpointsPath
         }
         return modelCachePath(modelId: modelId)
+    }
+
+    /// Get the expected local storage path for a catalog-backed model.
+    func modelStoragePath(for model: DownloadableModel) -> URL {
+        if model.source.usesComponentBundle {
+            return checkpointsPath
+        }
+        return modelCachePath(modelId: model.source.downloadRepository ?? model.modelId)
     }
 
     /// Check if model is already downloaded (HF cache)
@@ -345,6 +735,20 @@ class RuntimeManager: ObservableObject {
         return .incomplete("Local Hugging Face cache is incomplete. Repair will verify the snapshot and redownload missing files.")
     }
 
+    nonisolated static func modelStorageStatus(model: DownloadableModel, checkpointsPath: URL) -> ModelStorageStatus {
+        if model.source.usesComponentBundle {
+            return componentBundleStorageStatus(
+                checkpointsPath: checkpointsPath,
+                components: model.source.components
+            )
+        }
+
+        return modelStorageStatus(
+            modelId: model.source.downloadRepository ?? model.modelId,
+            checkpointsPath: checkpointsPath
+        )
+    }
+
     /// ACE-Step models download to component subdirectories under checkpoints/
     /// Check if all main model components exist and contain actual weight files
     private nonisolated static func isAceStepModelDownloaded(checkpointsPath: URL) -> Bool {
@@ -353,13 +757,23 @@ class RuntimeManager: ObservableObject {
 
     private nonisolated static func aceStepModelStorageStatus(checkpointsPath: URL) -> ModelStorageStatus {
         let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+        return componentBundleStorageStatus(checkpointsPath: checkpointsPath, components: aceStepComponents)
+    }
+
+    private nonisolated static func componentBundleStorageStatus(
+        checkpointsPath: URL,
+        components: [String]
+    ) -> ModelStorageStatus {
+        let requiredComponents = components.isEmpty
+            ? ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+            : components
         let checkpointsDir = checkpointsPath
         var foundAnyComponent = false
         var incompleteComponents: [String] = []
 
         print("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
 
-        for component in aceStepComponents {
+        for component in requiredComponents {
             let componentPath = checkpointsDir.appendingPathComponent(component)
             if !FileManager.default.fileExists(atPath: componentPath.path) {
                 print("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
@@ -628,6 +1042,7 @@ enum RuntimeError: LocalizedError {
     case bridgeScriptNotFound(String)
     case runtimeComponentNotFound(String, String)
     case pythonValidationFailed(String, String)
+    case runtimeUpdateRequired(String, String)
     case initializationFailed(String)
     
     var errorDescription: String? {
@@ -642,6 +1057,8 @@ enum RuntimeError: LocalizedError {
             return "\(component) not found at \(path). Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
         case .pythonValidationFailed(let context, let details):
             return "\(context) is incomplete or broken. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh. \(details)"
+        case .runtimeUpdateRequired(let modelName, let version):
+            return "\(modelName) requires MLXHub runtime \(version) or newer. Install the runtime update in Models settings."
         case .initializationFailed(let message):
             return "Failed to initialize runtime: \(message)"
         }

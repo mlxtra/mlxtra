@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import MLXHub
 
@@ -140,7 +141,7 @@ final class ModelDownloadManagerTests: XCTestCase {
 
     @MainActor
     func testDownloadProgressDoesNotMoveBackward() {
-        let manager = ModelDownloadManager()
+        let manager = ModelDownloadManager(refreshStatusesOnInit: false)
         let modelId = "test-model"
 
         manager.handleDownloadEventLine(
@@ -158,7 +159,7 @@ final class ModelDownloadManagerTests: XCTestCase {
 
     @MainActor
     func testDownloadCancelClearsPausedOrPartialProgress() {
-        let manager = ModelDownloadManager()
+        let manager = ModelDownloadManager(refreshStatusesOnInit: false)
         let model = DownloadableModel(
             id: "test-download",
             name: "Test Download",
@@ -175,6 +176,61 @@ final class ModelDownloadManagerTests: XCTestCase {
         manager.cancel(model)
 
         XCTAssertEqual(manager.state(for: model), .notDownloaded)
+    }
+
+    @MainActor
+    func testCancelTerminatesRunningDownloadProcessAndCleansTracking() async throws {
+        let manager = ModelDownloadManager(refreshStatusesOnInit: false)
+        let model = makeLifecycleTestModel(id: "test-cancel-running-process")
+        let process = try startLongRunningProcess(ignoresTermination: true)
+        defer { terminateIfNeeded(process) }
+        let originalKillDelay = ModelDownloadManager.terminationKillFallbackDelay
+        let originalCleanupDelay = ModelDownloadManager.terminationCleanupDelay
+        ModelDownloadManager.terminationKillFallbackDelay = 0.1
+        ModelDownloadManager.terminationCleanupDelay = 0.15
+        defer {
+            ModelDownloadManager.terminationKillFallbackDelay = originalKillDelay
+            ModelDownloadManager.terminationCleanupDelay = originalCleanupDelay
+        }
+
+        manager.installTestDownloadProcess(process, for: model)
+        manager.cancel(model)
+
+        XCTAssertEqual(manager.state(for: model), .notDownloaded)
+        await waitUntil { !process.isRunning }
+        await waitUntil { !manager.hasTrackedProcess(for: model) }
+        await waitUntil { !manager.hasTrackedTask(for: model) }
+    }
+
+    @MainActor
+    func testPauseTerminatesRunningDownloadProcessAndKeepsPausedState() async throws {
+        let manager = ModelDownloadManager(refreshStatusesOnInit: false)
+        let model = makeLifecycleTestModel(id: "test-pause-running-process")
+        let process = try startLongRunningProcess()
+        defer { terminateIfNeeded(process) }
+        let originalKillDelay = ModelDownloadManager.terminationKillFallbackDelay
+        let originalCleanupDelay = ModelDownloadManager.terminationCleanupDelay
+        ModelDownloadManager.terminationKillFallbackDelay = 0.1
+        ModelDownloadManager.terminationCleanupDelay = 0.15
+        defer {
+            ModelDownloadManager.terminationKillFallbackDelay = originalKillDelay
+            ModelDownloadManager.terminationCleanupDelay = originalCleanupDelay
+        }
+
+        manager.installTestDownloadProcess(process, for: model)
+        manager.handleDownloadEventLine(
+            #"{"type":"download.progress","status":"Downloading","progress_kind":"activity","percent":35,"percent_reliable":true}"#,
+            modelId: model.id
+        )
+        manager.pause(model)
+
+        guard case .paused(let progress) = manager.state(for: model) else {
+            return XCTFail("Expected paused state after pausing a running download")
+        }
+        XCTAssertEqual(progress?.percent, 35.0)
+        await waitUntil { !process.isRunning }
+        await waitUntil { !manager.hasTrackedProcess(for: model) }
+        await waitUntil { !manager.hasTrackedTask(for: model) }
     }
 
     func testDownloadErrorTrackerCanClearStaleErrorForRetry() {
@@ -212,6 +268,79 @@ final class ModelDownloadManagerTests: XCTestCase {
                 .failed("Network connection lost.")
                 .isRepairableFailure
         )
+    }
+
+    func testRemoveLocalFilesDeletesHuggingFaceCacheDirectory() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        let model = DownloadableModel(
+            id: "org/example-model",
+            name: "Example",
+            subtitle: "Test model",
+            modelId: "org/example-model",
+            modality: .vision,
+            downloadSizeGB: 1.0,
+            source: ModelSource(type: .huggingFaceSnapshot, repo: "org/example-model", revision: "main")
+        )
+        let modelCachePath = RuntimeManager.modelCachePath(
+            modelId: "org/example-model",
+            huggingFaceCacheRoot: cacheRoot
+        )
+        try FileManager.default.createDirectory(at: modelCachePath, withIntermediateDirectories: true)
+        try Data("weights".utf8).write(to: modelCachePath.appendingPathComponent("model.safetensors"))
+
+        try ModelDownloadManager.removeLocalFiles(
+            for: model,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: cacheRoot
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: modelCachePath.path))
+    }
+
+    func testRemoveLocalFilesDeletesOnlyCatalogComponentFolders() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        let model = DownloadableModel(
+            id: "component-model",
+            name: "Component Model",
+            subtitle: "Test model",
+            modelId: "components/model",
+            modality: .music,
+            backend: .music,
+            downloadSizeGB: 1.0,
+            source: ModelSource(
+                type: .componentBundle,
+                repo: "components/model",
+                components: ["component-a", "component-b"]
+            )
+        )
+        let componentA = checkpointsPath.appendingPathComponent("component-a")
+        let componentB = checkpointsPath.appendingPathComponent("component-b")
+        let unrelated = checkpointsPath.appendingPathComponent("unrelated-component")
+        try FileManager.default.createDirectory(at: componentA, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: componentB, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+
+        try ModelDownloadManager.removeLocalFiles(
+            for: model,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: cacheRoot
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: componentA.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: componentB.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
     }
 
     func testAceStepDownloadHelperUsageErrorUsesTypedEvent() throws {
@@ -253,5 +382,71 @@ final class ModelDownloadManagerTests: XCTestCase {
             ModelDownloadError.stoppedByUser.errorDescription,
             "Download stopped."
         )
+    }
+
+    private func makeLifecycleTestModel(id: String) -> DownloadableModel {
+        DownloadableModel(
+            id: id,
+            name: "Lifecycle Test",
+            subtitle: "Test model",
+            modelId: "test/lifecycle",
+            modality: .vision,
+            downloadSizeGB: 1.0
+        )
+    }
+
+    private func startLongRunningProcess(ignoresTermination: Bool = false) throws -> Process {
+        let process = Process()
+        if ignoresTermination {
+            let readyPipe = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            process.arguments = [
+                "-c",
+                "import signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(30)"
+            ]
+            process.standardOutput = readyPipe
+            try process.run()
+            _ = readyPipe.fileHandleForReading.readData(ofLength: 6)
+            return process
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+            process.arguments = ["30"]
+            try process.run()
+            return process
+        }
+    }
+
+    private func terminateIfNeeded(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let deadline = Date().addingTimeInterval(1.0)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+        }
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MLXHubTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @MainActor
+    private func waitUntil(
+        timeout: TimeInterval = 2.0,
+        condition: @escaping @MainActor () -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for condition")
     }
 }

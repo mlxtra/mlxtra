@@ -26,6 +26,37 @@ struct Chat: Identifiable, Equatable, Codable {
     }
 }
 
+enum ChatDisplayText {
+    static func singleLine(
+        _ text: String,
+        fallback: String = "",
+        maxLength: Int? = nil
+    ) -> String {
+        let collapsed = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let resolved = collapsed.isEmpty ? fallback : collapsed
+
+        guard let maxLength, resolved.count > maxLength else {
+            return resolved
+        }
+
+        let prefix = String(resolved.prefix(maxLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let lastSpaceIndex = prefix.lastIndex(where: { $0.isWhitespace }) {
+            let wordSafePrefix = prefix[..<lastSpaceIndex]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !wordSafePrefix.isEmpty {
+                return String(wordSafePrefix)
+            }
+        }
+
+        return prefix
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 struct Message: Identifiable, Codable {
     let id: UUID
     var content: String

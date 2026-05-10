@@ -13,9 +13,9 @@ struct MessageBubble: View {
     @State private var showCopyFeedback = false
     let onOpenModels: (() -> Void)?
     let onRestartLocalEngine: (() -> Void)?
-    private let avatarSize: CGFloat = 28
-    private let messageMaxWidth: CGFloat = 820
-    private let generatedMediaColumnWidth: CGFloat = 540
+    private let messageMaxWidth: CGFloat = MLXHubDesignSystem.Layout.messageMaxWidth
+    private let generatedMediaColumnWidth: CGFloat = MLXHubDesignSystem.Layout.generatedMediaMaxWidth
+    private let assistantMetaRowReservedHeight: CGFloat = 28
 
     init(
         message: Message,
@@ -32,16 +32,12 @@ struct MessageBubble: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: message.isUser ? 8 : 0) {
             if message.isUser {
-                Spacer(minLength: 40)
+                Spacer(minLength: 72)
             }
 
-            if !message.isUser {
-                avatar(systemName: "sparkle", background: Color.accentColor)
-            }
-
-            VStack(alignment: message.isUser ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: message.isUser ? .trailing : .leading, spacing: MLXHubDesignSystem.Spacing.xs) {
                 ForEach(message.toolCalls) { toolCall in
                     ToolCallView(
                         toolCall: toolCall,
@@ -78,29 +74,24 @@ struct MessageBubble: View {
                     }
 
                     if !message.content.isEmpty || isStreaming {
-                        Group {
-                            if isStreaming, let streamingContent {
-                                StreamingAIContentView(
-                                    streamingContent: streamingContent,
-                                    onOpenModels: onOpenModels,
-                                    onRestartLocalEngine: onRestartLocalEngine
-                                )
-                            } else {
-                                AIContentView(
-                                    content: message.content,
-                                    isStreaming: isStreaming,
-                                    cursorVisible: cursorVisible,
-                                    onCopy: copyToClipboard,
-                                    onOpenModels: onOpenModels,
-                                    onRestartLocalEngine: onRestartLocalEngine
-                                )
-                            }
+                        VStack(alignment: .leading, spacing: MLXHubDesignSystem.Spacing.xxs) {
+                            assistantBodyContent
+                                .contextMenu {
+                                    Button("Copy") {
+                                        copyToClipboard()
+                                    }
+                                }
+                                .frame(maxWidth: messageMaxWidth, alignment: .leading)
+                                .clipped()
+
+                            assistantMetaRowSlot
                         }
-                        .contextMenu {
-                            Button("Copy") {
-                                copyToClipboard()
-                            }
+                        .frame(maxWidth: messageMaxWidth, alignment: .leading)
+#if DEBUG
+                        .overlay {
+                            uiTestAssistantContentRailAnchor
                         }
+#endif
                     }
                 } else {
                     UserMessageContent(
@@ -109,43 +100,21 @@ struct MessageBubble: View {
                         cursorVisible: cursorVisible
                     )
                     .frame(maxWidth: messageMaxWidth, alignment: .trailing)
-                }
-
-                if !message.isUser && !message.content.isEmpty && !isStreaming {
-                    ResponseActionsToolbar(
-                        showCopyFeedback: showCopyFeedback,
-                        onCopy: copyToClipboard
-                    )
-                    .opacity(isHovered || showCopyFeedback ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.15), value: isHovered || showCopyFeedback)
-                }
-
-                if !message.isUser, !isStreaming, let metrics = message.performanceMetrics {
-                    GenerationMetricsView(metrics: metrics)
-                        .frame(maxWidth: messageMaxWidth, alignment: .leading)
-                }
-
-                if !isStreaming {
-                    Text(message.timestamp, style: .time)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: messageMaxWidth, alignment: message.isUser ? .trailing : .leading)
+                    .overlay(alignment: .bottomTrailing) {
+                        userTimestampAccessory
+                    }
                 }
             }
             .frame(maxWidth: messageMaxWidth, alignment: message.isUser ? .trailing : .leading)
             .contentShape(Rectangle())
             .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(.easeInOut(duration: MLXHubDesignSystem.Motion.hoverDuration)) {
                     isHovered = hovering
                 }
             }
 
             if !message.isUser {
-                Spacer(minLength: 40)
-            }
-
-            if message.isUser {
-                avatar(systemName: "person.fill", background: Color(NSColor.secondaryLabelColor))
+                Spacer(minLength: 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
@@ -159,16 +128,129 @@ struct MessageBubble: View {
                 startCursorAnimation()
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(message.isUser ? "message.user" : "message.assistant")
+        .accessibilityValue(message.content)
     }
 
-    private func avatar(systemName: String, background: Color) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 14))
-            .foregroundStyle(Color.white)
-            .frame(width: avatarSize, height: avatarSize)
-            .background(background)
-            .clipShape(Circle())
+    @ViewBuilder
+    private var assistantBodyContent: some View {
+        if isStreaming, let streamingContent {
+            StreamingAIContentView(
+                streamingContent: streamingContent,
+                onOpenModels: onOpenModels,
+                onRestartLocalEngine: onRestartLocalEngine
+            )
+        } else {
+            AIContentView(
+                content: message.content,
+                isStreaming: isStreaming,
+                cursorVisible: cursorVisible,
+                onCopy: copyToClipboard,
+                onOpenModels: onOpenModels,
+                onRestartLocalEngine: onRestartLocalEngine
+            )
+        }
     }
+
+    @ViewBuilder
+    private var assistantMetaRowSlot: some View {
+        if shouldReserveAssistantMetaRowSpace {
+            ZStack(alignment: .leading) {
+                Color.clear
+
+                assistantHoverAccessory
+            }
+            .frame(
+                maxWidth: messageMaxWidth,
+                minHeight: assistantMetaRowReservedHeight,
+                maxHeight: assistantMetaRowReservedHeight,
+                alignment: .leading
+            )
+        }
+    }
+
+    private var hasCopyableAssistantContent: Bool {
+        !message.isUser
+            && (!message.content.isEmpty || !message.imageURLs.isEmpty || !message.audioURLs.isEmpty)
+    }
+
+    private var shouldShowAssistantMetaRow: Bool {
+        !message.isUser
+            && !isStreaming
+            && (
+                (isHovered && message.performanceMetrics != nil)
+                    || (hasCopyableAssistantContent && (isHovered || showCopyFeedback))
+            )
+    }
+
+    private var shouldReserveAssistantMetaRowSpace: Bool {
+        !message.isUser
+            && !isStreaming
+            && (hasCopyableAssistantContent || message.performanceMetrics != nil || showCopyFeedback)
+    }
+
+    @ViewBuilder
+    private var assistantHoverAccessory: some View {
+        if shouldShowAssistantMetaRow {
+            AssistantMessageMetaRow(
+                metrics: isHovered ? message.performanceMetrics : nil,
+                timestamp: message.timestamp,
+                showsTimestamp: isHovered,
+                showsCopyButton: hasCopyableAssistantContent && isHovered,
+                showCopyFeedback: showCopyFeedback,
+                onCopy: copyToClipboard
+            )
+            .frame(maxWidth: messageMaxWidth, alignment: .leading)
+            .transition(.opacity)
+#if DEBUG
+            .overlay {
+                uiTestHoverAccessoryAnchor
+            }
+#endif
+        }
+    }
+
+    @ViewBuilder
+    private var userTimestampAccessory: some View {
+        if message.isUser && !isStreaming && isHovered {
+            Text(message.timestamp, style: .time)
+                .font(MLXHubDesignSystem.Typography.microMedium)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, MLXHubDesignSystem.Spacing.md)
+                .frame(height: 20)
+                .background(.regularMaterial, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
+                }
+                .padding(.trailing, MLXHubDesignSystem.Spacing.xs)
+                .padding(.bottom, MLXHubDesignSystem.Spacing.xs)
+                .transition(.opacity)
+        }
+    }
+
+#if DEBUG
+    @ViewBuilder
+    private var uiTestAssistantContentRailAnchor: some View {
+        if ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_MODE"] == "1" {
+            Color.primary.opacity(0.001)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Assistant content")
+                .accessibilityIdentifier("message.assistant.content")
+        }
+    }
+
+    @ViewBuilder
+    private var uiTestHoverAccessoryAnchor: some View {
+        if ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_MODE"] == "1" {
+            Color.primary.opacity(0.001)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Assistant hover accessories")
+                .accessibilityIdentifier("message.hoverAccessories")
+        }
+    }
+#endif
 
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
@@ -212,7 +294,57 @@ struct MessageBubble: View {
     }
 }
 
-private struct GenerationMetricsView: View {
+private struct AssistantMessageMetaRow: View {
+    let metrics: GenerationPerformanceMetrics?
+    let timestamp: Date
+    let showsTimestamp: Bool
+    let showsCopyButton: Bool
+    let showCopyFeedback: Bool
+    let onCopy: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: MLXHubDesignSystem.Spacing.xs) {
+            if showsCopyButton || showCopyFeedback {
+                Button(action: onCopy) {
+                    HStack(spacing: MLXHubDesignSystem.Spacing.xs) {
+                        Image(systemName: showCopyFeedback ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .medium))
+
+                        if showCopyFeedback {
+                            Text("Copied")
+                                .font(MLXHubDesignSystem.Typography.captionMedium)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: showCopyFeedback ? 64 : 22, minHeight: 22)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Copy response")
+                .accessibilityIdentifier("message.copy")
+            }
+
+            if let metrics {
+                GenerationMetricsLabel(metrics: metrics)
+            }
+
+            if showsTimestamp {
+                Text(timestamp, style: .time)
+                    .font(MLXHubDesignSystem.Typography.microMedium)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, MLXHubDesignSystem.Spacing.sm)
+        .frame(height: 24)
+        .background(.regularMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
+        }
+    }
+}
+
+private struct GenerationMetricsLabel: View {
     let metrics: GenerationPerformanceMetrics
 
     private var summary: String {
@@ -230,11 +362,19 @@ private struct GenerationMetricsView: View {
     }
 
     var body: some View {
-        Label(summary, systemImage: "speedometer")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.tertiary)
-            .labelStyle(.titleAndIcon)
-            .accessibilityIdentifier("message.performanceMetrics")
+        HStack(spacing: MLXHubDesignSystem.Spacing.xs) {
+            Image(systemName: "speedometer")
+                .font(.system(size: MLXHubDesignSystem.Icon.micro, weight: .medium))
+
+            Text(summary)
+                .font(MLXHubDesignSystem.Typography.microMedium)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityIdentifier("message.performanceMetrics")
+        }
+        .foregroundStyle(.tertiary)
+        .help(summary)
+        .accessibilityLabel(summary)
     }
 
     private func formatSeconds(_ seconds: TimeInterval) -> String {
@@ -259,8 +399,8 @@ struct GeneratedAudioAttachmentView: View {
     @State private var duration: Double = 0
     @State private var currentTime: Double = 0
     @State private var playbackTask: Task<Void, Never>?
-    private let controlButtonSize: CGFloat = 34
-    private let playButtonSize: CGFloat = 44
+    private let controlButtonSize: CGFloat = MLXHubDesignSystem.Icon.mediaActionButton
+    private let playButtonSize: CGFloat = MLXHubDesignSystem.Icon.mediaPrimaryButton
 
     private var isMusic: Bool {
         audioURL.path.localizedCaseInsensitiveContains("music")
@@ -287,32 +427,22 @@ struct GeneratedAudioAttachmentView: View {
             HStack(alignment: .top, spacing: 12) {
                 Button(action: togglePlayback) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: MLXHubDesignSystem.Icon.large, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: playButtonSize, height: playButtonSize)
-                        .background(
-                            LinearGradient(
-                                colors: [
-                                    Color.accentColor,
-                                    Color(red: 0.08, green: 0.46, blue: 0.94)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        .shadow(color: Color.accentColor.opacity(0.16), radius: 7, x: 0, y: 3)
+                        .background(Color.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .help(isPlaying ? "Pause" : "Play")
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(mediaTitle)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(MLXHubDesignSystem.Typography.compactBodySemibold)
                         .foregroundStyle(.primary)
 
                     Text(audioURL.lastPathComponent)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(MLXHubDesignSystem.Typography.captionMedium)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -346,33 +476,17 @@ struct GeneratedAudioAttachmentView: View {
 
                 HStack {
                     Text(formattedCurrentTime)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(MLXHubDesignSystem.Typography.codeCaption)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(formattedDuration)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(MLXHubDesignSystem.Typography.codeCaption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(12)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(NSColor.controlBackgroundColor).opacity(0.92),
-                    Color.accentColor.opacity(0.08),
-                    Color(NSColor.windowBackgroundColor).opacity(0.9)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.accentColor.opacity(0.12), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.035), radius: 12, x: 0, y: 5)
+        .designContentSurface(cornerRadius: MLXHubDesignSystem.Radius.media)
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(audioURL.lastPathComponent)
         .accessibilityIdentifier(
@@ -405,14 +519,12 @@ struct GeneratedAudioAttachmentView: View {
     private func audioActionButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: MLXHubDesignSystem.Icon.regular, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: controlButtonSize, height: controlButtonSize)
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color(NSColor.separatorColor).opacity(0.28), lineWidth: 1)
+                .background(
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.card, style: .continuous)
+                        .fill(Color.primary.opacity(0.045))
                 )
         }
         .buttonStyle(.plain)
@@ -576,7 +688,7 @@ private struct AudioWaveformScrubber: View {
                     barRatios = precomputeRatios()
                 }
             }
-            .onChange(of: size.width) { newWidth in
+            .onChange(of: size.width) { _, newWidth in
                 let availableWidth = max(newWidth - CGFloat(barCount - 1) * barSpacing, 1)
                 barWidth = max(availableWidth / CGFloat(barCount), 2)
             }
@@ -642,7 +754,7 @@ struct UserMessageContent: View {
 
             if !message.content.isEmpty || isStreaming {
                 Text(message.content + (isStreaming && cursorVisible ? "▊" : ""))
-                    .font(.system(size: 14))
+                    .font(MLXHubDesignSystem.Typography.messageBody)
                     .lineSpacing(4)
                     .foregroundStyle(Color.white)
                     .fixedSize(horizontal: false, vertical: true)
@@ -650,8 +762,17 @@ struct UserMessageContent: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Color.accentColor)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+#if DEBUG
+        .overlay {
+            if ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_MODE"] == "1" {
+                Color.primary.opacity(0.001)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("User message bubble")
+                    .accessibilityIdentifier("message.user.bubble")
+            }
+        }
+#endif
     }
 }
 
@@ -664,14 +785,14 @@ struct SentImageAttachmentView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 112, height: 84)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous)
                         .stroke(Color.white.opacity(0.25), lineWidth: 1)
                 )
 
             Text(imageURL.lastPathComponent)
-                .font(.system(size: 10))
+                .font(MLXHubDesignSystem.Typography.micro)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(.white)
@@ -684,33 +805,11 @@ struct SentImageAttachmentView: View {
     }
 }
 
-struct ResponseActionsToolbar: View {
-    let showCopyFeedback: Bool
-    let onCopy: () -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Button(action: onCopy) {
-                Label(showCopyFeedback ? "Copied" : "Copy", systemImage: showCopyFeedback ? "checkmark" : "doc.on.doc")
-            }
-            .help("Copy response")
-
-            Spacer()
-        }
-        .font(.system(size: 11, weight: .medium))
-        .labelStyle(.titleAndIcon)
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 4)
-        .padding(.top, 2)
-    }
-}
-
 struct GeneratedImageAttachmentView: View {
     let imageURL: URL
     @State private var downloadError: String?
     @State private var showLightbox = false
-    private let controlButtonSize: CGFloat = 38
+    private let controlButtonSize: CGFloat = MLXHubDesignSystem.Icon.mediaActionButton
 
     private var loadedImage: NSImage? {
         ImageCache.shared.image(for: imageURL)
@@ -719,8 +818,8 @@ struct GeneratedImageAttachmentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.accentColor.opacity(0.045))
+                RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.media, style: .continuous)
+                    .fill(Color.primary.opacity(0.035))
 
                 if let loadedImage {
                     Image(nsImage: loadedImage)
@@ -734,7 +833,7 @@ struct GeneratedImageAttachmentView: View {
                             .font(.system(size: 24))
                             .foregroundStyle(.secondary)
                         Text("Image not available")
-                            .font(.system(size: 11))
+                            .font(MLXHubDesignSystem.Typography.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 240, maxHeight: 320)
@@ -751,9 +850,9 @@ struct GeneratedImageAttachmentView: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Generated image")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(MLXHubDesignSystem.Typography.compactBodySemibold)
                     Text(imageURL.lastPathComponent)
-                        .font(.system(size: 11))
+                        .font(MLXHubDesignSystem.Typography.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -764,11 +863,13 @@ struct GeneratedImageAttachmentView: View {
                 Button(action: revealImage) {
                     Label("Reveal", systemImage: "folder")
                         .labelStyle(.iconOnly)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: MLXHubDesignSystem.Icon.regular, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: controlButtonSize, height: controlButtonSize)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .background(
+                            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.card, style: .continuous)
+                                .fill(Color.primary.opacity(0.045))
+                        )
                 }
                 .buttonStyle(.plain)
                 .help("Reveal in Finder")
@@ -776,11 +877,13 @@ struct GeneratedImageAttachmentView: View {
                 Button(action: downloadImage) {
                     Label("Download", systemImage: "square.and.arrow.down")
                         .labelStyle(.iconOnly)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: MLXHubDesignSystem.Icon.regular, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: controlButtonSize, height: controlButtonSize)
-                        .background(Color(NSColor.controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .background(
+                            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.card, style: .continuous)
+                                .fill(Color.primary.opacity(0.045))
+                        )
                 }
                 .buttonStyle(.plain)
                 .help("Download image")
@@ -788,21 +891,7 @@ struct GeneratedImageAttachmentView: View {
             .padding(12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(NSColor.controlBackgroundColor),
-                    Color.accentColor.opacity(0.055)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
-        )
+        .designContentSurface(cornerRadius: MLXHubDesignSystem.Radius.media)
         .help(imageURL.lastPathComponent)
         .accessibilityIdentifier("generated.image")
         .accessibilityValue(imageURL.path)
@@ -1087,8 +1176,10 @@ struct AIContentView: View {
                 )
             } else {
                 if let mainContent = ReasoningContentFilter.visibleText(from: content), !mainContent.isEmpty {
-                    if isStreaming || AIContentRenderingPolicy.shouldUseFastPlainText(for: mainContent) {
+                    if isStreaming {
                         StreamingPlainTextView(text: mainContent + (isStreaming && cursorVisible ? "▊" : ""))
+                    } else if AIContentRenderingPolicy.shouldUseFastPlainText(for: mainContent) {
+                        PlainAssistantTextView(text: mainContent)
                     } else {
                         MarkdownTextView(
                             text: mainContent,
@@ -1098,12 +1189,24 @@ struct AIContentView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.top, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
+private struct PlainAssistantTextView: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(MLXHubDesignSystem.Typography.messageBody)
+            .foregroundStyle(.primary)
+            .lineSpacing(4)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("message.assistant.plainText")
+    }
 }
 
 enum AIContentRenderingPolicy {
@@ -1187,6 +1290,8 @@ private struct StreamingPlainTextView: View {
     var body: some View {
         FastStreamingTextView(text: text)
             .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
     }
 }
 
@@ -1199,11 +1304,11 @@ private struct StreamingAIContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             FastStreamingTextView(streamingContent: streamingContent)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.top, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1439,6 +1544,9 @@ private final class FastStreamingTextNativeView: NSView {
     }
 
     private func configureTextView() {
+        wantsLayer = true
+        layer?.masksToBounds = true
+
         textView.drawsBackground = false
         textView.isEditable = false
         textView.isSelectable = true
@@ -1450,7 +1558,7 @@ private final class FastStreamingTextNativeView: NSView {
         textView.textContainer?.heightTracksTextView = false
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
-        textView.font = NSFont.systemFont(ofSize: 14.5)
+        textView.font = NSFont.systemFont(ofSize: 14)
         textView.textColor = NSColor.labelColor
 
         scrollView.drawsBackground = false
@@ -1460,9 +1568,20 @@ private final class FastStreamingTextNativeView: NSView {
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.documentView = textView
         addSubview(scrollView)
+
+#if DEBUG
+        if ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_MODE"] == "1" {
+            scrollView.setAccessibilityIdentifier("message.assistant.nativeTextScroll")
+            textView.setAccessibilityIdentifier("message.assistant.nativeTextView")
+        }
+#endif
     }
 
     private func configureContainer(width: CGFloat) {
+        let height = max(cachedHeight, bounds.height, 18)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        textView.frame = NSRect(x: 0, y: 0, width: width, height: height)
         textView.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
     }
 
@@ -1524,11 +1643,11 @@ private final class FastStreamingTextNativeView: NSView {
 
     private func attributedString(_ string: String) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 5
+        paragraph.lineSpacing = 4
         return NSAttributedString(
             string: string,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 14.5),
+                .font: NSFont.systemFont(ofSize: 14),
                 .foregroundColor: NSColor.labelColor,
                 .paragraphStyle: paragraph
             ]
@@ -1589,7 +1708,7 @@ private struct RecoveryNoticeView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: notice.systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: MLXHubDesignSystem.Icon.medium, weight: .semibold))
                 .foregroundStyle(Color.orange)
                 .frame(width: 26, height: 26)
                 .background(Color.orange.opacity(0.12))
@@ -1597,10 +1716,10 @@ private struct RecoveryNoticeView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(notice.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(MLXHubDesignSystem.Typography.compactBodySemibold)
 
                 Text(notice.detail)
-                    .font(.system(size: 13))
+                    .font(MLXHubDesignSystem.Typography.compactBody)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1642,24 +1761,23 @@ struct ThinkingView: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             Text(content)
-                .font(.system(size: 12))
+                .font(MLXHubDesignSystem.Typography.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "brain.head.profile")
-                    .font(.system(size: 12))
+                    .font(.system(size: MLXHubDesignSystem.Icon.small))
                 Text("Thinking")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(MLXHubDesignSystem.Typography.captionMedium)
                 Spacer()
             }
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(Color.accentColor.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .designTintSurface(Color.accentColor, cornerRadius: MLXHubDesignSystem.Radius.control)
     }
 }
 
@@ -1678,12 +1796,16 @@ struct MarkdownTextView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: MLXHubDesignSystem.Spacing.md + 1) {
             ForEach(Array(parsedBlocks.enumerated()), id: \.offset) { _, block in
                 blockView(block)
+                    .accessibilityIdentifier(markdownAccessibilityIdentifier(for: block))
             }
         }
         .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("markdown.content")
     }
 
     @ViewBuilder
@@ -1691,22 +1813,22 @@ struct MarkdownTextView: View {
         switch block {
         case .heading(let level, let content):
             inlineText(content)
-                .font(.system(size: headingSize(for: level), weight: .semibold))
+                .font(MLXHubDesignSystem.Typography.markdownHeading(level: level))
                 .lineSpacing(4)
                 .padding(.top, level <= 2 ? 4 : 2)
 
         case .paragraph(let content):
             inlineText(content)
-                .font(.system(size: 14.5))
-                .lineSpacing(5)
+                .font(MLXHubDesignSystem.Typography.messageBody)
+                .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
 
         case .quote(let lines):
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                     inlineText(line)
-                        .font(.system(size: 14.5))
-                        .lineSpacing(5)
+                        .font(MLXHubDesignSystem.Typography.messageBody)
+                        .lineSpacing(4)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1723,12 +1845,12 @@ struct MarkdownTextView: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("•")
-                            .font(.system(size: 14.5, weight: .medium))
+                            .font(MLXHubDesignSystem.Typography.messageBodyStrong)
                             .foregroundStyle(.secondary)
                             .frame(width: 14, alignment: .trailing)
                         inlineText(item)
-                            .font(.system(size: 14.5))
-                            .lineSpacing(5)
+                            .font(MLXHubDesignSystem.Typography.messageBody)
+                            .lineSpacing(4)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1739,12 +1861,12 @@ struct MarkdownTextView: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(index + 1).")
-                            .font(.system(size: 14.5, weight: .medium))
+                            .font(MLXHubDesignSystem.Typography.messageBodyStrong)
                             .foregroundStyle(.secondary)
                             .frame(width: 24, alignment: .trailing)
                         inlineText(item)
-                            .font(.system(size: 14.5))
-                            .lineSpacing(5)
+                            .font(MLXHubDesignSystem.Typography.messageBody)
+                            .lineSpacing(4)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1755,12 +1877,12 @@ struct MarkdownTextView: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: item.isComplete ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 13))
+                            .font(.system(size: MLXHubDesignSystem.Icon.regular))
                             .foregroundStyle(item.isComplete ? Color.accentColor : .secondary)
                             .frame(width: 18, alignment: .trailing)
                         inlineText(item.text)
-                            .font(.system(size: 14.5))
-                            .lineSpacing(5)
+                            .font(MLXHubDesignSystem.Typography.messageBody)
+                            .lineSpacing(4)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1770,13 +1892,13 @@ struct MarkdownTextView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let language, !language.isEmpty {
                     Text(language)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(MLXHubDesignSystem.Typography.codeCaption)
                         .foregroundStyle(.secondary)
                 }
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     Text(content)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(MLXHubDesignSystem.Typography.code)
                         .lineSpacing(3)
                         .textSelection(.enabled)
                         .padding(12)
@@ -1784,10 +1906,10 @@ struct MarkdownTextView: View {
                 }
             }
             .background(Color(NSColor.textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
+                RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous)
+                    .stroke(MLXHubDesignSystem.Surface.hairline, lineWidth: 1)
             )
 
         case .table(let rows):
@@ -1799,15 +1921,6 @@ struct MarkdownTextView: View {
         case .divider:
             Divider()
                 .padding(.vertical, 4)
-        }
-    }
-
-    private func headingSize(for level: Int) -> CGFloat {
-        switch level {
-        case 1: return 22
-        case 2: return 19
-        case 3: return 17
-        default: return 15
         }
     }
 
@@ -1823,6 +1936,27 @@ struct MarkdownTextView: View {
             }
         }
     }
+
+    private func markdownAccessibilityIdentifier(for block: MarkdownBlock) -> String {
+        switch block {
+        case .heading:
+            return "markdown.heading"
+        case .paragraph:
+            return "markdown.paragraph"
+        case .quote:
+            return "markdown.quote"
+        case .unorderedList, .orderedList, .taskList:
+            return "markdown.list"
+        case .codeBlock:
+            return "markdown.codeBlock"
+        case .table:
+            return "markdown.table"
+        case .mathBlock:
+            return "markdown.mathBlock"
+        case .divider:
+            return "markdown.divider"
+        }
+    }
 }
 
 private struct MarkdownTableView: View {
@@ -1835,7 +1969,7 @@ private struct MarkdownTableView: View {
                     HStack(alignment: .top, spacing: 0) {
                         ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                             Text(MarkdownInlineSegment.inlineAttributedString(cell))
-                                .font(.system(size: 13, weight: rowIndex == 0 ? .semibold : .regular))
+                                .font(rowIndex == 0 ? MLXHubDesignSystem.Typography.compactBodySemibold : MLXHubDesignSystem.Typography.compactBody)
                                 .lineSpacing(3)
                                 .frame(minWidth: 92, maxWidth: 220, alignment: .leading)
                                 .padding(.horizontal, 10)
@@ -1849,12 +1983,12 @@ private struct MarkdownTableView: View {
                 }
             }
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(NSColor.separatorColor).opacity(0.45), lineWidth: 1)
+                RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous)
+                    .stroke(MLXHubDesignSystem.Surface.hairline, lineWidth: 1)
             )
         }
         .background(Color(NSColor.textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
     }
 }
 
@@ -1864,18 +1998,13 @@ private struct MarkdownMathBlockView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             Text(LatexRenderer.render(content))
-                .font(.system(size: 16, weight: .medium, design: .serif))
+                .font(.system(size: 15, weight: .medium, design: .serif))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
-        .background(Color.accentColor.opacity(0.07))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
-        )
+        .designTintSurface(Color.accentColor, cornerRadius: MLXHubDesignSystem.Radius.control)
         .accessibilityIdentifier("markdown.mathBlock")
     }
 }
@@ -2044,39 +2173,39 @@ struct ToolCallView: View {
             HStack(spacing: 8) {
                 ZStack {
                     Circle()
-                        .fill(statusColor.opacity(0.14))
+                        .fill(iconTint.opacity(isComplete ? 0.08 : 0.14))
                         .frame(width: 26, height: 26)
 
                     Image(systemName: toolCall.icon)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(statusColor)
+                        .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .semibold))
+                        .foregroundStyle(iconTint)
                 }
 
                 Text(toolCall.toolName)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(MLXHubDesignSystem.Typography.captionMedium)
 
                 Spacer()
 
                 Text(headerStatus)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(MLXHubDesignSystem.Typography.captionMedium)
+                    .foregroundStyle(statusBadgeForeground)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(statusColor.opacity(0.1))
+                    .background(statusBadgeFill)
                     .clipShape(Capsule())
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10))
+                    .font(.system(size: MLXHubDesignSystem.Icon.micro))
                     .foregroundStyle(.secondary)
             }
 
             if isExpanded, shouldShowDetails {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(detailTitle)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(MLXHubDesignSystem.Typography.microMedium)
                         .foregroundStyle(.secondary)
                     Text(toolCall.status)
-                        .font(.system(size: 11))
+                        .font(MLXHubDesignSystem.Typography.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2086,10 +2215,10 @@ struct ToolCallView: View {
                             ForEach(Array(toolCall.details.enumerated()), id: \.offset) { _, detail in
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(detail.label)
-                                        .font(.system(size: 10, weight: .semibold))
+                                        .font(MLXHubDesignSystem.Typography.microMedium)
                                         .foregroundStyle(.secondary)
                                     Text(detail.value)
-                                        .font(.system(size: 11))
+                                        .font(MLXHubDesignSystem.Typography.caption)
                                         .foregroundStyle(.secondary)
                                         .textSelection(.enabled)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -2105,20 +2234,13 @@ struct ToolCallView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(
-            LinearGradient(
-                colors: [
-                    Color(NSColor.controlBackgroundColor),
-                    statusColor.opacity(0.06)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.card, style: .continuous)
+                .fill(isComplete ? MLXHubDesignSystem.Surface.contentFill : MLXHubDesignSystem.Surface.tintFill(statusColor))
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(statusColor.opacity(0.16), lineWidth: 1)
-        )
+        .overlay {
+            RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.card, style: .continuous)
+                .stroke(isComplete ? MLXHubDesignSystem.Surface.quietHairline : statusColor.opacity(0.16), lineWidth: 1)
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -2141,6 +2263,10 @@ struct ToolCallView: View {
 
     private var shouldShowDetails: Bool {
         !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !toolCall.details.isEmpty
+    }
+
+    private var isComplete: Bool {
+        hasGeneratedMedia || !isStreaming
     }
 
     private var headerStatus: String {
@@ -2201,6 +2327,18 @@ struct ToolCallView: View {
         }
 
         return Color.accentColor
+    }
+
+    private var iconTint: Color {
+        isComplete ? MLXHubDesignSystem.Palette.secondaryLabel : statusColor
+    }
+
+    private var statusBadgeForeground: Color {
+        isComplete ? MLXHubDesignSystem.Palette.secondaryLabel : statusColor
+    }
+
+    private var statusBadgeFill: Color {
+        isComplete ? Color.primary.opacity(0.045) : statusColor.opacity(0.10)
     }
 }
 

@@ -65,6 +65,7 @@ struct ChatMediaToolExecutionPlan {
 
 enum ChatToolExecutionUpdate: Equatable {
     case progress(String)
+    case modelLoadProgress(ModelLoadProgress)
     case generatedAsset(URL, kind: ChatGeneratedAssetKind)
 }
 
@@ -340,6 +341,8 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
                 switch event {
                 case .progress(let message):
                     onUpdate(.progress(message))
+                case .modelLoadProgress(let progress):
+                    onUpdate(.modelLoadProgress(progress))
                 case .image(let imageURL) where plan.attachmentKind == .image:
                     firstOutputAt = firstOutputAt ?? Date()
                     generatedAssetURL = imageURL

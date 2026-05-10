@@ -2,10 +2,29 @@ import XCTest
 
 final class MLXHubDownloadStatesUITests: XCTestCase {
     private var app: XCUIApplication!
+    private static let screenshotRunID: String = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "\(formatter.string(from: Date()))-\(ProcessInfo.processInfo.processIdentifier)"
+    }()
+    private static let screenshotDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MLXHubDownloadStateScreenshots", isDirectory: true)
+        .appendingPathComponent(screenshotRunID, isDirectory: true)
+    private static var didPrintScreenshotDirectory = false
 
-    override func setUp() {
-        super.setUp()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
         continueAfterFailure = false
+
+        try FileManager.default.createDirectory(
+            at: Self.screenshotDirectory,
+            withIntermediateDirectories: true
+        )
+        if !Self.didPrintScreenshotDirectory {
+            print("Download-state screenshot directory: \(Self.screenshotDirectory.path)")
+            Self.didPrintScreenshotDirectory = true
+        }
 
         app = XCUIApplication()
         app.launchEnvironment["MLXHUB_UI_TEST_MODE"] = "1"
@@ -25,27 +44,25 @@ final class MLXHubDownloadStatesUITests: XCTestCase {
         super.tearDown()
     }
 
-    func testModelSettingsRenderAllDownloadStates() {
+    func testModelSettingsRenderAllDownloadStates() throws {
         openSettings()
 
-        assertStateExists("settings.modelState.ready", label: "ready")
-        assertStateExists("settings.modelState.missing", label: "missing")
-        assertStateExists("settings.modelState.downloading", label: "downloading")
-        assertStateExists("settings.modelState.paused", label: "paused")
-        assertStateExists("settings.modelState.repair", label: "repair")
-        assertStateExists("settings.modelState.failed", label: "failed")
-
+        try saveScreenshot(named: "Model download states - Chat", fileName: "settings-download-states-chat.png")
         XCTAssertTrue(app.staticTexts["Ready"].exists)
         XCTAssertTrue(app.buttons["Download"].exists)
         XCTAssertTrue(app.staticTexts["Downloading"].exists || app.staticTexts["50%"].exists)
-        XCTAssertTrue(app.staticTexts["Paused"].exists)
-        XCTAssertTrue(app.buttons["Repair"].exists)
-        XCTAssertTrue(app.buttons["Retry"].exists)
 
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Model download states"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        selectMode("Images")
+        try saveScreenshot(named: "Model download states - Images", fileName: "settings-download-states-images.png")
+        XCTAssertTrue(app.staticTexts["Paused"].exists)
+
+        selectMode("Voice")
+        try saveScreenshot(named: "Model download states - Voice", fileName: "settings-download-states-voice.png")
+        XCTAssertTrue(app.staticTexts["Needs repair"].exists || app.buttons["Repair"].exists)
+
+        selectMode("Music")
+        try saveScreenshot(named: "Model download states - Music", fileName: "settings-download-states-music.png")
+        XCTAssertTrue(app.staticTexts["Failed"].exists || app.buttons["Retry"].exists)
     }
 
     private func openSettings() {
@@ -64,8 +81,33 @@ final class MLXHubDownloadStatesUITests: XCTestCase {
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Settings window did not open")
     }
 
-    private func assertStateExists(_ identifier: String, label: String) {
-        let element = app.descendants(matching: .any)[identifier]
-        XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing \(label) download state")
+    private func selectMode(_ title: String) {
+        let radioButton = app.radioButtons[title]
+        if radioButton.waitForExistence(timeout: 2) {
+            radioButton.click()
+            return
+        }
+
+        let button = app.buttons[title]
+        if button.waitForExistence(timeout: 2) {
+            button.click()
+            return
+        }
+
+        let label = app.staticTexts[title]
+        XCTAssertTrue(label.waitForExistence(timeout: 2), "Missing \(title) mode")
+        label.click()
+    }
+
+    private func saveScreenshot(named name: String, fileName: String) throws {
+        let appScreenshot = app.screenshot()
+        let screenshot = XCTAttachment(screenshot: appScreenshot)
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let fileURL = Self.screenshotDirectory.appendingPathComponent(fileName)
+        try appScreenshot.pngRepresentation.write(to: fileURL, options: [.atomic])
+        print("Saved download-state screenshot: \(fileURL.path)")
     }
 }

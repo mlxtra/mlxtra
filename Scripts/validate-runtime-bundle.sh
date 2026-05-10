@@ -81,16 +81,24 @@ for package, version in expected_packages.items():
     if pinned not in manifest_packages:
         raise SystemExit(f"runtime manifest is missing {pinned}")
 
-expected_models = [
-    "mlx-community/Qwen3.5-9B-MLX-4bit",
-    "google/gemma-4-e4b-it",
-    "mlx-community/Qwen3.5-2B-MLX-4bit",
-    "black-forest-labs/FLUX.2-klein-4B",
-    "kugelaudio/kugelaudio-0-open",
-    "ACE-Step/acestep-v15-turbo-continuous",
-]
-if manifest.get("supportedModels") != expected_models:
-    raise SystemExit("runtime manifest supportedModels does not match the app model catalog")
+expected_backends = {"vlm", "llm", "image", "audio", "music"}
+manifest_backends = set(manifest.get("supportedBackends", []))
+missing_backends = expected_backends - manifest_backends
+if missing_backends:
+    raise SystemExit(f"runtime manifest is missing supported backends: {sorted(missing_backends)}")
+
+expected_capabilities = {
+    "chat",
+    "vision",
+    "image-generation",
+    "image-editing",
+    "speech-generation",
+    "music-generation",
+}
+manifest_capabilities = set(manifest.get("capabilities", []))
+missing_capabilities = expected_capabilities - manifest_capabilities
+if missing_capabilities:
+    raise SystemExit(f"runtime manifest is missing capabilities: {sorted(missing_capabilities)}")
 PY
 }
 

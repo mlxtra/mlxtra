@@ -272,6 +272,21 @@ cat > "${OUTPUT_DIR}/runtime-manifest.json" << EOF
   "isolatedPackages": [
     "ace-step @ ${ACE_STEP_PACKAGE}"
   ],
+  "supportedBackends": [
+    "vlm",
+    "llm",
+    "image",
+    "audio",
+    "music"
+  ],
+  "capabilities": [
+    "chat",
+    "vision",
+    "image-generation",
+    "image-editing",
+    "speech-generation",
+    "music-generation"
+  ],
   "supportedModels": [
     "mlx-community/Qwen3.5-9B-MLX-4bit",
     "google/gemma-4-e4b-it",

@@ -33,7 +33,7 @@ struct EmptyStateView: View {
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.ultraThinMaterial)
+        .background(MLXHubDesignSystem.Palette.windowBackground)
     }
 }
 

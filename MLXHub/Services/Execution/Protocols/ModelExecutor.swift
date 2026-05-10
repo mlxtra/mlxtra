@@ -122,6 +122,7 @@ enum ExecutionEvent {
     case toolCalls([ExecutionToolCall])
     case error(Error)
     case progress(String)
+    case modelLoadProgress(ModelLoadProgress)
 }
 
 /// Token usage statistics

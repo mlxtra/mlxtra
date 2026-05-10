@@ -287,12 +287,125 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testPreferredRuntimeUsesValidInstalledRuntime() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let installed = root.appendingPathComponent("installed")
+        let bundled = root.appendingPathComponent("bundled")
+        try makeRuntimeBundle(at: installed, version: "0.2.0")
+        try FileManager.default.createDirectory(at: bundled, withIntermediateDirectories: true)
+
+        let selected = RuntimeManager.preferredRuntimeBundleURL(
+            installed: installed,
+            bundledCandidates: [bundled]
+        )
+
+        XCTAssertEqual(selected, installed)
+    }
+
+    func testPreferredRuntimeFallsBackWhenInstalledRuntimeIsInvalid() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let installed = root.appendingPathComponent("installed")
+        let bundled = root.appendingPathComponent("bundled")
+        try FileManager.default.createDirectory(at: installed, withIntermediateDirectories: true)
+        try makeRuntimeBundle(at: bundled, version: "0.1.0")
+
+        let selected = RuntimeManager.preferredRuntimeBundleURL(
+            installed: installed,
+            bundledCandidates: [bundled]
+        )
+
+        XCTAssertEqual(selected, bundled)
+    }
+
+    func testRuntimeManifestSupportsBackendsAndProfiles() throws {
+        let manifest = RuntimeManifest(
+            runtimeVersion: "0.2.0",
+            compatibilityApi: 1,
+            supportedBackends: [.vlm, .image]
+        )
+        let profile = ModelCapabilityProfile(
+            id: "org/model",
+            name: "Model",
+            subtitle: "Test",
+            modelId: "org/model",
+            modality: .vision,
+            backend: .vlm,
+            icon: "eye",
+            downloadSizeGB: 1.0,
+            estimatedMemoryGB: 1.0,
+            runtime: ModelRuntimeRequirement(minVersion: "0.2.0", compatibilityApi: 1),
+            parameters: [],
+            presets: [],
+            aiModel: nil
+        )
+
+        XCTAssertTrue(manifest.supports(backend: .vlm))
+        XCTAssertFalse(manifest.supports(backend: .music))
+        XCTAssertTrue(manifest.supports(profile: profile))
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshCanHideAutomaticDecodeFailures() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try Data("not json".utf8).write(to: channelURL)
+
+        let manager = RuntimeUpdateManager()
+        await manager.refreshStableChannel(channelURL: channelURL, reportFailures: false)
+
+        XCTAssertEqual(manager.state, .idle)
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshReportsExplicitDecodeFailures() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try Data("not json".utf8).write(to: channelURL)
+
+        let manager = RuntimeUpdateManager()
+        await manager.refreshStableChannel(channelURL: channelURL)
+
+        guard case .failed = manager.state else {
+            XCTFail("Expected explicit runtime refresh failure to be surfaced")
+            return
+        }
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MLXHubTests")
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private func makeRuntimeBundle(at url: URL, version: String) throws {
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("venv/bin"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: url.appendingPathComponent("python/Frameworks/Versions/3.12"),
+            withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(atPath: url.appendingPathComponent("venv/bin/python").path, contents: Data())
+        FileManager.default.createFile(atPath: url.appendingPathComponent("hf_download_helper.py").path, contents: Data())
+        FileManager.default.createFile(atPath: url.appendingPathComponent("acestep_download_helper.py").path, contents: Data())
+        try Data("""
+        {
+          "runtimeVersion": "\(version)",
+          "compatibilityApi": 1,
+          "platform": "macos",
+          "arch": "arm64",
+          "packages": [],
+          "isolatedPackages": [],
+          "supportedBackends": ["vlm", "image"],
+          "capabilities": ["chat", "vision", "image-generation"]
+        }
+        """.utf8).write(to: url.appendingPathComponent("runtime-manifest.json"))
     }
 }
 
@@ -310,6 +423,8 @@ extension RuntimeError: Equatable {
         case (.runtimeComponentNotFound(let lName, let lPath), .runtimeComponentNotFound(let rName, let rPath)) where lName == rName && lPath == rPath:
             return true
         case (.pythonValidationFailed(let lContext, let lDetails), .pythonValidationFailed(let rContext, let rDetails)) where lContext == rContext && lDetails == rDetails:
+            return true
+        case (.runtimeUpdateRequired(let lModel, let lVersion), .runtimeUpdateRequired(let rModel, let rVersion)) where lModel == rModel && lVersion == rVersion:
             return true
         case (.initializationFailed(let l), .initializationFailed(let r)) where l == r:
             return true

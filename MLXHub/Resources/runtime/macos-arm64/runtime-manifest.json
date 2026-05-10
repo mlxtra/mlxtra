@@ -25,6 +25,21 @@
   "isolatedPackages": [
     "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@97ac5116c103c05532e4968a83b9046181248da6"
   ],
+  "supportedBackends": [
+    "vlm",
+    "llm",
+    "image",
+    "audio",
+    "music"
+  ],
+  "capabilities": [
+    "chat",
+    "vision",
+    "image-generation",
+    "image-editing",
+    "speech-generation",
+    "music-generation"
+  ],
   "supportedModels": [
     "mlx-community/Qwen3.5-9B-MLX-4bit",
     "google/gemma-4-e4b-it",

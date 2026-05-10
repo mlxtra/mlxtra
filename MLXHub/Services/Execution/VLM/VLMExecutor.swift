@@ -420,7 +420,11 @@ private final class StreamFinishState: @unchecked Sendable {
             payload["parameters"] = parameters
         }
 
-        let responseStream = makeResponseStream(requestID: request.requestID)
+        let responseStream = makeResponseStream(
+            requestID: request.requestID,
+            modelId: request.modelId,
+            backend: request.backend
+        )
         do {
             try await sendRequest(payload)
         } catch {
@@ -433,6 +437,14 @@ private final class StreamFinishState: @unchecked Sendable {
 
     private func loadModel(_ modelId: String, backend: RuntimeBackend) async throws {
         delegate?.modelLoadingStarted(modelId: modelId)
+        delegate?.modelLoadingProgress(
+            ModelLoadProgress(
+                modelId: modelId,
+                backend: backend,
+                phase: .preparing,
+                detail: "Preparing runtime"
+            )
+        )
 
         let requestID = UUID().uuidString
         let payload: [String: Any] = [
@@ -442,7 +454,7 @@ private final class StreamFinishState: @unchecked Sendable {
             "backend": backend.rawValue
         ]
 
-        let waiter = installModelLoadHandler(requestID: requestID)
+        let waiter = installModelLoadHandler(requestID: requestID, modelId: modelId, backend: backend)
 
         do {
             try await sendRequest(payload)
@@ -456,7 +468,7 @@ private final class StreamFinishState: @unchecked Sendable {
         }
     }
 
-    private func installModelLoadHandler(requestID: String) -> ModelLoadWaiter {
+    private func installModelLoadHandler(requestID: String, modelId: String, backend: RuntimeBackend) -> ModelLoadWaiter {
         let loadedState = ModelLoadedState()
         let handlerID = stdoutDispatcher.register(
             requestID: requestID,
@@ -467,13 +479,21 @@ private final class StreamFinishState: @unchecked Sendable {
                     || type == "model.loading"
                     || type == "error"
             },
-            handler: { [weak loadedState] json in
+            handler: { [weak self, weak loadedState] json in
                 guard let type = json["type"] as? String else { return }
                 switch type {
                 case "model.loaded", "model.initialized":
                     print("[VLMExecutor] Model load handler: setting loaded (type=\(type))")
                     loadedState?.setLoaded()
                 case "model.loading":
+                    let progress = ModelLoadProgress.bridgeEvent(
+                        json,
+                        fallbackModelId: modelId,
+                        fallbackBackend: backend
+                    )
+                    Task { @MainActor in
+                        self?.delegate?.modelLoadingProgress(progress)
+                    }
                     if let status = json["status"] as? String {
                         print("[VLMExecutor] Model loading status: \(status)")
                     }
@@ -542,7 +562,7 @@ private final class StreamFinishState: @unchecked Sendable {
         }
     }
 
-    private func makeResponseStream(requestID: String) -> ResponseStreamHandle {
+    private func makeResponseStream(requestID: String, modelId: String, backend: RuntimeBackend) -> ResponseStreamHandle {
         let responseBuilder = ResponseBuilder()
         let finishState = StreamFinishState()
         let handlerID = UUID()
@@ -660,9 +680,13 @@ private final class StreamFinishState: @unchecked Sendable {
                         }
 
                     case "model.loading":
-                        if let status = json["status"] as? String {
-                            continuation.yield(.progress("Loading model: \(status)..."))
-                        }
+                        let progress = ModelLoadProgress.bridgeEvent(
+                            json,
+                            fallbackModelId: modelId,
+                            fallbackBackend: backend
+                        )
+                        continuation.yield(.progress(progress.detail ?? progress.phase.displayTitle))
+                        continuation.yield(.modelLoadProgress(progress))
 
                     case "model.loaded":
                         print("[VLMExecutor] Model load confirmed: \(json["model"] ?? "unknown")")
@@ -916,6 +940,7 @@ private final class ResponseBuilder: @unchecked Sendable {
 @MainActor
 protocol VLMExecutionDelegate: AnyObject {
     func modelLoadingStarted(modelId: String)
+    func modelLoadingProgress(_ progress: ModelLoadProgress)
     func modelLoadingCompleted(modelId: String)
     func modelLoadingFailed(modelId: String, error: Error)
     func executionWillRetry(attempt: Int)

@@ -1,7 +1,10 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
     @StateObject private var downloadManager = ModelDownloadManager.shared
+    @StateObject private var catalogService = ModelCatalogService.shared
+    @StateObject private var runtimeUpdateManager = RuntimeUpdateManager.shared
     @AppStorage("MLXHub.pendingDownloadModelId") private var pendingDownloadModelId = ""
     @AppStorage(PromptConfiguration.systemPromptKey) private var systemPrompt = PromptConfiguration.defaultSystemPrompt
     @AppStorage(PromptConfiguration.deepResearchSystemPromptKey) private var deepResearchSystemPrompt = PromptConfiguration.defaultDeepResearchSystemPrompt
@@ -11,9 +14,12 @@ struct SettingsView: View {
     @State private var selectedFilter: ModelDownloadFilter = .all
     @State private var selectedPane: SettingsPane = .models
     @State private var showDetailedModels = false
+    @State private var selectedModelMode: SettingsModelMode = .chat
+    @State private var modelSelectionRevision = 0
+    @State private var removalCandidate: DownloadableModel?
 
     private var allModels: [DownloadableModel] {
-        DownloadableModel.embedded
+        catalogService.profiles.map(\.downloadableModel)
     }
 
     private var modelsByModality: [(ModelModality, [DownloadableModel])] {
@@ -52,7 +58,34 @@ struct SettingsView: View {
         .frame(width: 900, height: 680)
         .accessibilityIdentifier("settings.window")
         .onAppear {
+            clearInitialFocus()
             downloadManager.refreshStatuses()
+            clearPendingDownloadIfReady()
+        }
+        .onChange(of: downloadManager.states) { _, _ in
+            clearPendingDownloadIfReady()
+        }
+        .task {
+            await catalogService.refreshFromStableChannel()
+            await runtimeUpdateManager.refreshStableChannel(reportFailures: false)
+            downloadManager.refreshStatuses()
+            clearPendingDownloadIfReady()
+        }
+        .alert(item: $removalCandidate) { model in
+            Alert(
+                title: Text("Remove \(model.name)?"),
+                message: Text("This frees about \(formatSize(model.downloadSizeGB)). You can download it again later."),
+                primaryButton: .destructive(Text("Remove Model")) {
+                    Task {
+                        await downloadManager.remove(model)
+                        downloadManager.refreshStatuses()
+                        removalCandidate = nil
+                    }
+                },
+                secondaryButton: .cancel {
+                    removalCandidate = nil
+                }
+            )
         }
     }
 
@@ -79,35 +112,28 @@ struct SettingsView: View {
             Spacer()
 
             if selectedPane == .models {
-                HStack(spacing: 8) {
-                    ModelSummaryBadge(
+                HStack(spacing: 10) {
+                    ModelHeaderBadge(
                         title: "Ready",
                         value: "\(readyCount)/\(allModels.count)",
-                        systemImage: "checkmark.circle.fill",
-                        tint: .green
+                        icon: readyCount == allModels.count ? "checkmark.circle.fill" : "checkmark.circle",
+                        tint: .secondary
                     )
 
-                    ModelSummaryBadge(
-                        title: "Downloading",
-                        value: "\(activeCount)",
-                        systemImage: "arrow.down.circle.fill",
-                        tint: .accentColor
-                    )
-
-                    ModelSummaryBadge(
-                        title: "Size",
-                        value: formatSize(totalDownloadSizeGB),
-                        systemImage: "externaldrive.fill",
+                    ModelHeaderBadge(
+                        title: "Storage",
+                        value: formatSize(downloadedSizeGB),
+                        icon: "internaldrive",
                         tint: .secondary
                     )
 
                     Button {
                         downloadManager.refreshStatuses()
                     } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .frame(width: 26, height: 26)
+                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .help("Refresh model status")
                 }
                 .padding(.top, 2)
@@ -116,86 +142,111 @@ struct SettingsView: View {
     }
 
     private var panePicker: some View {
-        Picker("Settings", selection: $selectedPane) {
-            ForEach(SettingsPane.allCases) { pane in
-                Text(pane.title).tag(pane)
+        HStack(spacing: 0) {
+            Picker(selection: $selectedPane) {
+                ForEach(SettingsPane.allCases) { pane in
+                    Text(pane.title).tag(pane)
+                }
+            } label: {
+                EmptyView()
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 220, alignment: .leading)
+
+            Spacer(minLength: 0)
         }
-        .pickerStyle(.segmented)
-        .frame(width: 260)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.panePicker")
     }
 
     private var modelsPane: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if let pendingModel {
-                RequiredDownloadCallout(
-                    model: pendingModel,
-                    state: downloadManager.state(for: pendingModel),
-                    onDownload: {
-                        downloadManager.download(pendingModel)
-                    },
-                    onPause: {
-                        downloadManager.pause(pendingModel)
-                    },
-                    onCancel: {
-                        downloadManager.cancel(pendingModel)
-                    },
-                    onDismiss: {
-                        pendingDownloadModelId = ""
-                    }
-                )
+            HStack(spacing: 12) {
+                ModelModePicker(selectedMode: $selectedModelMode)
+
+                Spacer()
+
+                modelSearchField
+                    .frame(width: 280)
             }
+            .frame(maxWidth: .infinity)
 
-            BestForThisMacSection(
-                profiles: bestProfilesForThisMac,
-                downloadManager: downloadManager,
-                onDownload: { model in
-                    downloadManager.download(model)
-                },
-                onPause: { model in
-                    downloadManager.pause(model)
-                },
-                onCancel: { model in
-                    downloadManager.cancel(model)
-                }
-            )
+            HStack(spacing: 8) {
+                Label("\(selectedModelMode.title) Models", systemImage: selectedModelMode.icon)
+                    .font(MLXHubDesignSystem.Typography.sectionTitle)
 
-            CapabilitySetupSection(
-                items: capabilityItems,
-                onDownload: { model in
-                    downloadManager.download(model)
-                },
-                onPause: { model in
-                    downloadManager.pause(model)
-                },
-                onCancel: { model in
-                    downloadManager.cancel(model)
-                }
-            )
+                Text("\(selectedModeModels.count)")
+                    .font(MLXHubDesignSystem.Typography.microMedium)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(MLXHubDesignSystem.Surface.panelFill, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: 1)
+                    }
 
-            DisclosureGroup(isExpanded: $showDetailedModels) {
-                VStack(alignment: .leading, spacing: 14) {
-                    controls
+                Spacer()
+            }
+            .accessibilityIdentifier("settings.modelSectionHeader")
 
-                    if modelsByModality.isEmpty {
-                        EmptyModelsView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 56)
-                    } else {
-                        VStack(alignment: .leading, spacing: 20) {
-                            ForEach(modelsByModality, id: \.0.id) { modality, models in
-                                modelSection(modality: modality, models: models)
+            if selectedModeModels.isEmpty {
+                EmptyModelsView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 56)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(selectedModeModels) { model in
+                        ModelManagerRow(
+                            model: model,
+                            mode: selectedModelMode,
+                            state: downloadManager.state(for: model),
+                            isDefault: defaultModelId(for: selectedModelMode) == model.modelId,
+                            isRecommended: recommendedModelId(for: selectedModelMode) == model.modelId,
+                            isPendingDownload: pendingDownloadModelId == model.modelId,
+                            runtimeUpdateManager: runtimeUpdateManager,
+                            onSetDefault: {
+                                setDefaultModel(model, for: selectedModelMode)
+                            },
+                            onDownload: {
+                                downloadManager.download(model)
+                            },
+                            onPause: {
+                                downloadManager.pause(model)
+                            },
+                            onCancel: {
+                                downloadManager.cancel(model)
+                            },
+                            onRemove: {
+                                removalCandidate = model
                             }
+                        )
+                        .id(model.modelId)
+
+                        if model.id != selectedModeModels.last?.id {
+                            Divider()
                         }
-                        .padding(.bottom, 12)
                     }
                 }
-                .padding(.top, 10)
-            } label: {
-                Label("Detailed model list", systemImage: "list.bullet.rectangle")
-                    .font(.headline)
+                .background(
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.card, style: .continuous)
+                        .fill(MLXHubDesignSystem.Surface.contentFill)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.card, style: .continuous)
+                        .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: 1)
+                }
+                .accessibilityIdentifier("settings.modelList")
             }
         }
+    }
+
+    private var modelSearchField: some View {
+        NativeSearchField(placeholder: "Search models", text: $searchText)
+            .frame(height: 28)
+            .accessibilityIdentifier("settings.modelSearch")
     }
 
     private var promptsPane: some View {
@@ -246,12 +297,7 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            }
+            .designPanelSurface(cornerRadius: MLXHubDesignSystem.Radius.control)
             .frame(maxWidth: .infinity)
 
             Picker("Filter", selection: $selectedFilter) {
@@ -275,8 +321,11 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(.thinMaterial)
-                    .clipShape(Capsule())
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: 1)
+                    }
 
                 Spacer()
             }
@@ -291,12 +340,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .background(.thinMaterial.opacity(0.65))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.primary.opacity(0.07), lineWidth: 1)
-            }
+            .designPanelSurface(cornerRadius: MLXHubDesignSystem.Radius.card)
         }
     }
 
@@ -311,8 +355,14 @@ struct SettingsView: View {
 
     private func revealPendingModelIfNeeded(_ proxy: ScrollViewProxy) {
         guard !pendingDownloadModelId.isEmpty else { return }
+
+        guard let pendingModel else {
+            pendingDownloadModelId = ""
+            return
+        }
+
         selectedPane = .models
-        showDetailedModels = true
+        selectedModelMode = SettingsModelMode(modality: pendingModel.modality)
         scrollToPendingModel(proxy)
     }
 
@@ -330,15 +380,69 @@ struct SettingsView: View {
 
     private var pendingModel: DownloadableModel? {
         guard !pendingDownloadModelId.isEmpty,
-              let model = DownloadableModel.embeddedModel(modelId: pendingDownloadModelId),
+              let model = allModels.first(where: { $0.modelId == pendingDownloadModelId })
+                ?? DownloadableModel.embeddedModel(modelId: pendingDownloadModelId),
               downloadManager.state(for: model) != .downloaded else {
             return nil
         }
         return model
     }
 
+    private func clearPendingDownloadIfReady() {
+        guard !pendingDownloadModelId.isEmpty,
+              let model = allModels.first(where: { $0.modelId == pendingDownloadModelId })
+                ?? DownloadableModel.embeddedModel(modelId: pendingDownloadModelId),
+              downloadManager.state(for: model) == .downloaded else {
+            return
+        }
+        pendingDownloadModelId = ""
+    }
+
+    private func clearInitialFocus() {
+        DispatchQueue.main.async {
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+    }
+
+    private var selectedModeModels: [DownloadableModel] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mode = selectedModelMode
+
+        let models = allModels.filter { model in
+            model.modality == mode.modality
+                && (query.isEmpty || model.matchesDownloadSearch(query))
+        }
+
+        return ModelSettingsModelSorter.sorted(
+            models: models,
+            selectedModelId: defaultModelId(for: mode),
+            recommendedModelId: recommendedModelId(for: mode),
+            state: { downloadManager.state(for: $0) }
+        )
+    }
+
     private var readyCount: Int {
         allModels.filter { downloadManager.state(for: $0) == .downloaded }.count
+    }
+
+    private var downloadedSizeGB: Double {
+        allModels
+            .filter { downloadManager.state(for: $0) == .downloaded }
+            .reduce(0) { $0 + $1.downloadSizeGB }
+    }
+
+    private func defaultModelId(for mode: SettingsModelMode) -> String? {
+        _ = modelSelectionRevision
+        return ModelSelectionStore().selectedProfile(for: mode.modality)?.modelId
+    }
+
+    private func recommendedModelId(for mode: SettingsModelMode) -> String? {
+        ModelCapabilityProfile.bestProfile(for: mode.modality)?.modelId
+    }
+
+    private func setDefaultModel(_ model: DownloadableModel, for mode: SettingsModelMode) {
+        ModelSelectionStore().setSelectedModelId(model.modelId, for: mode.modality)
+        modelSelectionRevision += 1
     }
 
     private var recommendedStarterModel: DownloadableModel {
@@ -346,35 +450,30 @@ struct SettingsView: View {
             ?? allModels.first!
     }
 
-    private var bestProfilesForThisMac: [ModelCapabilityProfile] {
-        ModelModality.allCases.compactMap { bestProfile(for: $0) }
-    }
-
     private var capabilityItems: [CapabilitySetupItem] {
         let items: [CapabilitySetupItem?] = [
             CapabilitySetupItem(
                 title: "Chat",
-                subtitle: "Local conversation and image understanding",
+                subtitle: "Conversation and image understanding",
                 icon: "bubble.left.and.bubble.right",
                 model: recommendedStarterModel,
-                fit: modelFit(for: recommendedStarterModel),
                 state: downloadManager.state(for: recommendedStarterModel)
             ),
             capabilityItem(
-                title: "Image",
-                subtitle: "Generate or edit images",
+                title: "Images",
+                subtitle: "Image creation",
                 icon: "photo",
                 modality: .image
             ),
             capabilityItem(
-                title: "Speech",
-                subtitle: "Create spoken audio",
+                title: "Voice",
+                subtitle: "Voice generation",
                 icon: "waveform",
                 modality: .audio
             ),
             capabilityItem(
                 title: "Music",
-                subtitle: "Generate local music",
+                subtitle: "Music generation",
                 icon: "music.note",
                 modality: .music
             )
@@ -399,7 +498,6 @@ struct SettingsView: View {
             subtitle: subtitle,
             icon: icon,
             model: model,
-            fit: modelFit(for: model),
             state: downloadManager.state(for: model)
         )
     }
@@ -408,8 +506,18 @@ struct SettingsView: View {
         allModels.filter { downloadManager.state(for: $0).isDownloading }.count
     }
 
-    private var totalDownloadSizeGB: Double {
-        allModels.reduce(0) { $0 + $1.downloadSizeGB }
+    private var modelSetupStatus: ModelSetupStatus {
+        if activeCount > 0 {
+            return .downloading
+        }
+
+        let items = capabilityItems
+        if !items.isEmpty,
+           items.allSatisfy({ $0.model.isRuntimeCompatible && $0.state == .downloaded }) {
+            return .ready
+        }
+
+        return .needsSetup
     }
 
     private func bestProfile(for modality: ModelModality) -> ModelCapabilityProfile? {
@@ -465,6 +573,142 @@ private struct ModelListSortKey: Comparable {
     }
 }
 
+struct ModelSettingsModelSorter {
+    static func sorted(
+        models: [DownloadableModel],
+        selectedModelId: String?,
+        recommendedModelId: String?,
+        state: (DownloadableModel) -> ModelDownloadManager.DownloadState,
+        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB,
+        runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
+    ) -> [DownloadableModel] {
+        models.sorted { lhs, rhs in
+            sortKey(
+                for: lhs,
+                selectedModelId: selectedModelId,
+                recommendedModelId: recommendedModelId,
+                state: state(lhs),
+                hardwareMemoryGB: hardwareMemoryGB,
+                runtimeManifest: runtimeManifest
+            ) < sortKey(
+                for: rhs,
+                selectedModelId: selectedModelId,
+                recommendedModelId: recommendedModelId,
+                state: state(rhs),
+                hardwareMemoryGB: hardwareMemoryGB,
+                runtimeManifest: runtimeManifest
+            )
+        }
+    }
+
+    private static func sortKey(
+        for model: DownloadableModel,
+        selectedModelId: String?,
+        recommendedModelId: String?,
+        state: ModelDownloadManager.DownloadState,
+        hardwareMemoryGB: Double,
+        runtimeManifest: RuntimeManifest?
+    ) -> ModelSettingsSortKey {
+        ModelSettingsSortKey(
+            defaultRank: selectedModelId == model.modelId ? 0 : 1,
+            recommendedRank: recommendedModelId == model.modelId ? 0 : 1,
+            runtimeRank: isRuntimeCompatible(model, manifest: runtimeManifest) ? 0 : 1,
+            stateRank: state.sortRank,
+            fitRank: ModelFit
+                .classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: hardwareMemoryGB)
+                .settingsSortRank,
+            sizeRank: model.downloadSizeGB,
+            name: model.name
+        )
+    }
+
+    private static func isRuntimeCompatible(_ model: DownloadableModel, manifest: RuntimeManifest?) -> Bool {
+        model.runtime.isSatisfied(by: manifest) && (manifest?.supports(backend: model.backend) ?? true)
+    }
+}
+
+struct ModelSettingsSortKey: Comparable {
+    let defaultRank: Int
+    let recommendedRank: Int
+    let runtimeRank: Int
+    let stateRank: Int
+    let fitRank: Int
+    let sizeRank: Double
+    let name: String
+
+    static func < (lhs: ModelSettingsSortKey, rhs: ModelSettingsSortKey) -> Bool {
+        if lhs.defaultRank != rhs.defaultRank { return lhs.defaultRank < rhs.defaultRank }
+        if lhs.recommendedRank != rhs.recommendedRank { return lhs.recommendedRank < rhs.recommendedRank }
+        if lhs.runtimeRank != rhs.runtimeRank { return lhs.runtimeRank < rhs.runtimeRank }
+        if lhs.stateRank != rhs.stateRank { return lhs.stateRank < rhs.stateRank }
+        if lhs.fitRank != rhs.fitRank { return lhs.fitRank < rhs.fitRank }
+        if lhs.sizeRank != rhs.sizeRank { return lhs.sizeRank < rhs.sizeRank }
+        return lhs.name < rhs.name
+    }
+}
+
+private enum SettingsModelMode: String, CaseIterable, Identifiable {
+    case chat
+    case images
+    case voice
+    case music
+
+    var id: String { rawValue }
+
+    init(modality: ModelModality) {
+        switch modality {
+        case .vision:
+            self = .chat
+        case .image:
+            self = .images
+        case .audio:
+            self = .voice
+        case .music:
+            self = .music
+        }
+    }
+
+    var modality: ModelModality {
+        switch self {
+        case .chat: return .vision
+        case .images: return .image
+        case .voice: return .audio
+        case .music: return .music
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .chat: return "Chat"
+        case .images: return "Images"
+        case .voice: return "Voice"
+        case .music: return "Music"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .chat: return "bubble.left.and.bubble.right"
+        case .images: return "photo"
+        case .voice: return "waveform"
+        case .music: return "music.note"
+        }
+    }
+
+    var defaultTitle: String {
+        "Default for \(title)"
+    }
+
+    var purpose: String {
+        switch self {
+        case .chat: return "Conversation and image understanding"
+        case .images: return "Image creation"
+        case .voice: return "Voice generation"
+        case .music: return "Music generation"
+        }
+    }
+}
+
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case models
     case advanced
@@ -481,10 +725,102 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .models:
-            return "Download once, then use models locally."
+            return "Choose what runs locally on this Mac."
         case .advanced:
             return "Tune prompts and tool behavior."
         }
+    }
+}
+
+private enum ModelSetupStatus {
+    case ready
+    case downloading
+    case needsSetup
+
+    var title: String {
+        switch self {
+        case .ready: return "Ready"
+        case .downloading: return "Downloading"
+        case .needsSetup: return "Needs setup"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .ready: return "checkmark.circle.fill"
+        case .downloading: return "arrow.down.circle.fill"
+        case .needsSetup: return "arrow.down.circle"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .ready: return .secondary
+        case .downloading: return .accentColor
+        case .needsSetup: return .orange
+        }
+    }
+}
+
+private struct ModelSetupBadge: View {
+    let status: ModelSetupStatus
+
+    var body: some View {
+        Label(status.title, systemImage: status.icon)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(status.tint)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(status.tint.opacity(0.10))
+            .clipShape(Capsule())
+    }
+}
+
+private struct ModelHeaderBadge: View {
+    let title: String
+    let value: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        Label {
+            HStack(spacing: 4) {
+                Text(title)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .fontWeight(.semibold)
+            }
+        } icon: {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: 1)
+        }
+    }
+}
+
+private struct ModelModePicker: View {
+    @Binding var selectedMode: SettingsModelMode
+
+    var body: some View {
+        Picker(selection: $selectedMode) {
+            ForEach(SettingsModelMode.allCases) { mode in
+                Label(mode.title, systemImage: mode.icon)
+                    .tag(mode)
+            }
+        } label: {
+            EmptyView()
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 300, alignment: .leading)
+        .accessibilityIdentifier("settings.modelModePicker")
     }
 }
 
@@ -493,10 +829,109 @@ private struct CapabilitySetupItem: Identifiable {
     let subtitle: String
     let icon: String
     let model: DownloadableModel
-    let fit: ModelFit
     let state: ModelDownloadManager.DownloadState
 
     var id: String { title }
+}
+
+private struct RuntimeUpdateSection: View {
+    @ObservedObject var manager: RuntimeUpdateManager
+
+    var body: some View {
+        switch manager.state {
+        case .available(let asset):
+            updateCard(
+                title: "Runtime update available",
+                detail: "Runtime \(asset.version), \(formatBytes(asset.sizeBytes))",
+                icon: "arrow.triangle.2.circlepath.circle.fill",
+                tint: .accentColor
+            ) {
+                Button {
+                    Task {
+                        await manager.installRuntime(asset)
+                    }
+                } label: {
+                    Label("Install Runtime", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        case .installing:
+            updateCard(
+                title: "Installing runtime",
+                detail: "Verifying and activating the downloaded runtime.",
+                icon: "gearshape.2.fill",
+                tint: .accentColor
+            ) {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        case .installed(let version):
+            updateCard(
+                title: "Runtime installed",
+                detail: "Runtime \(version) is ready for compatible models.",
+                icon: "checkmark.circle.fill",
+                tint: .secondary
+            ) {
+                EmptyView()
+            }
+        case .failed(let message):
+            updateCard(
+                title: "Runtime update unavailable",
+                detail: message,
+                icon: "exclamationmark.triangle.fill",
+                tint: .orange
+            ) {
+                Button {
+                    Task {
+                        await manager.refreshStableChannel()
+                    }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+        case .checking, .idle:
+            EmptyView()
+        }
+    }
+
+    private func updateCard<Action: View>(
+        title: String,
+        detail: String,
+        icon: String,
+        tint: Color,
+        @ViewBuilder action: () -> Action
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .designTintSurface(tint, cornerRadius: MLXHubDesignSystem.Radius.control)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+            action()
+        }
+        .padding(12)
+        .designTintSurface(tint, cornerRadius: MLXHubDesignSystem.Radius.card)
+    }
+
+    private func formatBytes(_ bytes: Int64?) -> String {
+        guard let bytes else { return "size unknown" }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
 }
 
 private struct CapabilitySetupSection: View {
@@ -511,7 +946,7 @@ private struct CapabilitySetupSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Capabilities")
+            Text("Ready for this Mac")
                 .font(.headline)
 
             LazyVGrid(columns: columns, spacing: 10) {
@@ -537,98 +972,99 @@ private struct CapabilitySetupCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: item.icon)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 19, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(width: 34, height: 34)
-                .background(tint.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: 44, height: 44)
+                .designTintSurface(tint, cornerRadius: MLXHubDesignSystem.Radius.control)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(item.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.title3.weight(.semibold))
 
+                    Spacer(minLength: 8)
                     statusLabel
-                    fitLabel
                 }
 
                 Text(item.subtitle)
-                    .font(.system(size: 12))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
-
-                Text("\(item.model.name) - \(formatSize(item.model.downloadSizeGB))")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.tertiary)
                     .lineLimit(1)
 
+                Text(item.model.name)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
                 actionView
-                    .padding(.top, 3)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
-        .background(.thinMaterial.opacity(0.68))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(tint.opacity(0.14), lineWidth: 1)
-        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 136, alignment: .topLeading)
+        .designTintSurface(tint, cornerRadius: MLXHubDesignSystem.Radius.card)
     }
 
     @ViewBuilder
     private var actionView: some View {
-        switch item.state {
-        case .downloaded:
-            EmptyView()
-        case .downloading(let progress):
-            VStack(alignment: .leading, spacing: 4) {
-                ProgressView(value: progress?.fractionCompleted)
-                    .frame(width: 140)
-                Text(progress?.displayText ?? "Downloading")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        if !item.model.isRuntimeCompatible {
+            Label("Update needed", systemImage: "arrow.triangle.2.circlepath")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+        } else {
+            switch item.state {
+            case .downloaded:
+                EmptyView()
+            case .downloading(let progress):
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: progress?.fractionCompleted)
+                        .frame(maxWidth: 180)
+                    Text(progress?.displayText ?? "Downloading")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Button {
+                            onPause(item.model)
+                        } label: {
+                            Label("Pause", systemImage: "pause.fill")
+                        }
+                        Button(role: .cancel) {
+                            onCancel(item.model)
+                        } label: {
+                            Label("Cancel", systemImage: "xmark")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            case .paused:
                 HStack(spacing: 6) {
                     Button {
-                        onPause(item.model)
+                        onDownload(item.model)
                     } label: {
-                        Label("Pause", systemImage: "pause.fill")
+                        Label("Resume", systemImage: "play.fill")
                     }
+                    .buttonStyle(.borderedProminent)
+
                     Button(role: .cancel) {
                         onCancel(item.model)
                     } label: {
                         Label("Cancel", systemImage: "xmark")
                     }
                 }
-                .buttonStyle(.bordered)
                 .controlSize(.small)
-            }
-        case .paused:
-            HStack(spacing: 6) {
+            case .notDownloaded, .failed:
                 Button {
                     onDownload(item.model)
                 } label: {
-                    Label("Resume", systemImage: "play.fill")
+                    Label(item.state.recoveryActionTitle, systemImage: item.state.recoveryActionIcon)
                 }
                 .buttonStyle(.borderedProminent)
-
-                Button(role: .cancel) {
-                    onCancel(item.model)
-                } label: {
-                    Label("Cancel", systemImage: "xmark")
-                }
+                .controlSize(.regular)
             }
-            .controlSize(.small)
-        case .notDownloaded, .failed:
-            Button {
-                onDownload(item.model)
-            } label: {
-                Label(item.state.recoveryActionTitle, systemImage: item.state.recoveryActionIcon)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         }
     }
 
@@ -653,7 +1089,7 @@ private struct CapabilitySetupCard: View {
         case .failed:
             return item.state.failureStatusTitle
         case .notDownloaded:
-            return "Missing"
+            return "Needs setup"
         }
     }
 
@@ -668,14 +1104,14 @@ private struct CapabilitySetupCard: View {
         case .failed:
             return item.state.failureStatusIcon
         case .notDownloaded:
-            return "arrow.down.circle"
+            return "arrow.down.circle.fill"
         }
     }
 
     private var tint: Color {
         switch item.state {
         case .downloaded:
-            return .green
+            return .secondary
         case .downloading:
             return .accentColor
         case .paused:
@@ -683,145 +1119,415 @@ private struct CapabilitySetupCard: View {
         case .failed:
             return item.state.failureTint
         case .notDownloaded:
-            return .secondary
-        }
-    }
-
-    private var fitLabel: some View {
-        Label(item.fit.shortTitle, systemImage: item.fit.systemImage)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(item.fit.tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(item.fit.tint.opacity(0.10))
-            .clipShape(Capsule())
-    }
-}
-
-private struct BestForThisMacSection: View {
-    let profiles: [ModelCapabilityProfile]
-    @ObservedObject var downloadManager: ModelDownloadManager
-    let onDownload: (DownloadableModel) -> Void
-    let onPause: (DownloadableModel) -> Void
-    let onCancel: (DownloadableModel) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Best for this Mac")
-                .font(.headline)
-
-            HStack(spacing: 10) {
-                ForEach(profiles) { profile in
-                    BestModelCard(
-                        profile: profile,
-                        state: downloadManager.state(for: profile.downloadableModel),
-                        onDownload: {
-                            onDownload(profile.downloadableModel)
-                        },
-                        onPause: {
-                            onPause(profile.downloadableModel)
-                        },
-                        onCancel: {
-                            onCancel(profile.downloadableModel)
-                        }
-                    )
-                }
-            }
+            return .orange
         }
     }
 }
 
-private struct BestModelCard: View {
-    let profile: ModelCapabilityProfile
+private struct ModelManagerRow: View {
+    let model: DownloadableModel
+    let mode: SettingsModelMode
     let state: ModelDownloadManager.DownloadState
+    let isDefault: Bool
+    let isRecommended: Bool
+    let isPendingDownload: Bool
+    @ObservedObject var runtimeUpdateManager: RuntimeUpdateManager
+    let onSetDefault: () -> Void
     let onDownload: () -> Void
     let onPause: () -> Void
     let onCancel: () -> Void
+    let onRemove: () -> Void
+
+    @State private var showsDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: profile.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(profile.fit().tint)
-                    .frame(width: 24, height: 24)
-                    .background(profile.fit().tint.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+        HStack(alignment: .top, spacing: 14) {
+            rowIcon
 
-                Text(profile.modality.displayName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                rowMainLine
+                detailsDisclosure
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .background(isPendingDownload ? Color.accentColor.opacity(0.10) : Color.clear)
+        .overlay(alignment: .leading) {
+            if isPendingDownload {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 3)
+            }
+        }
+        .accessibilityIdentifier("settings.modelRow.\(model.accessibilityIdentifierComponent)")
+    }
+
+    private var rowIcon: some View {
+        Image(systemName: mode.icon)
+            .font(.system(size: MLXHubDesignSystem.Icon.medium, weight: .semibold))
+            .foregroundStyle(rowTint)
+            .frame(width: 36, height: 36)
+            .designTintSurface(rowTint, cornerRadius: MLXHubDesignSystem.Radius.control)
+            .accessibilityIdentifier("settings.modelRow.icon")
+    }
+
+    private var rowMainLine: some View {
+        HStack(alignment: .top, spacing: 16) {
+            modelTextBlock
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            actionCluster
+        }
+    }
+
+    private var modelTextBlock: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(model.name)
+                    .font(MLXHubDesignSystem.Typography.compactBodySemibold)
+
+                if isDefault {
+                    Label(mode.defaultTitle, systemImage: "checkmark.circle.fill")
+                        .font(MLXHubDesignSystem.Typography.captionMedium)
+                        .foregroundStyle(Color.accentColor)
+                        .lineLimit(1)
+                }
             }
 
-            Text(profile.name)
-                .font(.system(size: 13, weight: .semibold))
+            Text(mode.purpose)
+                .font(MLXHubDesignSystem.Typography.compactBody)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
 
-            HStack(spacing: 6) {
-                Label(profile.fit().shortTitle, systemImage: profile.fit().systemImage)
-                    .foregroundStyle(profile.fit().tint)
-                Text(formatSize(profile.downloadSizeGB))
+            HStack(spacing: 7) {
+                readinessBadge
+                recommendationBadge
+                Text(formatSize(model.downloadSizeGB))
+                    .font(MLXHubDesignSystem.Typography.microMedium)
                     .foregroundStyle(.secondary)
             }
-            .font(.caption2.weight(.medium))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.modelRow.textColumn")
+    }
 
-            Spacer(minLength: 0)
-
+    private var actionCluster: some View {
+        HStack(alignment: .top, spacing: 8) {
             actionView
+                .frame(width: 176, alignment: .trailing)
+
+            secondaryActionsMenu
+                .frame(width: 28, height: 28, alignment: .topTrailing)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
-        .background(.thinMaterial.opacity(0.68))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        .frame(width: 212, alignment: .trailing)
+        .padding(.top, 1)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.modelRow.actionColumn")
+    }
+
+    private var detailsDisclosure: some View {
+        DisclosureGroup(isExpanded: $showsDetails) {
+            VStack(alignment: .leading, spacing: 6) {
+                ModelDetailLine(label: "Source", value: model.source.downloadRepository ?? model.modelId)
+                ModelDetailLine(label: "Model ID", value: model.modelId)
+                ModelDetailLine(label: "Backend", value: model.backend.displayName)
+                ModelDetailLine(label: "Runtime", value: "Runtime \(model.runtime.minVersion)+")
+                ModelDetailLine(label: "Memory", value: model.estimatedMemoryGB.map(formatSize) ?? "Unknown")
+                ModelDetailLine(label: "Storage", value: storageLabel)
+            }
+            .padding(.top, 6)
+        } label: {
+            Text("Details")
+                .font(MLXHubDesignSystem.Typography.captionMedium)
+                .foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.modelRow.details")
     }
 
     @ViewBuilder
     private var actionView: some View {
-        switch state {
-        case .downloaded:
-            Label("Ready", systemImage: "checkmark.circle.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.green)
-        case .downloading:
-            HStack(spacing: 6) {
-                Label("Downloading", systemImage: "arrow.down.circle.fill")
-                    .foregroundStyle(Color.accentColor)
-                Button(action: onPause) {
-                    Image(systemName: "pause.fill")
-                }
-                .help("Pause download")
-                Button(role: .cancel, action: onCancel) {
-                    Image(systemName: "xmark")
-                }
-                .help("Cancel download")
+        if !model.isRuntimeCompatible {
+            VStack(alignment: .trailing, spacing: 6) {
+                Label("Runtime update required", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.orange)
+
+                runtimeAction
             }
-            .font(.caption.weight(.semibold))
-            .buttonStyle(.borderless)
+            .accessibilityIdentifier("settings.modelState.runtimeRequired")
+        } else {
+            stateAction
+        }
+    }
+
+    @ViewBuilder
+    private var runtimeAction: some View {
+        switch runtimeUpdateManager.state {
+        case .available(let asset):
+            Button {
+                Task {
+                    await runtimeUpdateManager.installRuntime(asset)
+                }
+            } label: {
+                Label("Install Runtime", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        case .installing:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Installing")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        case .checking:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Checking")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        case .failed:
+            Button {
+                Task {
+                    await runtimeUpdateManager.refreshStableChannel()
+                }
+            } label: {
+                Label("Retry Runtime", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        case .idle, .installed:
+            Button {
+                Task {
+                    await runtimeUpdateManager.refreshStableChannel()
+                }
+            } label: {
+                Label("Check Runtime", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private var stateAction: some View {
+        switch state {
+        case .notDownloaded:
+            Button {
+                onDownload()
+            } label: {
+                Label("Download", systemImage: "arrow.down.circle")
+                    .frame(width: primaryActionWidth)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .accessibilityIdentifier("settings.modelState.missing")
+
+        case .downloading(let progress):
+            VStack(alignment: .trailing, spacing: 6) {
+                if let fractionCompleted = progress?.fractionCompleted {
+                    ProgressView(value: fractionCompleted)
+                        .frame(width: 150)
+                    Text(progress?.displayText ?? "Downloading")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Downloading")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 6) {
+                    compactActionButton("Pause", systemImage: "pause.fill", action: onPause)
+                    compactActionButton("Cancel", systemImage: "xmark", role: .cancel, action: onCancel)
+                }
+            }
+            .accessibilityIdentifier("settings.modelState.downloading")
+
         case .paused:
             HStack(spacing: 6) {
                 Button(action: onDownload) {
                     Label("Resume", systemImage: "play.fill")
+                        .frame(width: primaryActionWidth)
                 }
-                Button(role: .cancel, action: onCancel) {
-                    Image(systemName: "xmark")
-                }
-                .help("Cancel download")
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+
+                compactActionButton("Cancel", systemImage: "xmark", role: .cancel, action: onCancel)
             }
-            .font(.caption.weight(.semibold))
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        case .notDownloaded, .failed:
-            Button {
-                onDownload()
+            .accessibilityIdentifier("settings.modelState.paused")
+
+        case .downloaded:
+            if !isDefault {
+                Button {
+                    onSetDefault()
+                } label: {
+                    Label("Use for \(mode.title)", systemImage: "checkmark.circle")
+                        .frame(width: primaryActionWidth)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier("settings.modelState.ready")
+            }
+
+        case .failed(let message):
+            let failedState = ModelDownloadManager.DownloadState.failed(message)
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+
+                Button(action: onDownload) {
+                    Label(failedState.recoveryActionTitle, systemImage: failedState.recoveryActionIcon)
+                        .frame(width: primaryActionWidth)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+            .accessibilityIdentifier(
+                failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryActionsMenu: some View {
+        if hasSecondaryActions {
+            Menu {
+                if canSetDefaultFromMenu {
+                    Button {
+                        onSetDefault()
+                    } label: {
+                        Label("Set as Default", systemImage: "checkmark.circle")
+                    }
+                }
+
+                if canSetDefaultFromMenu && canRemoveFromMenu {
+                    Divider()
+                }
+
+                if canRemoveFromMenu {
+                    Button(role: .destructive) {
+                        onRemove()
+                    } label: {
+                        Label("Remove Model...", systemImage: "trash")
+                    }
+                }
             } label: {
-                Label(state.recoveryActionTitle, systemImage: state.recoveryActionIcon)
+                Label("More", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 24, height: 24)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("More actions")
+            .accessibilityIdentifier("settings.modelState.moreActions")
+        }
+    }
+
+    private func compactActionButton(
+        _ title: String,
+        systemImage: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 24, height: 22)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help(title)
+        .accessibilityLabel(title)
+    }
+
+    private var hasSecondaryActions: Bool {
+        canSetDefaultFromMenu || canRemoveFromMenu
+    }
+
+    private var canSetDefaultFromMenu: Bool {
+        guard !isDefault else { return false }
+
+        switch state {
+        case .downloaded:
+            return false
+        case .notDownloaded, .downloading, .paused, .failed:
+            return true
+        }
+    }
+
+    private var canRemoveFromMenu: Bool {
+        state == .downloaded
+    }
+
+    private var primaryActionWidth: CGFloat {
+        112
+    }
+
+    private var readinessBadge: some View {
+        Label(state.shortStatusTitle, systemImage: state.shortStatusIcon)
+            .font(MLXHubDesignSystem.Typography.microMedium)
+            .foregroundStyle(state.statusTint)
+            .accessibilityIdentifier("settings.modelState.\(state.accessibilityKey)")
+    }
+
+    @ViewBuilder
+    private var recommendationBadge: some View {
+        if isRecommended {
+            Label("Best for this Mac", systemImage: "star.circle.fill")
+                .font(MLXHubDesignSystem.Typography.microMedium)
+                .foregroundStyle(.secondary)
+        } else {
+            Label(modelFit.alternativeTitle, systemImage: modelFit.systemImage)
+                .font(MLXHubDesignSystem.Typography.microMedium)
+                .foregroundStyle(modelFit.tint)
+        }
+    }
+
+    private var modelFit: ModelFit {
+        ModelFit.classify(
+            estimatedMemoryGB: model.estimatedMemoryGB,
+            hardwareMemoryGB: AIModel.currentHardwareMemoryGB
+        )
+    }
+
+    private var rowTint: Color {
+        isDefault ? .accentColor : .secondary
+    }
+
+    private var storageLabel: String {
+        model.source.usesComponentBundle ? "MLXHub checkpoints" : "Hugging Face cache"
+    }
+}
+
+private struct ModelDetailLine: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+
+            Text(value)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
     }
 }
@@ -838,8 +1544,7 @@ private struct AdvancedQuickControls: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 34, height: 34)
-                    .background(Color.accentColor.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .designTintSurface(Color.accentColor, cornerRadius: MLXHubDesignSystem.Radius.control)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Prompt controls")
@@ -877,12 +1582,7 @@ private struct AdvancedQuickControls: View {
             }
         }
         .padding(14)
-        .background(.thinMaterial.opacity(0.68))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
+        .designPanelSurface(cornerRadius: MLXHubDesignSystem.Radius.card)
     }
 }
 
@@ -913,10 +1613,9 @@ private struct PromptEditorSection: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .frame(minHeight: title == "Tool Definitions" ? 180 : 120)
-                .background(.thinMaterial.opacity(0.65))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous)
                         .stroke(borderColor, lineWidth: 1)
                 }
 
@@ -980,11 +1679,10 @@ private struct ToolDefinitionsEditorSection: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .frame(minHeight: 180)
-                .background(.thinMaterial.opacity(0.65))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(validationMessage == nil ? Color.primary.opacity(0.07) : Color.orange.opacity(0.45), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: MLXHubDesignSystem.Radius.control, style: .continuous)
+                        .stroke(validationMessage == nil ? MLXHubDesignSystem.Surface.quietHairline : Color.orange.opacity(0.45), lineWidth: 1)
                 }
 
             if let validationMessage {
@@ -1062,145 +1760,162 @@ private struct ModelDownloadRow: View {
                 pendingDownloadModelId = ""
             }
         }
+        .onAppear {
+            if isPendingDownload, downloadManager.state(for: model) == .downloaded {
+                pendingDownloadModelId = ""
+            }
+        }
         .accessibilityIdentifier("settings.modelRow.\(model.accessibilityIdentifierComponent)")
     }
 
     @ViewBuilder
     private var statusView: some View {
-        switch downloadManager.state(for: model) {
-        case .notDownloaded:
+        if !model.isRuntimeCompatible {
             VStack(alignment: .trailing, spacing: 6) {
-                if isPendingDownload {
-                    Label("Required", systemImage: "arrow.down.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Button {
-                    downloadManager.download(model)
-                } label: {
-                    Label("Download", systemImage: "arrow.down.circle")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("settings.modelState.missing")
-            }
-
-        case .downloading(let progress):
-            VStack(alignment: .trailing, spacing: 6) {
-                if let fractionCompleted = progress?.fractionCompleted {
-                    ProgressView(value: fractionCompleted)
-                        .frame(width: 160)
-
-                    HStack(spacing: 6) {
-                        Text(progress?.status ?? "Downloading")
-
-                        Text(progress?.displayText ?? "")
-                            .fontWeight(.semibold)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                } else {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(progress?.displayText ?? "Downloading")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
-                if let detailText = progress?.detailText {
-                    Text(detailText)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-
-                HStack(spacing: 6) {
-                    Button {
-                        downloadManager.pause(model)
-                    } label: {
-                        Label("Pause", systemImage: "pause.fill")
-                    }
-
-                    Button(role: .cancel) {
-                        downloadManager.cancel(model)
-                    } label: {
-                        Label("Cancel", systemImage: "xmark")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-            .accessibilityIdentifier("settings.modelState.downloading")
-
-        case .paused(let progress):
-            VStack(alignment: .trailing, spacing: 6) {
-                Label("Paused", systemImage: "pause.circle.fill")
+                Label("Runtime update required", systemImage: "arrow.triangle.2.circlepath")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
-
-                if let detailText = progress?.detailText {
-                    Text(detailText)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-
-                HStack(spacing: 6) {
-                    Button {
-                        downloadManager.resume(model)
-                    } label: {
-                        Label("Resume", systemImage: "play.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button(role: .cancel) {
-                        downloadManager.cancel(model)
-                    } label: {
-                        Label("Cancel", systemImage: "xmark")
-                    }
-                }
-                .controlSize(.small)
-            }
-            .accessibilityIdentifier("settings.modelState.paused")
-
-        case .downloaded:
-            Label("Ready", systemImage: "checkmark.circle.fill")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.green)
-                .accessibilityIdentifier("settings.modelState.ready")
-
-        case .failed(let message):
-            let failedState = ModelDownloadManager.DownloadState.failed(message)
-            VStack(alignment: .trailing, spacing: 6) {
-                Label(failedState.failureStatusTitle, systemImage: failedState.failureStatusIcon)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(failedState.failureTint)
-
-                Text(message)
+                Text("Requires runtime \(model.runtime.minVersion)+")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
-                    .lineLimit(3)
+            }
+            .accessibilityIdentifier("settings.modelState.runtimeRequired")
+        } else {
+            switch downloadManager.state(for: model) {
+            case .notDownloaded:
+                VStack(alignment: .trailing, spacing: 6) {
+                    if isPendingDownload {
+                        Label("Required", systemImage: "arrow.down.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
-                Button {
-                    downloadManager.download(model)
-                } label: {
-                    Label(failedState.recoveryActionTitle, systemImage: failedState.recoveryActionIcon)
+                    Button {
+                        downloadManager.download(model)
+                    } label: {
+                        Label("Download", systemImage: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("settings.modelState.missing")
+                }
+
+            case .downloading(let progress):
+                VStack(alignment: .trailing, spacing: 6) {
+                    if let fractionCompleted = progress?.fractionCompleted {
+                        ProgressView(value: fractionCompleted)
+                            .frame(width: 160)
+
+                        HStack(spacing: 6) {
+                            Text(progress?.status ?? "Downloading")
+
+                            Text(progress?.displayText ?? "")
+                                .fontWeight(.semibold)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    } else {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(progress?.displayText ?? "Downloading")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    if let detailText = progress?.detailText {
+                        Text(detailText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+
+                    HStack(spacing: 6) {
+                        Button {
+                            downloadManager.pause(model)
+                        } label: {
+                            Label("Pause", systemImage: "pause.fill")
+                        }
+
+                        Button(role: .cancel) {
+                            downloadManager.cancel(model)
+                        } label: {
+                            Label("Cancel", systemImage: "xmark")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .accessibilityIdentifier("settings.modelState.downloading")
+
+            case .paused(let progress):
+                VStack(alignment: .trailing, spacing: 6) {
+                    Label("Paused", systemImage: "pause.circle.fill")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.orange)
+
+                    if let detailText = progress?.detailText {
+                        Text(detailText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+
+                    HStack(spacing: 6) {
+                        Button {
+                            downloadManager.resume(model)
+                        } label: {
+                            Label("Resume", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button(role: .cancel) {
+                            downloadManager.cancel(model)
+                        } label: {
+                            Label("Cancel", systemImage: "xmark")
+                        }
+                    }
+                    .controlSize(.small)
+                }
+                .accessibilityIdentifier("settings.modelState.paused")
+
+            case .downloaded:
+                Label("Ready", systemImage: "checkmark.circle.fill")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("settings.modelState.ready")
+
+            case .failed(let message):
+                let failedState = ModelDownloadManager.DownloadState.failed(message)
+                VStack(alignment: .trailing, spacing: 6) {
+                    Label(failedState.failureStatusTitle, systemImage: failedState.failureStatusIcon)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(failedState.failureTint)
+
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(3)
+
+                    Button {
+                        downloadManager.download(model)
+                    } label: {
+                        Label(failedState.recoveryActionTitle, systemImage: failedState.recoveryActionIcon)
+                    }
+                    .accessibilityIdentifier(
+                        failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
+                    )
                 }
                 .accessibilityIdentifier(
                     failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
                 )
             }
-            .accessibilityIdentifier(
-                failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
-            )
         }
     }
 
     private var storageLabel: String {
-        model.modelId.hasPrefix("ACE-Step/") ? "MLXHub checkpoints" : "Hugging Face cache"
+        model.source.usesComponentBundle ? "MLXHub checkpoints" : "Hugging Face cache"
     }
 
     private var modelFit: ModelFit {
@@ -1244,12 +1959,7 @@ private struct RequiredDownloadCallout: View {
             .help("Dismiss")
         }
         .padding(14)
-        .background(Color.accentColor.opacity(0.09))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
-        }
+        .designTintSurface(Color.accentColor, cornerRadius: MLXHubDesignSystem.Radius.control)
     }
 
     @ViewBuilder
@@ -1305,41 +2015,7 @@ private struct RequiredDownloadCallout: View {
 
         case .downloaded:
             Label("Ready", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        }
-    }
-}
-
-private struct ModelSummaryBadge: View {
-    let title: String
-    let value: String
-    let systemImage: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 14, height: 14)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                Text(value)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -1389,6 +2065,19 @@ private enum ModelDownloadFilter: String, CaseIterable, Identifiable {
 }
 
 private extension ModelDownloadManager.DownloadState {
+    var sortRank: Int {
+        switch self {
+        case .downloaded:
+            return 0
+        case .downloading, .paused:
+            return 1
+        case .notDownloaded:
+            return 2
+        case .failed:
+            return 3
+        }
+    }
+
     var isFailed: Bool {
         if case .failed = self {
             return true
@@ -1433,6 +2122,64 @@ private extension ModelDownloadManager.DownloadState {
     var failureTint: Color {
         isRepairableFailure ? .orange : .red
     }
+
+    var shortStatusTitle: String {
+        switch self {
+        case .downloaded:
+            return "Ready"
+        case .downloading:
+            return "Downloading"
+        case .paused:
+            return "Paused"
+        case .notDownloaded:
+            return "Missing"
+        case .failed:
+            return failureStatusTitle
+        }
+    }
+
+    var shortStatusIcon: String {
+        switch self {
+        case .downloaded:
+            return "checkmark.circle.fill"
+        case .downloading:
+            return "arrow.down.circle.fill"
+        case .paused:
+            return "pause.circle.fill"
+        case .notDownloaded:
+            return "arrow.down.circle"
+        case .failed:
+            return failureStatusIcon
+        }
+    }
+
+    var statusTint: Color {
+        switch self {
+        case .downloaded:
+            return .secondary
+        case .downloading:
+            return .accentColor
+        case .paused, .notDownloaded:
+            return .orange
+        case .failed:
+            return failureTint
+        }
+    }
+
+    var accessibilityKey: String {
+        switch self {
+        case .downloaded:
+            return "ready"
+        case .downloading:
+            return "downloading"
+        case .paused:
+            return "paused"
+        case .notDownloaded:
+            return "missing"
+        case .failed:
+            return isRepairableFailure ? "repair" : "failed"
+        }
+    }
 }
 
 private extension ModelModality {
@@ -1447,10 +2194,27 @@ private extension ModelModality {
 }
 
 private extension ModelFit {
+    var alternativeTitle: String {
+        switch self {
+        case .recommended: return "Works well"
+        case .compatible: return "Works"
+        case .heavy: return "Too large"
+        case .unknown: return "Unknown fit"
+        }
+    }
+
+    var settingsSortRank: Int {
+        switch self {
+        case .recommended: return 0
+        case .compatible: return 1
+        case .heavy: return 2
+        case .unknown: return 3
+        }
+    }
+
     var tint: Color {
         switch self {
-        case .recommended: return .green
-        case .compatible: return .accentColor
+        case .recommended, .compatible: return .secondary
         case .heavy: return .orange
         case .unknown: return .secondary
         }

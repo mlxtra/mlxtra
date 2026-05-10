@@ -30,6 +30,8 @@ let package = Package(
                 .copy("Resources/bridge_utils.py"),
                 .copy("Resources/python_bridge.py"),
                 .copy("Resources/acestep_bridge.py"),
+                .copy("Resources/model-catalog.json"),
+                .copy("Resources/stable-channel.json"),
                 .copy("Resources/runtime")
             ],
             swiftSettings: [

@@ -36,6 +36,64 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
     }
 
+    func testPerModeSelectionPersistsIndependentDefaultsForEachModality() {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelSelectionStore(userDefaults: defaults)
+        let imageModelId = "black-forest-labs/FLUX.2-klein-4B"
+        let speechModelId = "kugelaudio/kugelaudio-0-open"
+        let musicModelId = "ACE-Step/acestep-v15-turbo-continuous"
+
+        store.setSelectedModelId(AIModel.gemma4.modelId, for: .vision)
+        store.setSelectedModelId(imageModelId, for: .image)
+        store.setSelectedModelId(speechModelId, for: .audio)
+        store.setSelectedModelId(musicModelId, for: .music)
+
+        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId, AIModel.gemma4.modelId)
+        XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, imageModelId)
+        XCTAssertEqual(store.selectedProfile(for: .audio, hardwareMemoryGB: 16.0)?.modelId, speechModelId)
+        XCTAssertEqual(store.selectedProfile(for: .music, hardwareMemoryGB: 16.0)?.modelId, musicModelId)
+    }
+
+    func testModelSettingsSorterOrdersDefaultsRecommendationsReadinessFitAndSize() {
+        let selected = makeDownloadableModel(id: "selected", size: 8, memory: 10)
+        let recommended = makeDownloadableModel(id: "recommended", size: 7, memory: 3)
+        let readySmall = makeDownloadableModel(id: "ready-small", size: 2, memory: 3)
+        let missing = makeDownloadableModel(id: "missing", size: 1, memory: 3)
+        let incompatible = makeDownloadableModel(
+            id: "incompatible",
+            size: 1,
+            memory: 3,
+            runtime: ModelRuntimeRequirement(minVersion: "9.0.0", compatibilityApi: 1)
+        )
+        let states: [String: ModelDownloadManager.DownloadState] = [
+            selected.id: .notDownloaded,
+            recommended.id: .downloaded,
+            readySmall.id: .downloaded,
+            missing.id: .notDownloaded,
+            incompatible.id: .downloaded
+        ]
+
+        let sorted = ModelSettingsModelSorter.sorted(
+            models: [missing, incompatible, readySmall, selected, recommended],
+            selectedModelId: selected.modelId,
+            recommendedModelId: recommended.modelId,
+            state: { states[$0.id] ?? .notDownloaded },
+            hardwareMemoryGB: 8,
+            runtimeManifest: RuntimeManifest(
+                runtimeVersion: "0.1.0",
+                compatibilityApi: 1,
+                supportedBackends: RuntimeBackend.allCases
+            )
+        )
+
+        XCTAssertEqual(
+            sorted.map(\.id),
+            ["selected", "recommended", "ready-small", "missing", "incompatible"]
+        )
+    }
+
     func testParameterPersistenceIsPerModelAndRestoredAfterSwapping() {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
@@ -118,6 +176,79 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertNil(musicParameters["cfg_scale"])
     }
 
+    func testCatalogDecodingPreservesSourceRuntimeAndRanking() throws {
+        let data = try makeCatalogJSON(
+            modelId: "org/example-vlm",
+            memoryGB: 4.0,
+            minRuntimeVersion: "0.2.0"
+        )
+
+        let catalog = try ModelCatalogService.decodeCatalog(data: data, appVersion: "1.0.0")
+        let profile = try XCTUnwrap(catalog.profiles.first)
+
+        XCTAssertEqual(profile.modelId, "org/example-vlm")
+        XCTAssertEqual(profile.backend, .vlm)
+        XCTAssertEqual(profile.source.type, .huggingFaceSnapshot)
+        XCTAssertEqual(profile.source.revision, "main")
+        XCTAssertEqual(profile.runtime.minVersion, "0.2.0")
+        XCTAssertEqual(profile.ranking.quality, 90)
+    }
+
+    func testCatalogRejectsChecksumMismatch() throws {
+        let data = try makeCatalogJSON(modelId: "org/example-vlm")
+
+        XCTAssertThrowsError(
+            try ModelCatalogService.decodeCatalog(data: data, expectedSHA256: String(repeating: "0", count: 64))
+        ) { error in
+            XCTAssertEqual(error as? ModelCatalogError, .checksumMismatch)
+        }
+    }
+
+    func testCatalogRejectsIncompatibleAppVersion() throws {
+        let data = try makeCatalogJSON(modelId: "org/example-vlm", minAppVersion: "9.0.0")
+
+        XCTAssertThrowsError(
+            try ModelCatalogService.decodeCatalog(data: data, appVersion: "1.0.0")
+        ) { error in
+            XCTAssertEqual(error as? ModelCatalogError, .incompatibleAppVersion("9.0.0"))
+        }
+    }
+
+    func testCatalogServiceFallsBackWhenNoCacheOrBundleIsAvailable() {
+        let service = ModelCatalogService(loadCachedCatalog: false, loadBundledCatalog: false)
+
+        XCTAssertEqual(service.profiles.count, ModelCapabilityProfile.embedded.count)
+        XCTAssertNotNil(service.profile(legacyModel: .mini))
+    }
+
+    func testRuntimeCompatibilityUsesManifestVersionAndBackend() throws {
+        let data = try makeCatalogJSON(
+            modelId: "org/future-vlm",
+            memoryGB: 4.0,
+            minRuntimeVersion: "0.2.0"
+        )
+        let profile = try XCTUnwrap(ModelCatalogService.decodeCatalog(data: data, appVersion: "1.0.0").profiles.first)
+        let oldRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.0",
+            compatibilityApi: 1,
+            supportedBackends: [.vlm]
+        )
+        let newRuntime = RuntimeManifest(
+            runtimeVersion: "0.2.0",
+            compatibilityApi: 1,
+            supportedBackends: [.vlm]
+        )
+        let wrongBackendRuntime = RuntimeManifest(
+            runtimeVersion: "0.2.0",
+            compatibilityApi: 1,
+            supportedBackends: [.image]
+        )
+
+        XCTAssertFalse(oldRuntime.supports(profile: profile))
+        XCTAssertTrue(newRuntime.supports(profile: profile))
+        XCTAssertFalse(wrongBackendRuntime.supports(profile: profile))
+    }
+
     private var defaultsSuiteName: String {
         "MLXHubTests.ModelCapabilityProfileTests"
     }
@@ -126,5 +257,72 @@ final class ModelCapabilityProfileTests: XCTestCase {
         let defaults = UserDefaults(suiteName: defaultsSuiteName)!
         defaults.removePersistentDomain(forName: defaultsSuiteName)
         return defaults
+    }
+
+    private func makeDownloadableModel(
+        id: String,
+        size: Double,
+        memory: Double,
+        runtime: ModelRuntimeRequirement = ModelRuntimeRequirement()
+    ) -> DownloadableModel {
+        DownloadableModel(
+            id: id,
+            name: id,
+            subtitle: "Test model",
+            modelId: "org/\(id)",
+            modality: .vision,
+            backend: .vlm,
+            downloadSizeGB: size,
+            estimatedMemoryGB: memory,
+            source: ModelSource(type: .huggingFaceSnapshot, repo: "org/\(id)", revision: "main"),
+            runtime: runtime
+        )
+    }
+
+    private func makeCatalogJSON(
+        modelId: String,
+        memoryGB: Double = 4.0,
+        minRuntimeVersion: String = "0.1.0",
+        minAppVersion: String = "0.1.0"
+    ) throws -> Data {
+        Data("""
+        {
+          "schemaVersion": 1,
+          "catalogVersion": "test",
+          "minAppVersion": "\(minAppVersion)",
+          "models": [
+            {
+              "id": "\(modelId)",
+              "name": "Example VLM",
+              "subtitle": "Test model",
+              "modelId": "\(modelId)",
+              "modality": "vision",
+              "backend": "vlm",
+              "icon": "eye",
+              "capabilities": ["chat", "vision"],
+              "maxContextWindow": 4096,
+              "defaultMaxTokens": 512,
+              "downloadSizeGB": 1.0,
+              "estimatedMemoryGB": \(memoryGB),
+              "source": {
+                "type": "hugging_face_snapshot",
+                "repo": "\(modelId)",
+                "revision": "main",
+                "components": []
+              },
+              "runtime": {
+                "minVersion": "\(minRuntimeVersion)",
+                "compatibilityApi": 1
+              },
+              "ranking": {
+                "quality": 90,
+                "speed": 80
+              },
+              "parameters": [],
+              "presets": []
+            }
+          ]
+        }
+        """.utf8)
     }
 }

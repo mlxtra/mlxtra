@@ -154,6 +154,7 @@ class ChatViewModel: ObservableObject {
     @Published var isGenerating: Bool = false
     @Published var isDraftingMusicLyrics: Bool = false
     @Published var loadingMessage: String = ""
+    @Published var modelLoadProgress: ModelLoadProgress?
     @Published var streamingMessageId: UUID?
     @Published var modelDownloadRequest: DownloadableModel?
     @Published var pendingEngineDownloadModel: DownloadableModel?
@@ -254,7 +255,11 @@ class ChatViewModel: ObservableObject {
             return audioURL.path.localizedCaseInsensitiveContains("music") ? "Generated music" : "Generated speech"
         }
         if let visibleText = ReasoningContentFilter.visibleText(from: message.content), !visibleText.isEmpty {
-            return visibleText
+            return ChatDisplayText.singleLine(
+                visibleText,
+                fallback: message.isUser ? "Message" : "Assistant response",
+                maxLength: MLXHubDesignSystem.TextLimit.sidebarPreview
+            )
         }
         return message.isUser ? "Message" : "Assistant response"
     }
@@ -338,7 +343,7 @@ class ChatViewModel: ObservableObject {
 
         if chats.isEmpty {
             let newChat = Chat(
-                title: "New chat",
+                title: "",
                 messages: [],
                 timestamp: Date(),
                 icon: "message"
@@ -365,7 +370,7 @@ class ChatViewModel: ObservableObject {
         cancelGeneration()
 
         let newChat = Chat(
-            title: "New chat",
+            title: "",
             messages: [],
             timestamp: Date(),
             icon: "message"
@@ -383,10 +388,14 @@ class ChatViewModel: ObservableObject {
     }
 
     func renameChat(_ chatId: UUID, to title: String) {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTitle = ChatDisplayText.singleLine(
+            title,
+            fallback: "Untitled",
+            maxLength: MLXHubDesignSystem.TextLimit.renameTitle
+        )
         guard let index = chats.firstIndex(where: { $0.id == chatId }) else { return }
 
-        chats[index].title = trimmedTitle.isEmpty ? "New chat" : trimmedTitle
+        chats[index].title = normalizedTitle
         chats[index].timestamp = Date()
         persistConversationHistory()
     }
@@ -405,7 +414,7 @@ class ChatViewModel: ObservableObject {
 
         if chats.isEmpty {
             let newChat = Chat(
-                title: "New chat",
+                title: "",
                 messages: [],
                 timestamp: Date(),
                 icon: "message"
@@ -458,7 +467,11 @@ class ChatViewModel: ObservableObject {
             
             // Update title if this is the first message
             if chats[index].messages.count == 1 {
-                chats[index].title = messageContent.isEmpty ? "Image attachment" : String(messageContent.prefix(30))
+                chats[index].title = ChatDisplayText.singleLine(
+                    messageContent,
+                    fallback: "Image attachment",
+                    maxLength: MLXHubDesignSystem.TextLimit.generatedTitle
+                )
             }
 
             persistConversationHistory()
@@ -609,7 +622,7 @@ class ChatViewModel: ObservableObject {
             let executionProfile = (isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile
             let resolvedModelId = executionProfile.modelId
             let activeModelName = executionProfile.name
-            let activeBackend: RuntimeBackend = isImageGeneration ? .image : (isSpeechGeneration ? .audio : .vlm)
+            let activeBackend: RuntimeBackend = executionProfile.backend
             let modelWillLoad = !isLoadedEngineModel(modelId: resolvedModelId, backend: activeBackend)
             setActiveEngineModel(
                 name: activeModelName,
@@ -634,9 +647,16 @@ class ChatViewModel: ObservableObject {
             if runtimeManager.state != .ready {
                 isPythonLoading = true
                 loadingMessage = "Initializing Python runtime..."
+                modelLoadProgress = ModelLoadProgress(
+                    modelId: resolvedModelId,
+                    backend: activeBackend,
+                    phase: .preparing,
+                    detail: "Preparing runtime"
+                )
                 try await runtimeManager.initialize()
                 try await vlmExecutor.initialize()
                 isPythonLoading = false
+                modelLoadProgress = nil
             }
 
             if !vlmExecutor.isReady {
@@ -646,11 +666,18 @@ class ChatViewModel: ObservableObject {
             if modelWillLoad {
                 isModelLoading = true
                 loadingMessage = "Loading \(activeModelName)..."
+                modelLoadProgress = ModelLoadProgress(
+                    modelId: resolvedModelId,
+                    backend: activeBackend,
+                    phase: .preparing,
+                    detail: "Preparing \(activeModelName)"
+                )
 
                 do {
                     try await loadModel(resolvedModelId)
                 } catch {
                     isModelLoading = false
+                    modelLoadProgress = nil
                     throw error
                 }
                 // isModelLoading will be set to false in processStream when .complete or .error is received
@@ -1151,6 +1178,7 @@ class ChatViewModel: ObservableObject {
                         streamingMessageId = nil
                         generationTask = nil
                         loadingMessage = ""
+                        modelLoadProgress = nil
                         return
                     }
                     guard isTerminalMediaTool(plainTextToolCall.function.name) || toolDepth < maxAutoToolDepth else {
@@ -1166,6 +1194,7 @@ class ChatViewModel: ObservableObject {
                         streamingMessageId = nil
                         generationTask = nil
                         loadingMessage = ""
+                        modelLoadProgress = nil
                         return
                     }
 
@@ -1193,6 +1222,7 @@ class ChatViewModel: ObservableObject {
                         streamingMessageId = nil
                         generationTask = nil
                         loadingMessage = ""
+                        modelLoadProgress = nil
                         return
                     }
 
@@ -1211,10 +1241,12 @@ class ChatViewModel: ObservableObject {
                     activeMusicGenerationDraft = nil
                 }
                 isGenerating = false
+                isModelLoading = false
                 streamingMessageId = nil
                 generationTask = nil
                 loadingMessage = ""
-                
+                modelLoadProgress = nil
+
             case .toolCalls(let toolCalls):
                 guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
                 let executableToolCalls = toolCalls
@@ -1233,6 +1265,7 @@ class ChatViewModel: ObservableObject {
                     streamingMessageId = nil
                     generationTask = nil
                     loadingMessage = ""
+                    modelLoadProgress = nil
                     return
                 }
                 guard toolDepth < maxAutoToolDepth else {
@@ -1248,6 +1281,7 @@ class ChatViewModel: ObservableObject {
                     streamingMessageId = nil
                     generationTask = nil
                     loadingMessage = ""
+                    modelLoadProgress = nil
                     return
                 }
                 let hasTerminalMediaTool = executableToolCalls.contains { isTerminalMediaTool($0.function.name) }
@@ -1275,6 +1309,7 @@ class ChatViewModel: ObservableObject {
                     streamingMessageId = nil
                     generationTask = nil
                     loadingMessage = ""
+                    modelLoadProgress = nil
                     return
                 }
                 await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
@@ -1288,9 +1323,14 @@ class ChatViewModel: ObservableObject {
                 isGenerating = false
                 streamingMessageId = nil
                 generationTask = nil
+                modelLoadProgress = nil
                 
             case .progress(let message):
                 loadingMessage = message
+
+            case .modelLoadProgress(let progress):
+                modelLoadProgress = progress
+                loadingMessage = progress.detail ?? progress.phase.displayTitle
             }
         }
 
@@ -1302,6 +1342,7 @@ class ChatViewModel: ObservableObject {
             isGenerating = false
             streamingMessageId = nil
             generationTask = nil
+            modelLoadProgress = nil
         }
     }
 

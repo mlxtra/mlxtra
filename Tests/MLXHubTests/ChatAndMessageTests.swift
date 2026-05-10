@@ -46,6 +46,34 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertEqual(chat.id, customId)
     }
 
+    func testChatDisplayTextCollapsesMultilineInputForTitlesAndSidebar() {
+        let text = """
+        UI test very long multi-line input
+
+        Draft line 1: keep this pasted prompt readable.
+        Draft line 2: keep this pasted prompt readable.
+        """
+
+        let singleLine = ChatDisplayText.singleLine(text)
+
+        XCTAssertEqual(
+            singleLine,
+            "UI test very long multi-line input Draft line 1: keep this pasted prompt readable. Draft line 2: keep this pasted prompt readable."
+        )
+        XCTAssertFalse(singleLine.contains("\n"))
+    }
+
+    func testChatDisplayTextAppliesFallbackAndLengthLimit() {
+        XCTAssertEqual(
+            ChatDisplayText.singleLine(" \n\t ", fallback: "New chat", maxLength: 80),
+            "New chat"
+        )
+        XCTAssertEqual(
+            ChatDisplayText.singleLine("1234567890 1234567890", maxLength: 12),
+            "1234567890"
+        )
+    }
+
     // MARK: - Message Tests
 
     func testMessageInitialization() {

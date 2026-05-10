@@ -9,6 +9,7 @@ extension ChatViewModel {
             isModelLoading: isModelLoading,
             isGenerating: isGenerating,
             loadingMessage: loadingMessage,
+            loadProgress: modelLoadProgress,
             isExecutorReady: vlmExecutor.isReady,
             isModelLoaded: vlmExecutor.isModelLoaded,
             selectedModelName: activeModelProfile.name,
@@ -41,6 +42,7 @@ extension ChatViewModel {
         isModelLoading = false
         isGenerating = false
         loadingMessage = ""
+        modelLoadProgress = nil
         localEngineErrorMessage = nil
 
         Task {
@@ -56,6 +58,7 @@ extension ChatViewModel {
 
         isPythonLoading = true
         loadingMessage = "Preparing local engine..."
+        modelLoadProgress = nil
         activeEngineModelName = nil
         activeEngineModelRole = .chat
         freedEngineModelName = nil
@@ -69,9 +72,11 @@ extension ChatViewModel {
                 try await vlmExecutor.initialize()
                 isPythonLoading = false
                 loadingMessage = ""
+                modelLoadProgress = nil
             } catch {
                 isPythonLoading = false
                 loadingMessage = ""
+                modelLoadProgress = nil
                 localEngineErrorMessage = "The local engine stopped. Restart to continue."
             }
         }
@@ -208,6 +213,7 @@ extension ChatViewModel {
         pendingEngineDownloadReason = .generation
         startPendingDownloadMonitor(for: model)
         loadingMessage = ""
+        modelLoadProgress = nil
     }
 
     func clearModelDownloadRequest() {
@@ -255,9 +261,11 @@ extension ChatViewModel {
         if runtimeManager.state != .ready {
             isPythonLoading = true
             loadingMessage = "Initializing Python runtime..."
+            modelLoadProgress = nil
             try await runtimeManager.initialize()
             try await vlmExecutor.initialize()
             isPythonLoading = false
+            modelLoadProgress = nil
         }
 
         if !vlmExecutor.isReady {
@@ -392,4 +400,3 @@ extension ChatViewModel {
         isModelMenuOpen = false
     }
 }
-
