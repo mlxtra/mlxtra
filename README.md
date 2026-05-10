@@ -55,16 +55,21 @@ git clone git@github.com:omercelik/MLXHub.git
 cd MLXHub
 ```
 
-2. Open in Xcode:
+2. Open the Xcode project:
 ```bash
 open MLXHub.xcodeproj
 ```
 
-3. Build and run (⌘+R)
+3. Build and run the `MLXHub` scheme on `My Mac` (⌘+R).
+
+The first Xcode build from a clean checkout bootstraps the local Python runtime
+automatically. This can take several minutes and requires network access. After
+that, normal builds reuse the generated runtime.
 
 ### Runtime Setup
 
-The application requires Python runtime bundles. Build them with:
+The application requires Python runtime bundles. Xcode builds run the bootstrap
+automatically when the runtime is missing. To prepare it manually, run:
 
 ```bash
 ./Scripts/build-runtime-bundle.sh
@@ -75,7 +80,9 @@ This will:
 - Install required packages (mlx-vlm, mlx-lm, mflux, acestep, etc.)
 - Set up the runtime in `MLXHub/Resources/runtime/`
 
-**Note**: The `acestep-venv` is required for music generation but is excluded from git (see `.gitignore`). You'll need to build it locally.
+The bundled runtime is the baseline version shipped inside the app. Runtime
+updates can then be published separately through GitHub releases and referenced
+from `MLXHub/Resources/stable-channel.json`.
 
 ## Architecture
 

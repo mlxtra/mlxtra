@@ -16,6 +16,8 @@ ACE_PYTHON="${RUNTIME_DIR}/acestep-venv/bin/python"
 MAIN_SITE_PACKAGES="${RUNTIME_DIR}/venv/lib/python3.12/site-packages"
 ACE_SITE_PACKAGES="${RUNTIME_DIR}/acestep-venv/lib/python3.12/site-packages"
 MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
+BUILD_RUNTIME_SCRIPT="${SCRIPT_DIR}/build-runtime-bundle.sh"
+BOOTSTRAP_RUNTIME_ON_BUILD="${MLXHUB_BOOTSTRAP_RUNTIME_ON_BUILD:-1}"
 
 fail() {
     echo "error: $*" >&2
@@ -49,6 +51,37 @@ require_executable() {
 
     [ -x "${path}" ] || fail "${label} is missing or not executable at ${path}. Run ./Scripts/build-runtime-bundle.sh before building the app."
 }
+
+runtime_bootstrap_required() {
+    [ -d "${RUNTIME_DIR}" ] || return 0
+    [ -d "${PYTHON_HOME}" ] || return 0
+    [ -x "${MAIN_PYTHON}" ] || return 0
+    [ -x "${ACE_PYTHON}" ] || return 0
+    [ -f "${MANIFEST}" ] || return 0
+    [ -f "${PROJECT_DIR}/MLXHub/Resources/python_bridge.py" ] || return 0
+    [ -f "${PROJECT_DIR}/MLXHub/Resources/acestep_bridge.py" ] || return 0
+    [ -f "${PROJECT_DIR}/MLXHub/Resources/bridge_utils.py" ] || return 0
+    [ -f "${RUNTIME_DIR}/hf_download_helper.py" ] || return 0
+    [ -f "${RUNTIME_DIR}/acestep_download_helper.py" ] || return 0
+    return 1
+}
+
+bootstrap_runtime_if_needed() {
+    runtime_bootstrap_required || return 0
+
+    if [ "${BOOTSTRAP_RUNTIME_ON_BUILD}" != "1" ]; then
+        return 0
+    fi
+
+    [ -x "${BUILD_RUNTIME_SCRIPT}" ] || fail "Runtime bootstrap script is missing or not executable at ${BUILD_RUNTIME_SCRIPT}."
+
+    echo "warning: MLXHub first build is downloading and creating the local Python runtime. This can take several minutes and requires network access."
+    echo "warning: Keep Xcode open. Later builds reuse the generated runtime and skip this step."
+    "${BUILD_RUNTIME_SCRIPT}"
+    echo "MLXHub runtime bootstrap completed."
+}
+
+bootstrap_runtime_if_needed
 
 require_directory "${RUNTIME_DIR}" "Runtime bundle"
 require_directory "${PYTHON_HOME}" "Bundled Python home"

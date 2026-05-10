@@ -1,7 +1,10 @@
+import AppKit
 import SwiftUI
 
 @main
 struct MLXHubApp: App {
+    @NSApplicationDelegateAdaptor(MLXHubApplicationDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             ContentView(viewModel: makeLaunchViewModel())
@@ -39,6 +42,13 @@ struct MLXHubApp: App {
         }
 #endif
         return ChatViewModel()
+    }
+}
+
+private final class MLXHubApplicationDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 

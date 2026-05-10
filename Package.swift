@@ -1,5 +1,14 @@
 // swift-tools-version:5.9
+import Foundation
 import PackageDescription
+
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let targetRoot = packageRoot.appendingPathComponent("MLXHub")
+let generatedResourceExcludes = [
+    "Resources/__pycache__"
+].filter {
+    FileManager.default.fileExists(atPath: targetRoot.appendingPathComponent($0).path)
+}
 
 let package = Package(
     name: "MLXHub",
@@ -24,9 +33,8 @@ let package = Package(
             path: "MLXHub",
             exclude: [
                 "Resources/Info.plist",
-                "Resources/__pycache__",
                 "Resources/Assets.xcassets"
-            ],
+            ] + generatedResourceExcludes,
             resources: [
                 .copy("Resources/bridge_utils.py"),
                 .copy("Resources/python_bridge.py"),
