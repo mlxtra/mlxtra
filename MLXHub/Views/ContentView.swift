@@ -48,11 +48,19 @@ struct ContentView: View {
                     ToolbarItem(placement: .navigation) {
                         if columnVisibility == .detailOnly {
                             Button(action: viewModel.createNewChat) {
-                                Label("New chat", systemImage: "square.and.pencil")
+                                Image(systemName: "square.and.pencil")
+                                    .font(.system(size: MLXHubDesignSystem.Icon.large, weight: .regular))
+                                    .foregroundStyle(.secondary)
+                                    .frame(
+                                        width: MLXHubDesignSystem.Icon.toolbarButton,
+                                        height: MLXHubDesignSystem.Icon.toolbarButton
+                                    )
+                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.plain)
                             .keyboardShortcut("n", modifiers: .command)
                             .help("New chat")
+                            .accessibilityLabel("New chat")
                             .accessibilityIdentifier("toolbar.newChat")
                         }
                     }

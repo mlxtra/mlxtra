@@ -181,6 +181,8 @@ struct ComposerView: View {
             }
             .buttonStyle(.plain)
             .help("Stop generating")
+            .accessibilityIdentifier("composer.primaryAction")
+            .accessibilityLabel("Stop generating")
         } else {
             SendActionButton(
                 isEnabled: canSend,

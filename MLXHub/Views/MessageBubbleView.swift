@@ -15,7 +15,7 @@ struct MessageBubble: View {
     let onRestartLocalEngine: (() -> Void)?
     private let messageMaxWidth: CGFloat = MLXHubDesignSystem.Layout.messageMaxWidth
     private let generatedMediaColumnWidth: CGFloat = MLXHubDesignSystem.Layout.generatedMediaMaxWidth
-    private let assistantMetaRowReservedHeight: CGFloat = 28
+    private let messageMetaRowReservedHeight: CGFloat = 20
 
     init(
         message: Message,
@@ -94,15 +94,17 @@ struct MessageBubble: View {
 #endif
                     }
                 } else {
-                    UserMessageContent(
-                        message: message,
-                        isStreaming: isStreaming,
-                        cursorVisible: cursorVisible
-                    )
-                    .frame(maxWidth: messageMaxWidth, alignment: .trailing)
-                    .overlay(alignment: .bottomTrailing) {
-                        userTimestampAccessory
+                    VStack(alignment: .trailing, spacing: MLXHubDesignSystem.Spacing.xxs) {
+                        UserMessageContent(
+                            message: message,
+                            isStreaming: isStreaming,
+                            cursorVisible: cursorVisible
+                        )
+                        .frame(maxWidth: messageMaxWidth, alignment: .trailing)
+
+                        userMetaRowSlot
                     }
+                    .frame(maxWidth: messageMaxWidth, alignment: .trailing)
                 }
             }
             .frame(maxWidth: messageMaxWidth, alignment: message.isUser ? .trailing : .leading)
@@ -163,8 +165,8 @@ struct MessageBubble: View {
             }
             .frame(
                 maxWidth: messageMaxWidth,
-                minHeight: assistantMetaRowReservedHeight,
-                maxHeight: assistantMetaRowReservedHeight,
+                minHeight: messageMetaRowReservedHeight,
+                maxHeight: messageMetaRowReservedHeight,
                 alignment: .leading
             )
         }
@@ -172,6 +174,11 @@ struct MessageBubble: View {
 
     private var hasCopyableAssistantContent: Bool {
         !message.isUser
+            && (!message.content.isEmpty || !message.imageURLs.isEmpty || !message.audioURLs.isEmpty)
+    }
+
+    private var hasCopyableUserContent: Bool {
+        message.isUser
             && (!message.content.isEmpty || !message.imageURLs.isEmpty || !message.audioURLs.isEmpty)
     }
 
@@ -188,6 +195,17 @@ struct MessageBubble: View {
         !message.isUser
             && !isStreaming
             && (hasCopyableAssistantContent || message.performanceMetrics != nil || showCopyFeedback)
+    }
+
+    private var shouldShowUserMetaRow: Bool {
+        message.isUser
+            && !isStreaming
+            && (isHovered || showCopyFeedback)
+    }
+
+    private var shouldReserveUserMetaRowSpace: Bool {
+        message.isUser
+            && !isStreaming
     }
 
     @ViewBuilder
@@ -212,21 +230,39 @@ struct MessageBubble: View {
     }
 
     @ViewBuilder
-    private var userTimestampAccessory: some View {
-        if message.isUser && !isStreaming && isHovered {
-            Text(message.timestamp, style: .time)
-                .font(MLXHubDesignSystem.Typography.microMedium)
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, MLXHubDesignSystem.Spacing.md)
-                .frame(height: 20)
-                .background(.regularMaterial, in: Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
-                }
-                .padding(.trailing, MLXHubDesignSystem.Spacing.xs)
-                .padding(.bottom, MLXHubDesignSystem.Spacing.xs)
-                .transition(.opacity)
+    private var userMetaRowSlot: some View {
+        if shouldReserveUserMetaRowSpace {
+            ZStack(alignment: .trailing) {
+                Color.clear
+
+                userHoverAccessory
+            }
+            .frame(
+                maxWidth: messageMaxWidth,
+                minHeight: messageMetaRowReservedHeight,
+                maxHeight: messageMetaRowReservedHeight,
+                alignment: .trailing
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var userHoverAccessory: some View {
+        if shouldShowUserMetaRow {
+            UserMessageMetaRow(
+                timestamp: message.timestamp,
+                showsTimestamp: isHovered,
+                showsCopyButton: hasCopyableUserContent && isHovered,
+                showCopyFeedback: showCopyFeedback,
+                onCopy: copyToClipboard
+            )
+            .frame(maxWidth: messageMaxWidth, alignment: .trailing)
+            .transition(.opacity)
+#if DEBUG
+            .overlay {
+                uiTestUserHoverAccessoryAnchor
+            }
+#endif
         }
     }
 
@@ -238,6 +274,7 @@ struct MessageBubble: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Assistant content")
                 .accessibilityIdentifier("message.assistant.content")
+                .allowsHitTesting(false)
         }
     }
 
@@ -248,6 +285,18 @@ struct MessageBubble: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Assistant hover accessories")
                 .accessibilityIdentifier("message.hoverAccessories")
+                .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private var uiTestUserHoverAccessoryAnchor: some View {
+        if ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_MODE"] == "1" {
+            Color.primary.opacity(0.001)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("User message hover accessories")
+                .accessibilityIdentifier("message.user.hoverAccessories")
+                .allowsHitTesting(false)
         }
     }
 #endif
@@ -308,16 +357,16 @@ private struct AssistantMessageMetaRow: View {
                 Button(action: onCopy) {
                     HStack(spacing: MLXHubDesignSystem.Spacing.xs) {
                         Image(systemName: showCopyFeedback ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: MLXHubDesignSystem.Icon.small, weight: .medium))
+                            .font(.system(size: MLXHubDesignSystem.Icon.micro, weight: .medium))
 
                         if showCopyFeedback {
                             Text("Copied")
-                                .font(MLXHubDesignSystem.Typography.captionMedium)
+                                .font(MLXHubDesignSystem.Typography.microMedium)
                         }
                     }
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: showCopyFeedback ? 64 : 22, minHeight: 22)
-                    .contentShape(Capsule())
+                    .foregroundStyle(.tertiary)
+                    .frame(minWidth: showCopyFeedback ? 54 : 18, minHeight: 18)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Copy response")
@@ -334,13 +383,46 @@ private struct AssistantMessageMetaRow: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.horizontal, MLXHubDesignSystem.Spacing.sm)
-        .frame(height: 24)
-        .background(.regularMaterial, in: Capsule())
-        .overlay {
-            Capsule()
-                .stroke(MLXHubDesignSystem.Surface.quietHairline, lineWidth: MLXHubDesignSystem.Spacing.hairline)
+        .frame(height: 18)
+    }
+}
+
+private struct UserMessageMetaRow: View {
+    let timestamp: Date
+    let showsTimestamp: Bool
+    let showsCopyButton: Bool
+    let showCopyFeedback: Bool
+    let onCopy: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: MLXHubDesignSystem.Spacing.xs) {
+            if showsTimestamp {
+                Text(timestamp, style: .time)
+                    .font(MLXHubDesignSystem.Typography.microMedium)
+                    .foregroundStyle(.tertiary)
+            }
+
+            if showsCopyButton || showCopyFeedback {
+                Button(action: onCopy) {
+                    HStack(spacing: MLXHubDesignSystem.Spacing.xs) {
+                        if showCopyFeedback {
+                            Text("Copied")
+                                .font(MLXHubDesignSystem.Typography.microMedium)
+                        }
+
+                        Image(systemName: showCopyFeedback ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: MLXHubDesignSystem.Icon.micro, weight: .medium))
+                    }
+                    .foregroundStyle(.tertiary)
+                    .frame(minWidth: showCopyFeedback ? 54 : 18, minHeight: 18)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Copy sent message")
+                .accessibilityIdentifier("message.user.copy")
+            }
         }
+        .frame(height: 18)
     }
 }
 
@@ -1353,8 +1435,6 @@ private final class FastStreamingTextNativeView: NSView {
     private var streamingCancellable: AnyCancellable?
     private var boundStreamingContentId: UUID?
     private var lastHeightMeasurementTime = Date.distantPast
-    private var lastScrollTime = Date.distantPast
-    private var pendingScrollToBottom = false
 
     // Reasoning-filter cache — avoids full-string filter on every streaming token.
     private var lastFilterInput = ""
@@ -1503,7 +1583,6 @@ private final class FastStreamingTextNativeView: NSView {
         configureContainer(width: max(bounds.width, 1))
         refreshMeasuredHeight(width: max(bounds.width, 1), force: true)
         needsLayout = true
-        scheduleScrollToBottom()
     }
 
     private func updateText(
@@ -1538,9 +1617,6 @@ private final class FastStreamingTextNativeView: NSView {
         configureContainer(width: max(bounds.width, 1))
         refreshMeasuredHeight(width: max(bounds.width, 1), force: forceHeight)
         needsLayout = true
-        if autoScroll {
-            scheduleScrollToBottom()
-        }
     }
 
     private func configureTextView() {
@@ -1615,30 +1691,6 @@ private final class FastStreamingTextNativeView: NSView {
         case .replace:
             return true
         }
-    }
-
-    private func scheduleScrollToBottom() {
-        guard !pendingScrollToBottom else { return }
-        pendingScrollToBottom = true
-
-        let minimumScrollInterval: TimeInterval = 1.0 / 30.0
-        let delay = max(0, minimumScrollInterval - Date().timeIntervalSince(lastScrollTime))
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self else { return }
-            self.pendingScrollToBottom = false
-            self.lastScrollTime = Date()
-            self.scrollEnclosingViewToBottom()
-        }
-    }
-
-    private func scrollEnclosingViewToBottom() {
-        guard let scrollView = enclosingScrollView,
-              let documentView = scrollView.documentView else { return }
-
-        let maxY = max(documentView.bounds.height - scrollView.contentView.bounds.height, 0)
-        let targetY = documentView.isFlipped ? maxY : 0
-        scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: targetY))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     private func attributedString(_ string: String) -> NSAttributedString {

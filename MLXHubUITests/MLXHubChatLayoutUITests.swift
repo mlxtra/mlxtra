@@ -91,6 +91,9 @@ final class MLXHubChatLayoutUITests: XCTestCase {
             response,
             expectedCopiedText: "UI test chat response"
         )
+        assertUserHoverAccessoriesSitUnderSentMessage(
+            expectedCopiedText: "Answer with a short deterministic sentence."
+        )
         assertLocalEngineStatusIsNotLoading()
         try captureScreenshot(named: "02-chat-response")
     }
@@ -149,6 +152,66 @@ final class MLXHubChatLayoutUITests: XCTestCase {
         XCTAssertTrue(responseEnd.exists)
         assertComposerIsBoundedBottomAccessory()
         try captureScreenshot(named: "04-long-message-scroll")
+    }
+
+    func testStreamingScrollKeepsComposerAndTranscriptAnchoredSnapshot() throws {
+        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("Chat")
+
+        let composerBefore = composerFrame()
+        enterPrompt("UI test streaming scroll response.")
+        clickGenerate()
+        _ = waitForTranscriptMessage(
+            identifier: "message.user",
+            containing: "UI test streaming scroll response."
+        )
+
+        let primaryAction = app.buttons["composer.primaryAction"]
+        XCTAssertTrue(primaryAction.waitForExistence(timeout: 5), "Missing composer primary action during streaming")
+        XCTAssertTrue(
+            primaryAction.label.localizedCaseInsensitiveContains("stop"),
+            "Streaming regression check should run while generation is active"
+        )
+        RunLoop.current.run(until: Date().addingTimeInterval(3.0))
+
+        let midStreamMessage = lastMessage(identifier: "message.assistant")
+        let composerDuring = composerFrame()
+        let transcript = transcriptElement()
+
+        XCTAssertLessThanOrEqual(
+            abs(composerDuring.minY - composerBefore.minY),
+            2,
+            "Composer should not jump upward while assistant text is streaming"
+        )
+        XCTAssertLessThan(
+            midStreamMessage.frame.minY,
+            composerDuring.minY,
+            "Streaming assistant text should remain above the floating composer"
+        )
+        XCTAssertGreaterThan(
+            midStreamMessage.frame.maxY,
+            transcript.frame.minY,
+            "Streaming assistant text should remain inside the transcript rail"
+        )
+        XCTAssertTrue(
+            primaryAction.label.localizedCaseInsensitiveContains("stop"),
+            "Mid-stream regression capture should happen while generation is still active"
+        )
+        assertComposerIsBoundedBottomAccessory()
+        try captureScreenshot(named: "04b-streaming-scroll-mid")
+
+        let finalMessage = waitForTranscriptMessage(
+            containing: "Streaming scroll response ends.",
+            timeout: 25
+        )
+        let composerAfter = composerFrame()
+        XCTAssertLessThanOrEqual(
+            abs(composerAfter.minY - composerBefore.minY),
+            2,
+            "Composer should return to the same bottom anchor after streaming completes"
+        )
+        XCTAssertTrue(finalMessage.exists)
+        try captureScreenshot(named: "04c-streaming-scroll-complete")
     }
 
     func testMarkdownRenderingSnapshot() throws {
@@ -1173,6 +1236,48 @@ final class MLXHubChatLayoutUITests: XCTestCase {
         )
     }
 
+    private func assertUserHoverAccessoriesSitUnderSentMessage(expectedCopiedText: String) {
+        let initialComposerFrame = composerFrame()
+        let userBubble = app.descendants(matching: .any)["message.user.bubble"]
+        XCTAssertTrue(userBubble.waitForExistence(timeout: 5), "Missing sent message bubble")
+
+        userBubble.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+
+        let userAccessory = app.descendants(matching: .any)["message.user.hoverAccessories"]
+        XCTAssertTrue(
+            userAccessory.waitForExistence(timeout: 2),
+            "Sent message hover accessories should appear below the bubble"
+        )
+        XCTAssertGreaterThanOrEqual(
+            userAccessory.frame.minY,
+            userBubble.frame.maxY - 1,
+            "Sent message time/copy controls should sit under the bubble, not on top of it"
+        )
+
+        let copyButton = app.buttons["message.user.copy"]
+        XCTAssertTrue(copyButton.waitForExistence(timeout: 2), "Missing sent message copy button")
+        XCTAssertGreaterThanOrEqual(
+            copyButton.frame.maxX,
+            userBubble.frame.maxX - 24,
+            "Sent message copy action should sit on the trailing side"
+        )
+        NSPasteboard.general.clearContents()
+        copyButton.click()
+        XCTAssertEqual(
+            NSPasteboard.general.string(forType: .string),
+            expectedCopiedText,
+            "Sent message copy action should copy the user message text"
+        )
+
+        let hoveredComposerFrame = composerFrame()
+        XCTAssertLessThanOrEqual(
+            abs(hoveredComposerFrame.minY - initialComposerFrame.minY),
+            1,
+            "Sent message hover accessories should not move the floating composer"
+        )
+    }
+
     private func assertAssistantContentMatchesComposerRail(tolerance: CGFloat = 6) {
         let inputFieldFrame = composerVisualInputBoxFrame()
         let assistantContent = app.descendants(matching: .any)["message.assistant.content"]
@@ -1256,12 +1361,6 @@ final class MLXHubChatLayoutUITests: XCTestCase {
         let selectedRow = app.descendants(matching: .any)["sidebar.chat.selectedRow"]
         XCTAssertTrue(selectedRow.waitForExistence(timeout: 5), "Missing selected sidebar row frame probe")
 
-        selectedRow.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-
-        let deleteButton = app.buttons["sidebar.chat.delete"]
-        XCTAssertTrue(deleteButton.waitForExistence(timeout: 2), "Missing sidebar delete button on row hover")
-
         let icons = app.descendants(matching: .any)
             .matching(identifier: "sidebar.chat.icon")
             .allElementsBoundByIndex
@@ -1277,8 +1376,14 @@ final class MLXHubChatLayoutUITests: XCTestCase {
             return
         }
 
+        rowIcon.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        let actionButton = app.descendants(matching: .any)["sidebar.chat.actions"]
+        XCTAssertTrue(actionButton.waitForExistence(timeout: 2), "Missing sidebar actions button on row hover")
+
         let leftInset = rowIcon.frame.minX - selectedRow.frame.minX
-        let rightInset = selectedRow.frame.maxX - deleteButton.frame.maxX
+        let rightInset = selectedRow.frame.maxX - actionButton.frame.maxX
         XCTAssertLessThanOrEqual(
             abs(leftInset - rightInset),
             tolerance,

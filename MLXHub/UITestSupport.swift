@@ -107,6 +107,10 @@ private final class UITestModelExecutor: ChatModelExecuting {
         currentModelId = request.modelId
         currentModelBackend = request.backend
 
+        if Self.isStreamingScrollProbe(request) {
+            return Self.streamingScrollProbeStream()
+        }
+
         let events = try events(for: request)
         let shouldDelayForLoadingProbe = ProcessInfo.processInfo.environment["MLXHUB_UI_TEST_DELAY_MODEL_LOADING"] == "1" || request.messages.contains {
             $0.role == .user && ($0.content?.localizedCaseInsensitiveContains("ui test loading indicator") ?? false)
@@ -147,6 +151,32 @@ private final class UITestModelExecutor: ChatModelExecuting {
         isModelLoaded = false
         currentModelId = nil
         currentModelBackend = nil
+    }
+
+    private static func isStreamingScrollProbe(_ request: ExecutionRequest) -> Bool {
+        guard request.backend == .vlm || request.backend == .llm else { return false }
+        let prompt = request.messages.last { $0.role == .user }?.content ?? ""
+        return prompt.localizedCaseInsensitiveContains("ui test streaming scroll response")
+    }
+
+    private static func streamingScrollProbeStream() -> AsyncStream<ExecutionEvent> {
+        let chunks = streamingScrollResponseChunks
+        let fullResponse = chunks.joined()
+
+        return AsyncStream { continuation in
+            Task { @MainActor in
+                continuation.yield(.started)
+                for chunk in chunks {
+                    continuation.yield(.token(chunk))
+                    let delay: UInt64 = chunk.contains("Streaming scroll paragraph 12")
+                        ? 8_000_000_000
+                        : 160_000_000
+                    try? await Task.sleep(nanoseconds: delay)
+                }
+                continuation.yield(.complete(fullResponse, usage: TokenUsage(promptTokens: 1, completionTokens: chunks.count)))
+                continuation.finish()
+            }
+        }
     }
 
     private func events(for request: ExecutionRequest) throws -> [ExecutionEvent] {
@@ -246,6 +276,22 @@ private final class UITestModelExecutor: ChatModelExecuting {
 
         sections.append("Long scroll response ends.")
         return sections.joined(separator: "\n\n")
+    }()
+
+    private static let streamingScrollResponseChunks: [String] = {
+        var chunks = [
+            "# Streaming Scroll Probe\n\n",
+            "Streaming scroll response begins.\n\n"
+        ]
+
+        for index in 1...40 {
+            chunks.append(
+                "Streaming scroll paragraph \(index): This chunk arrives slowly enough for the UI test to observe transcript anchoring while the assistant message grows under the floating composer.\n\n"
+            )
+        }
+
+        chunks.append("Streaming scroll response ends.")
+        return chunks
     }()
 
     private static let plainRailResponse: String = {

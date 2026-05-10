@@ -25,6 +25,11 @@ struct ChatView: View {
         chat?.messages.last { !$0.isUser && $0.isStreaming }
     }
 
+    private var streamingAssistantContent: StreamingMessageContent? {
+        guard let streamingAssistantMessage else { return nil }
+        return viewModel.streamingContent(for: streamingAssistantMessage.id)
+    }
+
     private var hasStreamingProgressSurface: Bool {
         streamingAssistantMessage != nil
     }
@@ -44,6 +49,13 @@ struct ChatView: View {
         ZStack(alignment: .bottom) {
             ScrollViewReader { proxy in
                 transcriptScrollView
+                    .overlay(alignment: .bottom) {
+                        if let streamingAssistantContent {
+                            StreamingTranscriptAutoScroll(content: streamingAssistantContent) {
+                                scrollToBottom(proxy)
+                            }
+                        }
+                    }
                     .onAppear {
                         DispatchQueue.main.async {
                             scrollToBottom(proxy)
@@ -121,7 +133,43 @@ struct ChatView: View {
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
-            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            }
+        }
+    }
+}
+
+private struct StreamingTranscriptAutoScroll: View {
+    @ObservedObject var content: StreamingMessageContent
+    let onScroll: () -> Void
+    @State private var pendingScroll = false
+    @State private var lastScrollTime = Date.distantPast
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onAppear {
+                scheduleScroll()
+            }
+            .onChange(of: content.revision) { _, _ in
+                scheduleScroll()
+            }
+    }
+
+    private func scheduleScroll() {
+        guard !pendingScroll else { return }
+        pendingScroll = true
+
+        let minimumInterval: TimeInterval = 1.0 / 30.0
+        let delay = max(0, minimumInterval - Date().timeIntervalSince(lastScrollTime))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            pendingScroll = false
+            lastScrollTime = Date()
+            onScroll()
         }
     }
 }
