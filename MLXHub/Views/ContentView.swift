@@ -27,6 +27,16 @@ struct ContentView: View {
         )
     }
 
+    private var chatCommandActions: ChatCommandActions {
+        ChatCommandActions(
+            newChat: viewModel.createNewChat,
+            stopGeneration: viewModel.cancelGeneration,
+            focusComposer: viewModel.focusComposer,
+            canStopGeneration: viewModel.isGenerating,
+            canFocusComposer: !viewModel.isInputDisabled
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
             content(sidebarColumn: sidebarColumnMetrics(for: proxy.size.width))
@@ -58,7 +68,6 @@ struct ContentView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .keyboardShortcut("n", modifiers: .command)
                             .help("New chat")
                             .accessibilityLabel("New chat")
                             .accessibilityIdentifier("toolbar.newChat")
@@ -68,6 +77,7 @@ struct ContentView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .navigationTitle(windowTitle)
+        .focusedSceneValue(\.chatCommandActions, chatCommandActions)
         .onChange(of: viewModel.modelDownloadRequest) { _, requestedModel in
             guard let requestedModel else { return }
             pendingDownloadModelId = requestedModel.modelId

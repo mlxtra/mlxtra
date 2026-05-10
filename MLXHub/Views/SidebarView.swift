@@ -140,7 +140,6 @@ private struct SidebarHeader: View {
                 }
             }
             .buttonStyle(.plain)
-            .keyboardShortcut("n", modifiers: .command)
             .help("New chat")
             .accessibilityIdentifier("sidebar.newChat")
             .onHover { hovering in
@@ -191,7 +190,6 @@ private struct SidebarSettingsFooter: View {
                 }
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(",", modifiers: .command)
             .help("Settings")
             .accessibilityIdentifier("sidebar.settings")
             .onHover { hovering in

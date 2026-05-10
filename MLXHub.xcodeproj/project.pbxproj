@@ -427,7 +427,6 @@
 /* Begin PBXShellScriptBuildPhase section */
 		8A0100010000000000002004 /* Validate Runtime Bundle */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -446,6 +445,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/MLXHubRuntimeValidation.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

@@ -203,6 +203,162 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
     }
 
+    func testSendMessageUsesGenerationSnapshotWhenSelectionChangesAfterSend() async {
+        let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
+        let executor = MockChatModelExecutor(events: [
+            .image(assetURL),
+            .complete("Generated image.", usage: TokenUsage(promptTokens: 0, completionTokens: 0))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["black-forest-labs/FLUX.2-klein-4B"])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.image)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        viewModel.selectedTool = .chat
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertEqual(executor.receivedRequests[0].backend, .image)
+        XCTAssertEqual(executor.receivedRequests[0].modelId, "black-forest-labs/FLUX.2-klein-4B")
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.imageURLs, [assetURL])
+    }
+
+    func testStreamingContinuesUpdatingOriginalChatAfterSelectionChanges() async {
+        let executor = MockChatModelExecutor(
+            events: [
+                .token("Original "),
+                .token("answer."),
+                .complete("Original answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
+            ],
+            eventDelayNanoseconds: 50_000_000
+        )
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        let originalChatId = viewModel.selectedChatId
+        let otherChat = Chat(title: "Other chat", messages: [], timestamp: Date(), icon: "message")
+        viewModel.selectTool(.chat)
+        viewModel.inputText = "Answer in the original chat"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 && viewModel.streamingMessageId != nil }
+        viewModel.chats.append(otherChat)
+        viewModel.selectChat(otherChat)
+
+        await waitUntil {
+            viewModel.chats.first(where: { $0.id == originalChatId })?.messages.last?.isStreaming == false
+        }
+
+        let originalMessages = viewModel.chats.first(where: { $0.id == originalChatId })?.messages ?? []
+        let otherMessages = viewModel.chats.first(where: { $0.id == otherChat.id })?.messages ?? []
+        XCTAssertEqual(viewModel.selectedChatId, otherChat.id)
+        XCTAssertEqual(originalMessages.count, 2)
+        XCTAssertEqual(originalMessages.last?.content, "Original answer.")
+        XCTAssertFalse(originalMessages.last?.isStreaming ?? true)
+        XCTAssertTrue(otherMessages.isEmpty)
+    }
+
+    func testGenerationActiveIgnoresComposerSelectionMenuAndFocusMutations() async {
+        let executor = MockChatModelExecutor(
+            events: [
+                .token("First "),
+                .complete("First answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 1))
+            ],
+            eventDelayNanoseconds: 100_000_000
+        )
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        let originalModel = viewModel.selectedModel
+        let alternateModel = AIModel.allCases.first { $0 != originalModel } ?? originalModel
+        let originalFocusRequest = viewModel.composerFocusRequest
+        viewModel.selectTool(.chat)
+        viewModel.inputText = "First prompt"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 && viewModel.isGenerating }
+
+        viewModel.inputText = "Second prompt"
+        viewModel.sendMessage()
+        viewModel.selectTool(.image)
+        viewModel.selectModel(alternateModel)
+        viewModel.toggleToolMenu()
+        viewModel.toggleModelMenu()
+        viewModel.focusComposer()
+
+        XCTAssertEqual(viewModel.inputText, "Second prompt")
+        XCTAssertEqual(viewModel.selectedTool, .chat)
+        XCTAssertEqual(viewModel.selectedModel, originalModel)
+        XCTAssertFalse(viewModel.isToolMenuOpen)
+        XCTAssertFalse(viewModel.isModelMenuOpen)
+        XCTAssertEqual(viewModel.composerFocusRequest, originalFocusRequest)
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(viewModel.chats.first?.messages.filter(\.isUser).count, 1)
+
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+    }
+
+    func testAutoModeMediaToolCallUsesSendTimeParameterSnapshotAfterSettingsMutate() async throws {
+        resetPromptConfigurationDefaults()
+        let userDefaults = isolatedUserDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B"))
+        let widthDefinition = try XCTUnwrap(imageProfile.parameterDefinition(key: "width"))
+        let executor = MockChatModelExecutor(
+            events: [
+                .complete(
+                    #"generate_image(prompt="Draw a quiet studio desk")"#,
+                    usage: TokenUsage(promptTokens: 1, completionTokens: 2)
+                )
+            ],
+            eventDelayNanoseconds: 75_000_000
+        )
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor,
+            userDefaults: userDefaults
+        )
+        viewModel.setParameterValue("512", for: widthDefinition, profile: imageProfile)
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 && viewModel.isGenerating }
+        viewModel.modelParameterStore.setValue("1536", for: "width", modelId: imageProfile.modelId)
+        viewModel.selectTool(.tts)
+
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        let plan = toolExecutor.mediaPlans[0]
+        let parameters = plan.request.parameters ?? [:]
+        XCTAssertEqual(plan.functionName, "generate_image")
+        XCTAssertEqual(plan.request.backend, .image)
+        XCTAssertEqual(plan.request.modelId, imageProfile.modelId)
+        XCTAssertEqual(parameters["width"] as? Int, 512)
+        XCTAssertEqual(viewModel.selectedTool, .auto)
+    }
+
     func testSendMessageBuildsSpeechGenerationRequestThroughInjectedExecutor() async {
         let assetURL = URL(fileURLWithPath: "/tmp/generated.wav")
         let executor = MockChatModelExecutor(events: [
@@ -1252,6 +1408,13 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: PromptConfiguration.deepResearchSystemPromptKey)
         UserDefaults.standard.removeObject(forKey: PromptConfiguration.toolDefinitionsKey)
     }
+
+    private func isolatedUserDefaults() -> UserDefaults {
+        let suiteName = "ChatToolExecutionServiceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }
 }
 
 @MainActor
@@ -1263,15 +1426,18 @@ private final class MockChatModelExecutor: ChatModelExecuting {
     var currentModelBackend: RuntimeBackend?
     weak var delegate: VLMExecutionDelegate?
     private let eventBatches: [[ExecutionEvent]]
+    private let eventDelayNanoseconds: UInt64
     private(set) var receivedRequests: [ExecutionRequest] = []
     private(set) var terminateCount = 0
 
-    init(events: [ExecutionEvent] = []) {
+    init(events: [ExecutionEvent] = [], eventDelayNanoseconds: UInt64 = 0) {
         self.eventBatches = [events]
+        self.eventDelayNanoseconds = eventDelayNanoseconds
     }
 
-    init(eventBatches: [[ExecutionEvent]]) {
+    init(eventBatches: [[ExecutionEvent]], eventDelayNanoseconds: UInt64 = 0) {
         self.eventBatches = eventBatches.isEmpty ? [[]] : eventBatches
+        self.eventDelayNanoseconds = eventDelayNanoseconds
     }
 
     func initialize() async throws {}
@@ -1284,10 +1450,15 @@ private final class MockChatModelExecutor: ChatModelExecuting {
         isModelLoaded = true
         let events = eventBatches[min(requestIndex, eventBatches.count - 1)]
         return AsyncStream { continuation in
-            for event in events {
-                continuation.yield(event)
+            Task { @MainActor in
+                for event in events {
+                    if eventDelayNanoseconds > 0 {
+                        try? await Task.sleep(nanoseconds: eventDelayNanoseconds)
+                    }
+                    continuation.yield(event)
+                }
+                continuation.finish()
             }
-            continuation.finish()
         }
     }
 

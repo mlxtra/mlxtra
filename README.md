@@ -29,8 +29,11 @@ A macOS-native GUI application for running and interacting with MLX (Machine Lea
 ### Speech Generation
 ![Speech Generation](speech.png)
 
-### Web Tool Integration
-![Web Tool](web.png)
+### Music Generation
+![Music Generation](music.png)
+
+### Tool Selector
+![Tool Selector](web.png)
 
 ### Model Management
 ![Models](models.png)
@@ -151,8 +154,12 @@ MLXHub/
 
 Settings are accessible via `MLXHub → Settings`:
 - Default model selection
-- Output directories for generated files
 - Advanced generation parameters
+
+Generated files are saved to the app library:
+- Images: `~/Library/Application Support/MLXHub/GeneratedImages`
+- Speech: `~/Library/Application Support/MLXHub/GeneratedSpeech`
+- Music: `~/Library/Application Support/MLXHub/GeneratedMusic`
 
 ## Dependencies
 

@@ -24,7 +24,8 @@ let package = Package(
             path: "MLXHub",
             exclude: [
                 "Resources/Info.plist",
-                "Resources/__pycache__"
+                "Resources/__pycache__",
+                "Resources/Assets.xcassets"
             ],
             resources: [
                 .copy("Resources/bridge_utils.py"),

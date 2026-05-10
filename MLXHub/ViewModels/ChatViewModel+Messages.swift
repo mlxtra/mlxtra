@@ -2,6 +2,15 @@ import Foundation
 
 @MainActor
 extension ChatViewModel {
+    private func messageLocation(for messageId: UUID) -> (chatIndex: Int, messageIndex: Int)? {
+        for chatIndex in chats.indices {
+            if let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+                return (chatIndex, messageIndex)
+            }
+        }
+        return nil
+    }
+
     func streamingContent(for messageId: UUID) -> StreamingMessageContent? {
         streamingContentStore.content(for: messageId)
     }
@@ -80,8 +89,9 @@ extension ChatViewModel {
 
     func clearMessageContent(_ messageId: UUID) {
         streamingContentStore.clear(messageId: messageId)
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             chats[chatIndex].messages[messageIndex].content = ""
         }
     }
@@ -92,8 +102,9 @@ extension ChatViewModel {
             return
         }
 
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             var updatedMessages = chats[chatIndex].messages
             updatedMessages[messageIndex].content = content
             chats[chatIndex].messages = updatedMessages
@@ -108,8 +119,9 @@ extension ChatViewModel {
             return
         }
 
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             var updatedMessages = chats[chatIndex].messages
             updatedMessages[messageIndex].content += content
             chats[chatIndex].messages = updatedMessages
@@ -117,8 +129,9 @@ extension ChatViewModel {
     }
 
     func appendGeneratedImage(_ imageURL: URL, toMessage messageId: UUID) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             var updatedMessages = chats[chatIndex].messages
             if !updatedMessages[messageIndex].imageURLs.contains(imageURL) {
                 updatedMessages[messageIndex].imageURLs.append(imageURL)
@@ -128,8 +141,9 @@ extension ChatViewModel {
     }
 
     func appendGeneratedAudio(_ audioURL: URL, toMessage messageId: UUID) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             var updatedMessages = chats[chatIndex].messages
             if !updatedMessages[messageIndex].audioURLs.contains(audioURL) {
                 updatedMessages[messageIndex].audioURLs.append(audioURL)
@@ -139,8 +153,9 @@ extension ChatViewModel {
     }
 
     func appendToolCall(_ toolCall: ToolCall, toMessage messageId: UUID) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             var updatedMessages = chats[chatIndex].messages
             updatedMessages[messageIndex].toolCalls.append(toolCall)
             chats[chatIndex].messages = updatedMessages
@@ -148,8 +163,9 @@ extension ChatViewModel {
     }
 
     func updateMessagePerformanceMetrics(_ messageId: UUID, metrics: GenerationPerformanceMetrics) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             chats[chatIndex].messages[messageIndex].performanceMetrics = metrics
         }
     }
@@ -161,8 +177,9 @@ extension ChatViewModel {
         clearToolCall: Bool = false,
         performanceMetrics: GenerationPerformanceMetrics? = nil
     ) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             chats[chatIndex].messages[messageIndex].content = content
             chats[chatIndex].messages[messageIndex].isStreaming = false
             chats[chatIndex].messages[messageIndex].performanceMetrics = performanceMetrics
@@ -187,8 +204,9 @@ extension ChatViewModel {
     }
 
     func markMessageStopped(_ messageId: UUID) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
+        if let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             if let streamingContent = streamingContentStore.content(for: messageId) {
                 chats[chatIndex].messages[messageIndex].content = streamingContent.text
                 streamingContentStore.end(messageId: messageId)
@@ -199,9 +217,10 @@ extension ChatViewModel {
     }
 
     func removeAssistantMessage(_ messageId: UUID) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }),
-           !chats[chatIndex].messages[messageIndex].isUser {
+        if let location = messageLocation(for: messageId),
+           !chats[location.chatIndex].messages[location.messageIndex].isUser {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             chats[chatIndex].messages.remove(at: messageIndex)
             chats[chatIndex].timestamp = Date()
             streamingContentStore.end(messageId: messageId)
@@ -210,9 +229,10 @@ extension ChatViewModel {
     }
 
     func updateMessageToolCall(_ messageId: UUID, status: String) {
-        if let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
-           let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }),
-           var toolCall = chats[chatIndex].messages[messageIndex].toolCalls.last {
+        if let location = messageLocation(for: messageId),
+           var toolCall = chats[location.chatIndex].messages[location.messageIndex].toolCalls.last {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
             toolCall.status = status
             chats[chatIndex].messages[messageIndex].toolCalls[chats[chatIndex].messages[messageIndex].toolCalls.count - 1] = toolCall
         }
@@ -237,7 +257,15 @@ extension ChatViewModel {
 
         let errorContent = userFacingErrorMessage(for: error)
 
-        if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
+        if let messageId, let location = messageLocation(for: messageId) {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
+            chats[chatIndex].messages[messageIndex].content = errorContent
+            chats[chatIndex].messages[messageIndex].isStreaming = false
+            streamingContentStore.end(messageId: messageId)
+            chats[chatIndex].timestamp = Date()
+            scheduleConversationPersistence()
+        } else if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
             if let messageId,
                let messageIndex = chats[index].messages.firstIndex(where: { $0.id == messageId }) {
                 chats[index].messages[messageIndex].content = errorContent

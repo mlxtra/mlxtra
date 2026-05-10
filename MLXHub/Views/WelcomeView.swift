@@ -27,7 +27,7 @@ struct WelcomeView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 Spacer(minLength: 0)
 
@@ -59,7 +59,7 @@ struct WelcomeView: View {
                     .frame(maxWidth: MLXHubDesignSystem.Layout.messageMaxWidth)
                 }
 
-                Spacer(minLength: 126)
+                Spacer(minLength: MLXHubDesignSystem.Spacing.loose)
             }
             .frame(maxWidth: MLXHubDesignSystem.Layout.messageMaxWidth, maxHeight: .infinity, alignment: .leading)
             .padding(.horizontal, MLXHubDesignSystem.Layout.chatHorizontalPadding)

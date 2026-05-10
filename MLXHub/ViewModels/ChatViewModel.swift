@@ -117,6 +117,48 @@ struct ChatSidebarMetadata {
     let preview: String
 }
 
+struct ChatGenerationRequest {
+    let chatId: UUID
+    let prompt: String
+    let images: [URL]
+    let tool: Tool
+    let selectedModel: AIModel
+    let profilesByModality: [ModelModality: ModelCapabilityProfile]
+    let parametersByModelId: [String: [String: Any]]
+    let selectionDownloadRequirement: DownloadableModel?
+    let selectionOperationName: String
+
+    var isImageGeneration: Bool { tool == .image }
+    var isSpeechGeneration: Bool { tool == .tts }
+    var isMusicGeneration: Bool { tool == .music }
+    var isDeepResearch: Bool { tool == .research }
+
+    func profile(for tool: Tool) -> ModelCapabilityProfile {
+        let modality = Self.modelModality(for: tool)
+        guard let profile = profilesByModality[modality] else {
+            preconditionFailure("Missing generation profile for \(modality.rawValue)")
+        }
+        return profile
+    }
+
+    func executionParameters(for profile: ModelCapabilityProfile) -> [String: Any] {
+        parametersByModelId[profile.modelId] ?? [:]
+    }
+
+    static func modelModality(for tool: Tool) -> ModelModality {
+        switch tool {
+        case .auto, .chat, .research:
+            return .vision
+        case .image:
+            return .image
+        case .tts:
+            return .audio
+        case .music:
+            return .music
+        }
+    }
+}
+
 @MainActor
 class ChatViewModel: ObservableObject {
     static var generationTimeout: TimeInterval = 300.0
@@ -175,6 +217,7 @@ class ChatViewModel: ObservableObject {
     @Published var localEngineErrorMessage: String?
     @Published var modelSelectionRevision = 0
     @Published var modelParameterRevision = 0
+    @Published var composerFocusRequest = 0
 
     // MARK: - Private Properties
     let chatPersistence: ChatPersistenceServicing
@@ -426,6 +469,8 @@ class ChatViewModel: ObservableObject {
     }
 
     func sendMessage() {
+        guard !isInputDisabled else { return }
+
         let trimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedInput.isEmpty || !selectedImagePaths.isEmpty else { return }
 
@@ -482,17 +527,42 @@ class ChatViewModel: ObservableObject {
         isCommittingComposerInput = false
         selectedImagePaths = []
 
-        startGeneration(for: messageText, images: images)
+        let request = makeGenerationRequest(chatId: chatId, prompt: messageText, images: images)
+        startGeneration(request)
     }
 
-    private func startGeneration(for messageText: String, images: [URL]) {
+    private func makeGenerationRequest(chatId: UUID, prompt: String, images: [URL]) -> ChatGenerationRequest {
+        let modalities = ModelModality.allCases
+        var profilesByModality: [ModelModality: ModelCapabilityProfile] = [:]
+        var parametersByModelId: [String: [String: Any]] = [:]
+
+        for modality in modalities {
+            let profile = profile(for: tool(for: modality))
+            profilesByModality[modality] = profile
+            parametersByModelId[profile.modelId] = modelParameterStore.executionParameters(for: profile)
+        }
+
+        return ChatGenerationRequest(
+            chatId: chatId,
+            prompt: prompt,
+            images: images,
+            tool: selectedTool,
+            selectedModel: selectedModel,
+            profilesByModality: profilesByModality,
+            parametersByModelId: parametersByModelId,
+            selectionDownloadRequirement: downloadRequirementForCurrentSelection(),
+            selectionOperationName: operationNameForCurrentSelection()
+        )
+    }
+
+    private func startGeneration(_ request: ChatGenerationRequest) {
         // Start generation
-        print("[ChatVM] Starting generation task for: \(messageText.prefix(50))...")
+        print("[ChatVM] Starting generation task for: \(request.prompt.prefix(50))...")
         generationTask = Task {
-            if selectedTool == .music {
-                await generateMusicDirectly(for: messageText)
+            if request.isMusicGeneration {
+                await generateMusicDirectly(for: request)
             } else {
-                await generateResponse(for: messageText, images: images)
+                await generateResponse(for: request)
             }
         }
     }
@@ -522,12 +592,12 @@ class ChatViewModel: ObservableObject {
         persistConversationHistory()
     }
 
-    private func generateMusicDirectly(for prompt: String) async {
-        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func generateMusicDirectly(for request: ChatGenerationRequest) async {
+        let trimmedPrompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return }
 
         do {
-            let musicProfile = profile(for: .music)
+            let musicProfile = request.profile(for: .music)
             let model = musicProfile.downloadableModel
             setActiveEngineModel(name: musicProfile.name, role: .music)
 
@@ -548,14 +618,18 @@ class ChatViewModel: ObservableObject {
                 isStreaming: true
             )
 
-            if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
+            if let index = chats.firstIndex(where: { $0.id == request.chatId }) {
                 _ = streamingContentStore.begin(messageId: aiMessage.id)
                 chats[index].messages.append(aiMessage)
                 chats[index].timestamp = Date()
                 streamingMessageId = aiMessage.id
             }
 
-            var parameters = defaultMusicParameters(caption: trimmedPrompt)
+            var parameters = defaultMusicParameters(
+                caption: trimmedPrompt,
+                profile: musicProfile,
+                executionParameters: request.executionParameters(for: musicProfile)
+            )
             applyMusicComposerOverrides(to: &parameters, prompt: trimmedPrompt)
 
             let toolCall = ExecutionToolCall(
@@ -567,7 +641,7 @@ class ChatViewModel: ObservableObject {
             )
             var toolMessages = [ExecutionMessage(role: .assistant, toolCalls: [toolCall])]
 
-            await executeMusicGenerationToolCall(toolCall, messages: &toolMessages, prompt: trimmedPrompt)
+            await executeMusicGenerationToolCall(toolCall, messages: &toolMessages, prompt: trimmedPrompt, generation: request)
 
             if let toolContent = toolMessages.last(where: { $0.role == .tool })?.content,
                isModelDownloadRequiredMessage(toolContent) {
@@ -608,16 +682,18 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func generateResponse(for prompt: String, images: [URL], toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
+    private func generateResponse(for request: ChatGenerationRequest, toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
         do {
-            let isImageGeneration = selectedTool == .image
-            let isSpeechGeneration = selectedTool == .tts
-            let isMusicGeneration = selectedTool == .music
-            let isDeepResearch = selectedTool == .research
+            let prompt = request.prompt
+            let images = request.images
+            let isImageGeneration = request.isImageGeneration
+            let isSpeechGeneration = request.isSpeechGeneration
+            let isMusicGeneration = request.isMusicGeneration
+            let isDeepResearch = request.isDeepResearch
 
-            let selectedCapabilityProfile = profile(for: selectedTool)
-            let activeChatProfile = profile(for: .chat)
-            let activeChatModel = activeChatProfile.aiModel ?? selectedModel
+            let selectedCapabilityProfile = request.profile(for: request.tool)
+            let activeChatProfile = request.profile(for: .chat)
+            let activeChatModel = activeChatProfile.aiModel ?? request.selectedModel
             let executionProfile = (isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile
             let resolvedModelId = executionProfile.modelId
             let activeModelName = executionProfile.name
@@ -629,11 +705,11 @@ class ChatViewModel: ObservableObject {
             )
             let requiredModel = executionProfile.downloadableModel
 
-            if let selectionRequirement = downloadRequirementForCurrentSelection(),
+            if let selectionRequirement = request.selectionDownloadRequirement,
                selectionRequirement.modelId != requiredModel.modelId {
                 guard await requireDownloadedModel(
                     model: selectionRequirement,
-                    operation: operationNameForCurrentSelection()
+                    operation: request.selectionOperationName
                 ) else {
                     return
                 }
@@ -689,7 +765,7 @@ class ChatViewModel: ObservableObject {
 
             if isFollowUp {
                 guard let existingId = streamingMessageId,
-                      let chatIndex = chats.firstIndex(where: { $0.id == selectedChatId }),
+                      let chatIndex = chats.firstIndex(where: { $0.id == request.chatId }),
                       let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == existingId }) else {
                     isGenerating = false
                     return
@@ -715,7 +791,7 @@ class ChatViewModel: ObservableObject {
                     isStreaming: true
                 )
 
-                if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
+                if let index = chats.firstIndex(where: { $0.id == request.chatId }) {
                     _ = streamingContentStore.begin(messageId: aiMessage.id)
                     chats[index].messages.append(aiMessage)
                     chats[index].timestamp = Date()
@@ -723,7 +799,7 @@ class ChatViewModel: ObservableObject {
                 }
             }
 
-            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth))
+            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth, for: request.tool))
             let allowedToolNames = toolNames(from: tools)
 
             var messages: [ExecutionMessage]
@@ -744,7 +820,7 @@ class ChatViewModel: ObservableObject {
 
                 messages.append(ExecutionMessage(role: .system, content: systemContent))
 
-                if let chat = selectedChat {
+                if let chat = chats.first(where: { $0.id == request.chatId }) {
                     for message in contextMessages(from: chat, excluding: aiMessage.id) {
                         let role: MessageRole = message.isUser ? .user : .assistant
                         messages.append(ExecutionMessage(role: role, content: message.content))
@@ -757,9 +833,9 @@ class ChatViewModel: ObservableObject {
                 }
             }
 
-            let chatExecutionParameters = modelParameterStore.executionParameters(for: activeChatProfile)
+            let chatExecutionParameters = request.executionParameters(for: activeChatProfile)
             let mediaExecutionParameters = isImageGeneration || isSpeechGeneration
-                ? modelParameterStore.executionParameters(for: executionProfile)
+                ? request.executionParameters(for: executionProfile)
                 : nil
             let enableThinking = (chatExecutionParameters["enable_thinking"] as? Bool) ?? activeChatModel.enableThinking
             let chatTemplateKwargs: [String: Any]? = !isImageGeneration && !isSpeechGeneration && !isMusicGeneration && activeChatProfile.modelId.lowercased().contains("qwen")
@@ -775,7 +851,7 @@ class ChatViewModel: ObservableObject {
             let minP = (chatExecutionParameters["min_p"] as? Double) ?? activeChatModel.minP
             let repetitionPenalty = (chatExecutionParameters["repetition_penalty"] as? Double) ?? activeChatModel.repetitionPenalty
 
-            let request = ExecutionRequest(
+            let executionRequest = ExecutionRequest(
                 backend: activeBackend,
                 modelId: resolvedModelId,
                 messages: isDirectMediaGeneration ? [ExecutionMessage(role: .user, content: prompt)] : messages,
@@ -792,14 +868,13 @@ class ChatViewModel: ObservableObject {
                 parameters: mediaExecutionParameters
             )
 
-            let stream = try await vlmExecutor.execute(request: request)
+            let stream = try await vlmExecutor.execute(request: executionRequest)
 
             await processStream(
                 stream,
                 forMessage: aiMessage.id,
                 messages: messages,
-                images: images,
-                prompt: prompt,
+                request: request,
                 toolDepth: toolDepth,
                 hasTools: tools != nil,
                 allowedToolNames: allowedToolNames,
@@ -812,20 +887,24 @@ class ChatViewModel: ObservableObject {
             if Task.isCancelled {
                 return
             }
-            handleGenerationError(error)
+            if let streamingMessageId {
+                handleGenerationError(error, replacingMessageId: streamingMessageId)
+            } else {
+                handleGenerationError(error)
+            }
         }
     }
 
-    private func executeToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String) async {
+    private func executeToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String, generation: ChatGenerationRequest) async {
         switch canonicalToolName(toolCall.function.name) {
         case "web_search":
             await executeWebSearchToolCall(toolCall, messages: &messages, prompt: prompt)
         case "generate_image":
-            await executeImageGenerationToolCall(toolCall, messages: &messages, images: images, prompt: prompt)
+            await executeImageGenerationToolCall(toolCall, messages: &messages, images: images, prompt: prompt, generation: generation)
         case "create_speech":
-            await executeSpeechGenerationToolCall(toolCall, messages: &messages, prompt: prompt)
+            await executeSpeechGenerationToolCall(toolCall, messages: &messages, prompt: prompt, generation: generation)
         case "generate_music", "create_music":
-            await executeMusicGenerationToolCall(toolCall, messages: &messages, prompt: prompt)
+            await executeMusicGenerationToolCall(toolCall, messages: &messages, prompt: prompt, generation: generation)
         default:
             messages.append(ExecutionMessage(
                 role: .tool,
@@ -853,7 +932,7 @@ class ChatViewModel: ObservableObject {
         messages.append(ExecutionMessage(role: .tool, content: result, toolCallId: toolCall.id, name: "web_search"))
     }
 
-    private func executeImageGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String) async {
+    private func executeImageGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String, generation: ChatGenerationRequest) async {
         var imagePrompt = prompt
         if let decoded = decodeToolArguments(toolCall),
            let decodedPrompt = decoded["prompt"] as? String,
@@ -861,7 +940,7 @@ class ChatViewModel: ObservableObject {
             imagePrompt = decodedPrompt
         }
 
-        let imageProfile = profile(for: .image)
+        let imageProfile = generation.profile(for: .image)
         let model = imageProfile.downloadableModel
         await executeMediaToolCall(
             toolCall,
@@ -881,7 +960,7 @@ class ChatViewModel: ObservableObject {
                     outputDirectory: generatedImagesDirectory,
                     maxTokens: 0,
                     temperature: 1.0,
-                    parameters: modelParameterStore.executionParameters(for: imageProfile)
+                    parameters: generation.executionParameters(for: imageProfile)
                 ),
                 loadingStatus: "Generating image...",
                 operationName: "Image generation",
@@ -893,7 +972,7 @@ class ChatViewModel: ObservableObject {
         )
     }
 
-    private func executeSpeechGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
+    private func executeSpeechGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String, generation: ChatGenerationRequest) async {
         var speechText = prompt
         if let decoded = decodeToolArguments(toolCall),
            let decodedText = decoded["text"] as? String,
@@ -901,7 +980,7 @@ class ChatViewModel: ObservableObject {
             speechText = decodedText
         }
 
-        let speechProfile = profile(for: .tts)
+        let speechProfile = generation.profile(for: .tts)
         let model = speechProfile.downloadableModel
         await executeMediaToolCall(
             toolCall,
@@ -920,7 +999,7 @@ class ChatViewModel: ObservableObject {
                     outputDirectory: generatedSpeechDirectory,
                     maxTokens: 0,
                     temperature: 1.0,
-                    parameters: modelParameterStore.executionParameters(for: speechProfile)
+                    parameters: generation.executionParameters(for: speechProfile)
                 ),
                 loadingStatus: "Generating speech...",
                 operationName: "Speech generation",
@@ -932,8 +1011,13 @@ class ChatViewModel: ObservableObject {
         )
     }
 
-    private func executeMusicGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String) async {
-        var parameters = defaultMusicParameters(caption: prompt)
+    private func executeMusicGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String, generation: ChatGenerationRequest) async {
+        let musicProfile = generation.profile(for: .music)
+        var parameters = defaultMusicParameters(
+            caption: prompt,
+            profile: musicProfile,
+            executionParameters: generation.executionParameters(for: musicProfile)
+        )
         if let decoded = decodeToolArguments(toolCall) {
             if let caption = decoded["caption"] as? String,
                !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -976,7 +1060,6 @@ class ChatViewModel: ObservableObject {
             return
         }
 
-        let musicProfile = profile(for: .music)
         let model = musicProfile.downloadableModel
         await executeMediaToolCall(
             toolCall,
@@ -1016,8 +1099,7 @@ class ChatViewModel: ObservableObject {
         _ stream: AsyncStream<ExecutionEvent>,
         forMessage messageId: UUID,
         messages: [ExecutionMessage]? = nil,
-        images: [URL]? = nil,
-        prompt: String? = nil,
+        request: ChatGenerationRequest,
         toolDepth: Int = 0,
         hasTools: Bool = false,
         allowedToolNames: Set<String> = [],
@@ -1160,10 +1242,8 @@ class ChatViewModel: ObservableObject {
                 fullResponse = response
                 let performanceMetrics = currentPerformanceMetrics(usage: usage)
                 if hasTools,
-                   let plainTextToolCall = plainTextToolCall(from: response, prompt: prompt),
-                   var currentMessages = messages,
-                   let currentImages = images,
-                   let currentPrompt = prompt {
+                   let plainTextToolCall = plainTextToolCall(from: response, prompt: request.prompt),
+                   var currentMessages = messages {
                     guard isToolAllowed(plainTextToolCall.function.name, allowedToolNames: allowedToolNames) else {
                         finalizeMessage(
                             messageId,
@@ -1199,7 +1279,7 @@ class ChatViewModel: ObservableObject {
 
                     updateStreamingMessage(messageId, content: "")
                     currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [plainTextToolCall]))
-                    await executeToolCall(plainTextToolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
+                    await executeToolCall(plainTextToolCall, messages: &currentMessages, images: request.images, prompt: request.prompt, generation: request)
 
                     if isTerminalMediaTool(plainTextToolCall.function.name) {
                         if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
@@ -1225,7 +1305,7 @@ class ChatViewModel: ObservableObject {
                         return
                     }
 
-                    await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+                    await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
                     return
                 }
 
@@ -1247,7 +1327,7 @@ class ChatViewModel: ObservableObject {
                 modelLoadProgress = nil
 
             case .toolCalls(let toolCalls):
-                guard var currentMessages = messages, let currentImages = images, let currentPrompt = prompt else { break }
+                guard var currentMessages = messages else { break }
                 let executableToolCalls = toolCalls
                     .filter { isToolAllowed($0.function.name, allowedToolNames: allowedToolNames) }
                     .map(canonicalToolCall)
@@ -1286,7 +1366,7 @@ class ChatViewModel: ObservableObject {
                 let hasTerminalMediaTool = executableToolCalls.contains { isTerminalMediaTool($0.function.name) }
                 for toolCall in executableToolCalls {
                     currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
-                    await executeToolCall(toolCall, messages: &currentMessages, images: currentImages, prompt: currentPrompt)
+                    await executeToolCall(toolCall, messages: &currentMessages, images: request.images, prompt: request.prompt, generation: request)
                 }
                 if hasTerminalMediaTool {
                     if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
@@ -1311,7 +1391,7 @@ class ChatViewModel: ObservableObject {
                     modelLoadProgress = nil
                     return
                 }
-                await generateResponse(for: currentPrompt, images: currentImages, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+                await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
                 return
 
             case .error(let error):

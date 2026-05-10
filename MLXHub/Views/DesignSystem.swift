@@ -50,7 +50,6 @@ enum MLXHubDesignSystem {
         static let transcriptHorizontalPadding: CGFloat = chatHorizontalPadding + composerSurfacePadding
         static let transcriptMaxWidth: CGFloat = messageMaxWidth
         static let floatingAccessoryBottomPadding: CGFloat = 14
-        static let defaultTranscriptBottomSpacer: CGFloat = 92
         static let composerTranscriptGap: CGFloat = 18
         static let composerMinTextHeight: CGFloat = 52
         static let composerMaxTextHeight: CGFloat = 208

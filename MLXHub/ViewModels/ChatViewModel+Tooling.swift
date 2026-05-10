@@ -18,10 +18,6 @@ extension ChatViewModel {
         PromptConfiguration.toolDefinition(named: "generate_music") ?? PromptConfiguration.musicGenerationTool
     }
 
-    var shouldIncludeAutoTools: Bool {
-        selectedTool == .auto
-    }
-
     var systemPrompt: String {
         PromptConfiguration.systemPrompt()
     }
@@ -38,14 +34,14 @@ extension ChatViewModel {
         [webSearchTool]
     }
 
-    func availableTools(toolDepth: Int) -> [[String: Any]]? {
+    func availableTools(toolDepth: Int, for tool: Tool) -> [[String: Any]]? {
         guard toolDepth < maxAutoToolDepth else { return nil }
 
-        if selectedTool == .research {
+        if tool == .research {
             return deepResearchTools
         }
 
-        guard shouldIncludeAutoTools else { return nil }
+        guard tool == .auto else { return nil }
         return autoTools
     }
 
@@ -139,8 +135,13 @@ extension ChatViewModel {
         return string
     }
 
-    func defaultMusicParameters(caption: String) -> [String: Any] {
-        var parameters = modelParameterStore.executionParameters(for: profile(for: .music))
+    func defaultMusicParameters(
+        caption: String,
+        profile: ModelCapabilityProfile? = nil,
+        executionParameters: [String: Any]? = nil
+    ) -> [String: Any] {
+        let musicProfile = profile ?? self.profile(for: .music)
+        var parameters = executionParameters ?? modelParameterStore.executionParameters(for: musicProfile)
         parameters.merge([
             "caption": caption,
             "batch_size": 1,
@@ -567,4 +568,3 @@ extension ChatViewModel {
         return result.isEmpty ? nil : result
     }
 }
-

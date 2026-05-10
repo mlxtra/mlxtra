@@ -134,13 +134,17 @@ extension ChatViewModel {
     }
 
     func modelModality(for tool: Tool) -> ModelModality {
-        switch tool {
-        case .auto, .chat, .research:
-            return .vision
+        ChatGenerationRequest.modelModality(for: tool)
+    }
+
+    func tool(for modality: ModelModality) -> Tool {
+        switch modality {
+        case .vision:
+            return .chat
         case .image:
             return .image
-        case .tts:
-            return .audio
+        case .audio:
+            return .tts
         case .music:
             return .music
         }
@@ -161,6 +165,7 @@ extension ChatViewModel {
     }
 
     func selectModelProfile(_ profile: ModelCapabilityProfile) {
+        guard !isInputDisabled else { return }
         modelSelectionStore.setSelectedModelId(profile.modelId, for: profile.modality)
         if let aiModel = profile.aiModel {
             selectedModel = aiModel
@@ -178,6 +183,8 @@ extension ChatViewModel {
     }
 
     func setParameterValue(_ value: String, for definition: ModelParameterDefinition, profile: ModelCapabilityProfile) {
+        guard !isInputDisabled else { return }
+
         let resolvedValue: String
         switch definition.type {
         case .decimal, .integer:
@@ -191,11 +198,15 @@ extension ChatViewModel {
     }
 
     func applyParameterPreset(_ preset: ModelParameterPreset, to profile: ModelCapabilityProfile) {
+        guard !isInputDisabled else { return }
+
         modelParameterStore.applyPreset(preset, to: profile)
         modelParameterRevision += 1
     }
 
     func resetParameters(for profile: ModelCapabilityProfile) {
+        guard !isInputDisabled else { return }
+
         modelParameterStore.reset(profile: profile)
         modelParameterRevision += 1
     }
@@ -243,7 +254,11 @@ extension ChatViewModel {
     }
 
     func operationNameForCurrentSelection() -> String {
-        switch selectedTool {
+        operationName(for: selectedTool)
+    }
+
+    func operationName(for tool: Tool) -> String {
+        switch tool {
         case .auto, .chat:
             return "Chat"
         case .image:
@@ -361,6 +376,8 @@ extension ChatViewModel {
     }
 
     func selectTool(_ tool: Tool) {
+        guard !isInputDisabled else { return }
+
         selectedTool = tool
         if tool == .music {
             musicIntentState = .needsInstrumentalOrVocals
@@ -374,6 +391,8 @@ extension ChatViewModel {
     }
 
     func selectModel(_ model: AIModel) {
+        guard !isInputDisabled else { return }
+
         selectedModel = model
         modelSelectionStore.setSelectedModelId(model.modelId, for: .vision)
         modelSelectionRevision += 1
@@ -382,6 +401,11 @@ extension ChatViewModel {
     }
 
     func toggleToolMenu() {
+        guard !isInputDisabled else {
+            isToolMenuOpen = false
+            return
+        }
+
         isToolMenuOpen.toggle()
         if isToolMenuOpen {
             isModelMenuOpen = false
@@ -389,6 +413,11 @@ extension ChatViewModel {
     }
 
     func toggleModelMenu() {
+        guard !isInputDisabled else {
+            isModelMenuOpen = false
+            return
+        }
+
         isModelMenuOpen.toggle()
         if isModelMenuOpen {
             isToolMenuOpen = false
@@ -398,5 +427,10 @@ extension ChatViewModel {
     func closeMenus() {
         isToolMenuOpen = false
         isModelMenuOpen = false
+    }
+
+    func focusComposer() {
+        guard !isInputDisabled else { return }
+        composerFocusRequest &+= 1
     }
 }

@@ -45,6 +45,7 @@ MLXHub/Resources/runtime/macos-arm64/acestep-venv/
 *$py.class
 *.so
 .Python
+*.bak
 
 ## Cached models
 .cache/

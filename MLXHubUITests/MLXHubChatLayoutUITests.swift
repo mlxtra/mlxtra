@@ -33,7 +33,10 @@ final class MLXHubChatLayoutUITests: XCTestCase {
 
         app = XCUIApplication()
         app.launchEnvironment["MLXHUB_UI_TEST_MODE"] = "1"
-        if name.contains("testNarrowWindowMessageAndComposerWidths") {
+        if name.contains("testTranscriptLiftsAboveExpandedMusicComposer") {
+            app.launchEnvironment["MLXHUB_UI_TEST_WINDOW_WIDTH"] = "980"
+            app.launchEnvironment["MLXHUB_UI_TEST_WINDOW_HEIGHT"] = "640"
+        } else if name.contains("testNarrowWindowMessageAndComposerWidths") {
             app.launchEnvironment["MLXHUB_UI_TEST_WINDOW_WIDTH"] = "860"
             app.launchEnvironment["MLXHUB_UI_TEST_WINDOW_HEIGHT"] = "680"
         } else if name.contains("testFullWidthPlainMessageRail") {
@@ -283,7 +286,7 @@ final class MLXHubChatLayoutUITests: XCTestCase {
         )
         try captureScreenshot(named: "06b-full-width-plain-rail")
         assertAssistantContentMatchesComposerRail(tolerance: 4)
-        assertAssistantNativeTextStaysInsideComposerRail()
+        assertAssistantTextStaysInsideComposerRail()
         assertLastUserBubbleEndsOnComposerRail(tolerance: 4)
         assertComposerIsBoundedBottomAccessory()
         assertResponseClearsComposer(response)
@@ -478,6 +481,38 @@ final class MLXHubChatLayoutUITests: XCTestCase {
         enterMusicLyrics("First verse line\nSecond verse line")
         assertComposerStaysUsableWithMusicControls()
         try captureScreenshot(named: "13-music-with-vocals-draft")
+    }
+
+    func testTranscriptLiftsAboveExpandedMusicComposerSnapshot() throws {
+        XCTAssertTrue(app.buttons["welcome.tool.Music"].waitForExistence(timeout: 5))
+        selectWelcomeTool("Music")
+
+        enterPrompt("Moody cyberpunk instrumental music")
+        clickGenerate()
+
+        let attachmentBeforeExpansion = waitForGeneratedAttachment(identifier: "generated.audio.music")
+        assertGeneratedAttachmentLayout(attachmentBeforeExpansion)
+        let compactComposer = composerFrame()
+
+        enterPrompt("Moody synth pop with vocals")
+        selectMusicVocalMode("With vocals")
+        assertMusicLyricsEditorVisibleForVocalsMode()
+        waitForTransientUIToSettle()
+
+        let expandedComposer = composerFrame()
+        XCTAssertGreaterThan(
+            expandedComposer.height,
+            compactComposer.height + 80,
+            "With vocals mode should expand the composer enough to exercise transcript layout"
+        )
+
+        let attachmentAfterExpansion = waitForGeneratedAttachment(identifier: "generated.audio.music")
+        XCTAssertLessThan(
+            attachmentAfterExpansion.frame.maxY,
+            expandedComposer.minY - 8,
+            "Transcript content should move above the expanded music composer instead of stacking underneath it"
+        )
+        try captureScreenshot(named: "13b-expanded-music-composer-transcript")
     }
 
     func testToolSelectorPopoverLayoutSnapshot() throws {
@@ -1295,20 +1330,26 @@ final class MLXHubChatLayoutUITests: XCTestCase {
         )
     }
 
-    private func assertAssistantNativeTextStaysInsideComposerRail(tolerance: CGFloat = 3) {
+    private func assertAssistantTextStaysInsideComposerRail(tolerance: CGFloat = 3) {
         let inputFieldFrame = composerVisualInputBoxFrame()
-        let nativeTextView = app.descendants(matching: .any)["message.assistant.nativeTextView"]
-        XCTAssertTrue(nativeTextView.waitForExistence(timeout: 5), "Missing assistant native text view")
+        let nativeTextView = app.descendants(matching: .any)
+            .matching(identifier: "message.assistant.nativeTextView")
+            .firstMatch
+        let plainText = app.staticTexts
+            .matching(identifier: "message.assistant.plainText")
+            .firstMatch
+        let assistantText = nativeTextView.waitForExistence(timeout: 1) ? nativeTextView : plainText
+        XCTAssertTrue(assistantText.waitForExistence(timeout: 5), "Missing assistant text element")
 
         XCTAssertGreaterThanOrEqual(
-            nativeTextView.frame.minX,
+            assistantText.frame.minX,
             inputFieldFrame.minX - tolerance,
-            "Assistant native text view should not paint before the composer input rail"
+            "Assistant text should not paint before the composer input rail"
         )
         XCTAssertLessThanOrEqual(
-            nativeTextView.frame.maxX,
+            assistantText.frame.maxX,
             inputFieldFrame.maxX + tolerance,
-            "Assistant native text view should not paint after the composer input rail"
+            "Assistant text should not paint after the composer input rail"
         )
     }
 

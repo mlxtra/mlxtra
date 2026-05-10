@@ -3,18 +3,9 @@ import SwiftUI
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @Environment(\.openSettings) private var openSettings
-    @State private var composerHeight: CGFloat = 118
     let chatId: UUID
 
     private let bottomAnchorID = "chat-bottom-anchor"
-    private var transcriptBottomSpacerHeight: CGFloat {
-        max(
-            MLXHubDesignSystem.Layout.defaultTranscriptBottomSpacer,
-            composerHeight
-                + MLXHubDesignSystem.Layout.floatingAccessoryBottomPadding
-                + MLXHubDesignSystem.Layout.composerTranscriptGap
-        )
-    }
 
     // Access chat through viewModel so updates are observed
     var chat: Chat? {
@@ -46,7 +37,7 @@ struct ChatView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 transcriptScrollView
                     .overlay(alignment: .bottom) {
@@ -70,25 +61,13 @@ struct ChatView: View {
                     .onChange(of: latestMessageContent) { _, _ in
                         scrollToBottom(proxy)
                     }
-                    .onChange(of: composerHeight) { _, _ in
-                        scrollToBottom(proxy)
-                    }
             }
+            .frame(maxHeight: .infinity)
 
             ComposerView(viewModel: viewModel)
                 .frame(maxWidth: MLXHubDesignSystem.Layout.composerMaxWidth)
                 .padding(.horizontal, MLXHubDesignSystem.Layout.chatHorizontalPadding)
                 .padding(.bottom, MLXHubDesignSystem.Layout.floatingAccessoryBottomPadding)
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear
-                            .preference(key: ChatComposerHeightPreferenceKey.self, value: proxy.size.height)
-                    }
-                }
-        }
-        .onPreferenceChange(ChatComposerHeightPreferenceKey.self) { height in
-            guard height > 0 else { return }
-            composerHeight = height
         }
         .background(MLXHubDesignSystem.Palette.windowBackground)
     }
@@ -114,7 +93,7 @@ struct ChatView: View {
                 }
 
                 Color.clear
-                    .frame(height: transcriptBottomSpacerHeight)
+                    .frame(height: MLXHubDesignSystem.Layout.composerTranscriptGap)
                     .id(bottomAnchorID)
             }
             .padding(.top, MLXHubDesignSystem.Layout.chatHorizontalPadding)
@@ -171,14 +150,6 @@ private struct StreamingTranscriptAutoScroll: View {
             lastScrollTime = Date()
             onScroll()
         }
-    }
-}
-
-private struct ChatComposerHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 

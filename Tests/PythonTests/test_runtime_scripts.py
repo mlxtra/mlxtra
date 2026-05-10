@@ -2,7 +2,9 @@
 """Checks for runtime build/validation script drift."""
 
 import json
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -70,6 +72,29 @@ class RuntimeScriptTests(unittest.TestCase):
             catalog_model_ids - supported_models,
             "Runtime supported models must include every bundled catalog model id.",
         )
+
+    def test_validate_runtime_bundle_writes_xcode_output_stamp(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            stamp_path = Path(temporary_directory) / "validation.stamp"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "SCRIPT_INPUT_FILE_COUNT": "1",
+                    "SCRIPT_OUTPUT_FILE_COUNT": "1",
+                    "SCRIPT_OUTPUT_FILE_0": str(stamp_path),
+                }
+            )
+
+            subprocess.run(
+                ["bash", str(SCRIPTS_DIR / "validate-runtime-bundle.sh")],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(stamp_path.read_text(), "validated\n")
 
 
 if __name__ == "__main__":

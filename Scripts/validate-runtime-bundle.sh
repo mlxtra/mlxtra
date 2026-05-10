@@ -22,6 +22,13 @@ fail() {
     exit 1
 }
 
+write_validation_stamp() {
+    if [ "${SCRIPT_OUTPUT_FILE_COUNT:-0}" -gt 0 ] && [ -n "${SCRIPT_OUTPUT_FILE_0:-}" ]; then
+        mkdir -p "$(dirname "${SCRIPT_OUTPUT_FILE_0}")"
+        printf 'validated\n' > "${SCRIPT_OUTPUT_FILE_0}"
+    fi
+}
+
 require_directory() {
     local path="$1"
     local label="$2"
@@ -152,6 +159,7 @@ validate_manifest
 
 if [ -n "${SCRIPT_INPUT_FILE_COUNT:-}" ]; then
     validate_download_helper_structure
+    write_validation_stamp
     echo "MLXHub runtime bundle structural and download-helper package validation passed"
     exit 0
 fi
@@ -159,5 +167,6 @@ fi
 validate_download_helper_structure
 validate_download_helpers
 validate_runtime_python
+write_validation_stamp
 
 echo "MLXHub runtime bundle validation passed"

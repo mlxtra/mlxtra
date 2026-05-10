@@ -105,6 +105,7 @@ struct ComposerView: View {
                 placeholder: viewModel.composerPlaceholder,
                 isFocused: $isTextInputFocused,
                 isEditable: !viewModel.isInputDisabled,
+                focusRequest: viewModel.composerFocusRequest,
                 onPasteImages: handlePasteboardImages,
                 accessibilityIdentifier: "composer.input",
                 accessibilityLabel: "Composer input",
@@ -157,6 +158,7 @@ struct ComposerView: View {
         }
         .buttonStyle(.plain)
         .help(attachmentHelp)
+        .disabled(viewModel.isInputDisabled)
     }
 
     @ViewBuilder
@@ -725,6 +727,7 @@ struct ComposerModelControl: View {
             }
             .buttonStyle(.plain)
             .help("Choose model")
+            .disabled(viewModel.isInputDisabled)
             .popover(isPresented: $isModelPickerPresented, arrowEdge: .bottom) {
                 ComposerModelPickerPopover(
                     viewModel: viewModel,
@@ -748,6 +751,7 @@ struct ComposerModelControl: View {
             }
             .buttonStyle(.plain)
             .help("Model settings")
+            .disabled(viewModel.isInputDisabled)
             .popover(isPresented: $isSettingsPresented, arrowEdge: .bottom) {
                 ModelParameterPopover(viewModel: viewModel, profile: profile)
                     .frame(width: 320)
@@ -1063,6 +1067,7 @@ struct ToolSelectorInline: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(viewModel.isInputDisabled)
         .popover(isPresented: $isShowingPopover, arrowEdge: .bottom) {
             ToolSelectorPopover(
                 viewModel: viewModel,
@@ -1407,6 +1412,7 @@ struct MultilineTextInput: NSViewRepresentable {
     var placeholder: String
     @Binding var isFocused: Bool
     var isEditable: Bool = true
+    var focusRequest: Int = 0
     var onPasteImages: () -> Bool = { false }
     var submitsOnReturn: Bool = true
     var accessibilityIdentifier: String = "composer.input"
@@ -1464,6 +1470,12 @@ struct MultilineTextInput: NSViewRepresentable {
         textView.isEditable = isEditable
         textView.textColor = isEditable ? NSColor.labelColor : NSColor.secondaryLabelColor
         textView.font = MLXHubDesignSystem.Typography.nativeComposerInputFont()
+
+        if isEditable, context.coordinator.consumeFocusRequest(focusRequest) {
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1474,9 +1486,17 @@ struct MultilineTextInput: NSViewRepresentable {
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MultilineTextInput
         var textView: NSTextView?
+        private var lastFocusRequest: Int
 
         init(_ parent: MultilineTextInput) {
             self.parent = parent
+            self.lastFocusRequest = parent.focusRequest
+        }
+
+        func consumeFocusRequest(_ request: Int) -> Bool {
+            guard request != lastFocusRequest else { return false }
+            lastFocusRequest = request
+            return true
         }
 
         func textDidChange(_ notification: Notification) {
