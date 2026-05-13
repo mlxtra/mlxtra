@@ -1,6 +1,6 @@
 # MLXtra
 
-A macOS-native GUI application for running and interacting with MLX (Machine Learning eXchange) models on Apple Silicon. Built with SwiftUI and Python bridges for seamless local AI model execution.
+A macOS-native GUI application for running and interacting with [MLX](https://github.com/ml-explore/mlx)-powered models on Apple Silicon. Built with SwiftUI and Python bridges for seamless local AI model execution.
 
 ## Features
 
