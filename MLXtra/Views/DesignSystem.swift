@@ -200,16 +200,10 @@ extension View {
     @ViewBuilder
     func nativeGlassSurface(cornerRadius: CGFloat, interactive: Bool = false) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        if #available(macOS 26.0, *) {
-            self
-                .background(Color(NSColor.windowBackgroundColor).opacity(0.84), in: shape)
-                .glassEffect(Glass.regular.interactive(interactive), in: shape)
-        } else {
-            self.background(
-                .regularMaterial,
-                in: shape
-            )
-        }
+        self.background(
+            .regularMaterial,
+            in: shape
+        )
     }
 
     func designPanelSurface(cornerRadius: CGFloat = MLXtraDesignSystem.Radius.card) -> some View {

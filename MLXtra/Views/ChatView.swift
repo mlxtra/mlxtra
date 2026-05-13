@@ -113,11 +113,7 @@ struct ChatView: View {
         }
         .accessibilityIdentifier("chat.transcript")
 
-        if #available(macOS 26.0, *) {
-            scrollView.scrollEdgeEffectStyle(.hard, for: .bottom)
-        } else {
-            scrollView
-        }
+        scrollView
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
