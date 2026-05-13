@@ -286,6 +286,7 @@ extension ChatViewModel {
         isGenerating = false
         isModelLoading = false
         streamingMessageId = nil
+        generationTask = nil
         loadingMessage = ""
     }
 

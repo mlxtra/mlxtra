@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CryptoKit
 
 // MARK: - Cache key
 
@@ -68,18 +69,19 @@ final class MarkdownCache {
     // MARK: - Keys
 
     private func cacheKey(for text: String) -> NSString {
-        // djb2 hash — fast and sufficient for content-based caching.
-        var hash: UInt64 = 5381
-        for byte in text.utf8 {
-            hash = ((hash << 5) &+ hash) &+ UInt64(byte)
-        }
-        return "\(hash).\(MarkdownCacheKey.currentRendererVersion)" as NSString
+        "\(contentDigest(for: text)).\(text.utf8.count).\(MarkdownCacheKey.currentRendererVersion)" as NSString
     }
 
     private func attributedCacheKey(for text: String, style: MarkdownRenderStyle) -> NSString {
         let appearance = NSApplication.shared.effectiveAppearance.name.rawValue
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let hashBase = "\(text.hashValue).\(appearance).\(style.fontSize).\(scale).\(MarkdownCacheKey.currentRendererVersion)"
+        let hashBase = "\(contentDigest(for: text)).\(text.utf8.count).\(appearance).\(style.fontSize).\(scale).\(MarkdownCacheKey.currentRendererVersion)"
         return hashBase as NSString
+    }
+
+    private func contentDigest(for text: String) -> String {
+        SHA256.hash(data: Data(text.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }

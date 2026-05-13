@@ -74,8 +74,14 @@ def resolve_app_bundle() -> Path:
     raise FileNotFoundError("Could not find or build MLXtra.app")
 
 
-ALLOW_MODEL_DOWNLOADS = os.environ.get("MLXTRA_ALLOW_MODEL_DOWNLOADS") == "1"
-REQUIRE_ALL_MODELS = os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
+ALLOW_MODEL_DOWNLOADS = (
+    os.environ.get("MLXTRA_ALLOW_MODEL_DOWNLOADS") == "1"
+    or "--allow-downloads" in sys.argv[1:]
+)
+REQUIRE_ALL_MODELS = (
+    os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
+    or "--strict" in sys.argv[1:]
+)
 HF_CACHE = Path.home() / ".cache/huggingface/hub"
 ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXtra/checkpoints"
 
@@ -259,7 +265,64 @@ class MLXtraIntegrationTest:
             f"{model_id} is missing or incomplete in the local Hugging Face cache.",
         )
 
+    def ensure_music_model_downloaded(self) -> bool:
+        if ace_step_model_is_complete():
+            return True
+
+        if not ALLOW_MODEL_DOWNLOADS:
+            return False
+
+        helper = RUNTIME / "acestep_download_helper.py"
+        if not helper.exists():
+            self.log(f"ACE-Step download helper not found: {helper}", "ERROR")
+            return False
+
+        self.log("Downloading missing ACE-Step checkpoints because MLXTRA_ALLOW_MODEL_DOWNLOADS=1.")
+        try:
+            proc = subprocess.run(
+                [
+                    str(ACESTEP_PYTHON),
+                    "-u",
+                    str(helper),
+                    "ACE-Step/acestep-v15-turbo-continuous",
+                    str(ACESTEP_CHECKPOINTS_DIR),
+                ],
+                capture_output=True,
+                text=True,
+                env=self.get_bridge_env(),
+                timeout=1800,
+            )
+        except subprocess.TimeoutExpired:
+            self.log("ACE-Step checkpoint download timed out.", "ERROR")
+            return False
+
+        for line in proc.stdout.splitlines()[-20:]:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            if event_type in {"download.progress", "download.complete", "download.error"}:
+                self.log(f"  [download] {event.get('status') or event.get('message') or event_type}")
+
+        if proc.returncode != 0:
+            self.log(f"ACE-Step download helper exited with code {proc.returncode}", "ERROR")
+            for line in proc.stderr.splitlines()[-20:]:
+                self.log(f"  [download stderr] {line[:160]}", "ERROR")
+            return False
+
+        if not ace_step_model_is_complete():
+            self.log("ACE-Step download completed but required checkpoint files are still incomplete.", "ERROR")
+            return False
+
+        self.log("ACE-Step checkpoints downloaded and verified.")
+        return True
+
     def require_music_model(self, test_name: str) -> Optional[bool]:
+        if self.ensure_music_model_downloaded():
+            self.log("Local ACE-Step checkpoints verified.")
+            return True
+
         if ace_step_model_is_complete():
             self.log("Local ACE-Step checkpoints verified.")
             return True
@@ -678,13 +741,25 @@ class MLXtraIntegrationTest:
             output_dir.mkdir(parents=True, exist_ok=True)
             self.log(f"  ✓ Output directory: {output_dir}")
 
-        # Check model directories
-        checkpoints_dir = Path.home() / "Library/Application Support/MLXtra/checkpoints"
+        # ACE-Step checkpoints are optional unless strict model coverage is requested.
+        checkpoints_dir = ACESTEP_CHECKPOINTS_DIR
         self.log(f"\n  Checkpoints directory: {checkpoints_dir}")
 
         if not checkpoints_dir.exists():
-            self.log("  ✗ Checkpoints directory does not exist", "ERROR")
-            return False
+            message = (
+                "ACE-Step checkpoints directory does not exist; music generation "
+                "tests will be skipped unless MLXTRA_REQUIRE_ALL_MODELS=1."
+            )
+            if ALLOW_MODEL_DOWNLOADS:
+                self.log(f"  ↻ {message} Attempting repair/download.")
+                return self.ensure_music_model_downloaded()
+
+            if REQUIRE_ALL_MODELS:
+                self.log(f"  ✗ {message}", "ERROR")
+                return False
+
+            self.log(f"  ↷ {message}")
+            return True
 
         # List contents
         try:
@@ -705,18 +780,10 @@ class MLXtraIntegrationTest:
         self.log("TEST 2: Model ID Normalization")
         self.log("=" * 70)
 
-        # Read normalization function from acestep_bridge.py
         try:
-            bridge_code = ACESTEP_BRIDGE.read_text()
-            namespace = {"__file__": str(ACESTEP_BRIDGE)}
             if str(RESOURCES) not in sys.path:
                 sys.path.insert(0, str(RESOURCES))
-            exec(bridge_code.split("def generate_music_once")[0], namespace)
-            normalize_fn = namespace.get("normalize_music_model_id")
-
-            if not normalize_fn:
-                self.log("Could not extract normalization function", "ERROR")
-                return False
+            from bridge_utils import normalize_music_model_id
 
             test_cases = [
                 ("ACE-Step/acestep-v15-turbo-continuous", "acestep-v15-turbo"),
@@ -727,7 +794,7 @@ class MLXtraIntegrationTest:
 
             all_passed = True
             for input_id, expected in test_cases:
-                result = normalize_fn(input_id)
+                result = normalize_music_model_id(input_id)
                 passed = result == expected
                 status = "✓" if passed else "✗"
                 self.log(f"  {status} '{input_id}' → '{result}'")
@@ -1143,9 +1210,15 @@ class MLXtraIntegrationTest:
             self.log(f"  {status}: {name}")
 
         all_passed = all(passed for _, passed in results)
-        self.log(
-            "\n" + ("✓ All tests passed!" if all_passed else "✗ Some tests failed!")
-        )
+        if all_passed and self.skipped_tests:
+            self.log(
+                f"\n✓ All non-skipped tests passed; {len(self.skipped_tests)} model-backed test(s) were skipped."
+            )
+            self.log("   Use --strict or MLXTRA_REQUIRE_ALL_MODELS=1 for a release gate.")
+        else:
+            self.log(
+                "\n" + ("✓ All tests passed!" if all_passed else "✗ Some tests failed!")
+            )
 
         # List generated files
         if self.generated_files:

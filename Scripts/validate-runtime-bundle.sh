@@ -1,11 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "${MLXTRA_SKIP_RUNTIME_VALIDATION:-0}" = "1" ]; then
-    echo "Skipping MLXtra runtime validation because MLXTRA_SKIP_RUNTIME_VALIDATION=1"
-    exit 0
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 source "${SCRIPT_DIR}/runtime-dependencies.sh"
@@ -30,6 +25,12 @@ write_validation_stamp() {
         printf 'validated\n' > "${SCRIPT_OUTPUT_FILE_0}"
     fi
 }
+
+if [ "${MLXTRA_SKIP_RUNTIME_VALIDATION:-0}" = "1" ]; then
+    echo "Skipping MLXtra runtime validation because MLXTRA_SKIP_RUNTIME_VALIDATION=1"
+    write_validation_stamp
+    exit 0
+fi
 
 require_directory() {
     local path="$1"

@@ -15,7 +15,7 @@ protocol ChatPersistenceServicing: AnyObject {
 extension ChatPersistenceServicing {
     func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
         saveChats(chats)
-        if let id = selectedChatId { saveSelectedChatId(id) }
+        saveSelectedChatId(selectedChatId)
     }
 
     func flushPendingSave() {}
@@ -79,6 +79,14 @@ enum PendingEngineDownloadReason {
     case preflight
 }
 
+private final class UserDefaultsWriter: @unchecked Sendable {
+    let userDefaults: UserDefaults
+
+    init(_ userDefaults: UserDefaults) {
+        self.userDefaults = userDefaults
+    }
+}
+
 @MainActor
 protocol ChatToolExecutionServicing: AnyObject {
     func executeWebSearch(query: String) async -> String
@@ -92,6 +100,7 @@ protocol ChatToolExecutionServicing: AnyObject {
 final class LocalChatPersistenceService: ChatPersistenceServicing {
     private let fileManager: FileManager
     private let userDefaults: UserDefaults
+    private let userDefaultsWriter: UserDefaultsWriter
     private let selectedChatKey: String
     private let storageDirectory: URL
     private let writeQueue = DispatchQueue(label: "com.localstudio.mlxtra.chat-persistence", qos: .utility)
@@ -107,6 +116,7 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     ) {
         self.fileManager = fileManager
         self.userDefaults = userDefaults
+        self.userDefaultsWriter = UserDefaultsWriter(userDefaults)
         self.selectedChatKey = selectedChatKey
         self.storageDirectory = storageDirectory ?? (
             fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -118,26 +128,13 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     deinit {
         pendingSaveWorkItem?.cancel()
         if let snapshot = pendingSaveSnapshot {
-            do {
-                try FileManager.default.createDirectory(
-                    at: storageDirectory,
-                    withIntermediateDirectories: true
-                )
-                let encoder = JSONEncoder()
-                encoder.dateEncodingStrategy = .iso8601
-                let data = try encoder.encode(snapshot.chats)
-                let conversationsURL = storageDirectory.appendingPathComponent("conversations.json")
-                try data.write(to: conversationsURL, options: [.atomic])
-                MainActor.assumeIsolated {
-                    if let selectedChatId = snapshot.selectedChatId {
-                        userDefaults.set(selectedChatId.uuidString, forKey: selectedChatKey)
-                    } else {
-                        userDefaults.removeObject(forKey: selectedChatKey)
-                    }
-                }
-            } catch {
-                print("Failed to save pending conversation history: \(error)")
-            }
+            Self.writeSnapshot(
+                snapshot,
+                storageDirectory: storageDirectory,
+                conversationsURL: storageDirectory.appendingPathComponent("conversations.json"),
+                userDefaultsWriter: userDefaultsWriter,
+                selectedChatKey: selectedChatKey
+            )
         }
         // Use async to avoid deadlock if deinit is called from within the write queue
         writeQueue.async {}
@@ -193,9 +190,20 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
 
     func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
         pendingSaveWorkItem?.cancel()
-        pendingSaveSnapshot = (chats, selectedChatId)
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.writePendingSaveSnapshot()
+        let snapshot = (chats, selectedChatId)
+        let storageDirectory = storageDirectory
+        let conversationsURL = conversationsURL
+        let userDefaultsWriter = userDefaultsWriter
+        let selectedChatKey = selectedChatKey
+        pendingSaveSnapshot = snapshot
+        let workItem = DispatchWorkItem {
+            Self.writeSnapshot(
+                snapshot,
+                storageDirectory: storageDirectory,
+                conversationsURL: conversationsURL,
+                userDefaultsWriter: userDefaultsWriter,
+                selectedChatKey: selectedChatKey
+            )
         }
         pendingSaveWorkItem = workItem
         writeQueue.asyncAfter(deadline: .now() + saveDebounceInterval, execute: workItem)
@@ -210,9 +218,46 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     private func writePendingSaveSnapshot() {
         guard let snapshot = pendingSaveSnapshot else { return }
         pendingSaveSnapshot = nil
-        saveChats(snapshot.chats)
-        if let id = snapshot.selectedChatId {
-            saveSelectedChatId(id)
+        writeSnapshot(snapshot)
+    }
+
+    private func writeSnapshot(_ snapshot: (chats: [Chat], selectedChatId: UUID?)) {
+        Self.writeSnapshot(
+            snapshot,
+            storageDirectory: storageDirectory,
+            conversationsURL: conversationsURL,
+            userDefaultsWriter: userDefaultsWriter,
+            selectedChatKey: selectedChatKey
+        )
+    }
+
+    private nonisolated static func writeSnapshot(
+        _ snapshot: (chats: [Chat], selectedChatId: UUID?),
+        storageDirectory: URL,
+        conversationsURL: URL,
+        userDefaultsWriter: UserDefaultsWriter,
+        selectedChatKey: String
+    ) {
+        do {
+            try FileManager.default.createDirectory(
+                at: storageDirectory,
+                withIntermediateDirectories: true
+            )
+
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+
+            let data = try encoder.encode(snapshot.chats)
+            try data.write(to: conversationsURL, options: [.atomic])
+
+            let userDefaults = userDefaultsWriter.userDefaults
+            if let selectedChatId = snapshot.selectedChatId {
+                userDefaults.set(selectedChatId.uuidString, forKey: selectedChatKey)
+            } else {
+                userDefaults.removeObject(forKey: selectedChatKey)
+            }
+        } catch {
+            print("Failed to save conversation history: \(error)")
         }
     }
 
@@ -324,6 +369,9 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         }
 
         do {
+            if !modelExecutor.isReady {
+                try await modelExecutor.initialize()
+            }
             let startedAt = Date()
             var firstOutputAt: Date?
             var observedTokenEvents = 0

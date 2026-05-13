@@ -22,21 +22,24 @@ if venv_path.exists():
 try:
     import mlx
 
-    print("✅ mlx imported successfully")
+    print("OK: mlx imported successfully")
 
     from mlx_vlm import load
 
-    print("✅ mlx_vlm imported successfully")
+    print("OK: mlx_vlm imported successfully")
 
     import mflux
 
-    print("✅ mflux imported successfully")
+    print("OK: mflux imported successfully")
 
     print("\nBridge test successful!")
     print(f"Python version: {sys.version}")
 
 except Exception as e:
-    print(f"❌ Error: {e}")
+    print(f"ERROR: {e}")
     import traceback
 
     traceback.print_exc()
+    sys.exit(1)
+
+sys.exit(0)

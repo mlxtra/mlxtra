@@ -69,7 +69,7 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testMainChatWindowLayoutSnapshots() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
         assertSidebarHeaderPlacesNewChatAboveSearch()
         XCTAssertFalse(app.buttons["toolbar.newChat"].exists, "Toolbar New chat should not duplicate the visible sidebar control")
         assertInitialDraftChatIsUntitled()
@@ -78,7 +78,7 @@ final class MLXtraChatLayoutUITests: XCTestCase {
         assertComposerModelControlReplacesToolbarControls()
         try captureScreenshot(named: "01-empty-chat")
 
-        selectWelcomeTool("Chat")
+        selectWelcomeTool("chat")
         let response = sendPrompt(
             "Answer with a short deterministic sentence.",
             expecting: "UI test chat response"
@@ -108,13 +108,13 @@ final class MLXtraChatLayoutUITests: XCTestCase {
         XCTAssertFalse(app.buttons["sidebar.newChat"].isHittable, "Sidebar New chat should not be the visible affordance when the sidebar is hidden")
 
         toolbarNewChat.click()
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
         try captureScreenshot(named: "00-collapsed-sidebar-new-chat")
     }
 
     func testMultiTurnMessageLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         _ = sendPrompt(
             "UI test multi turn first.",
@@ -133,8 +133,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testFullScreenLengthMessageScrollsWithoutCoveringComposer() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         let responseEnd = sendPrompt(
             "UI test long scroll response.",
@@ -158,8 +158,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testStreamingScrollKeepsComposerAndTranscriptAnchoredSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         let composerBefore = composerFrame()
         enterPrompt("UI test streaming scroll response.")
@@ -218,8 +218,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testMarkdownRenderingSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         let response = sendPrompt(
             "UI test markdown rendering.",
@@ -245,8 +245,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testNarrowWindowMessageAndComposerWidthsSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         _ = sendPrompt(
             "UI test markdown rendering.",
@@ -271,8 +271,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testFullWidthPlainMessageRailSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         let response = sendPrompt(
             "UI test plain rail response.",
@@ -293,8 +293,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testSidebarRowsKeepTitleReadableSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         _ = sendPrompt(
             "A detailed sidebar title should keep useful words visible.",
@@ -356,8 +356,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testLongMultilineInputExpandsThenSends() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         let prompt = longMultilinePrompt()
         pastePrompt(prompt)
@@ -379,8 +379,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testSingleLineInputKeepsDefaultComposerHeightSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         let initialComposerHeight = composerFrame().height
         let initialInputHeight = composerInputFieldFrame().height
@@ -405,8 +405,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testTwoLineInputKeepsDefaultComposerHeightSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         let initialComposerHeight = composerFrame().height
         let initialInputHeight = composerInputFieldFrame().height
@@ -434,8 +434,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testGeneratedImageOutputLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Image"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Image")
+        XCTAssertTrue(app.buttons["welcome.tool.image"].waitForExistence(timeout: 5))
+        selectWelcomeTool("image")
 
         enterPrompt("Create a simple gradient square")
         clickGenerate()
@@ -446,8 +446,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testGeneratedSpeechOutputLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Speech"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Speech")
+        XCTAssertTrue(app.buttons["welcome.tool.tts"].waitForExistence(timeout: 5))
+        selectWelcomeTool("tts")
 
         enterPrompt("Say this generated speech test sentence")
         clickGenerate()
@@ -458,8 +458,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testGeneratedMusicOutputLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Music"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Music")
+        XCTAssertTrue(app.buttons["welcome.tool.music"].waitForExistence(timeout: 5))
+        selectWelcomeTool("music")
 
         enterPrompt("Moody cyberpunk instrumental music")
         assertMusicLyricsEditorHiddenForInstrumentalPrompt()
@@ -471,8 +471,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testMusicWithVocalsDraftLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Music"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Music")
+        XCTAssertTrue(app.buttons["welcome.tool.music"].waitForExistence(timeout: 5))
+        selectWelcomeTool("music")
 
         enterPrompt("Moody synth pop with vocals")
         selectMusicVocalMode("With vocals")
@@ -484,8 +484,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testTranscriptLiftsAboveExpandedMusicComposerSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Music"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Music")
+        XCTAssertTrue(app.buttons["welcome.tool.music"].waitForExistence(timeout: 5))
+        selectWelcomeTool("music")
 
         enterPrompt("Moody cyberpunk instrumental music")
         clickGenerate()
@@ -516,7 +516,7 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testToolSelectorPopoverLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
 
         let toolSelector = app.buttons["composer.toolSelector"]
         XCTAssertTrue(toolSelector.waitForExistence(timeout: 5), "Missing composer tool selector")
@@ -529,7 +529,7 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testComposerModelLoadingIndicatorDoesNotResizeComposer() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
 
         assertComposerIsBoundedBottomAccessory()
 
@@ -550,7 +550,7 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testComposerModelPickerShowsReadyModelsOnlySnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
 
         let dropdown = app.buttons["composer.modelDropdown"]
         XCTAssertTrue(dropdown.waitForExistence(timeout: 5), "Missing composer model picker")
@@ -571,7 +571,7 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testModelParameterPopoverLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
 
         let parameters = app.buttons["composer.modelSettings"]
         XCTAssertTrue(parameters.waitForExistence(timeout: 5), "Missing composer model settings button")
@@ -589,8 +589,8 @@ final class MLXtraChatLayoutUITests: XCTestCase {
     }
 
     func testLocalEngineStatusPopoverLayoutSnapshot() throws {
-        XCTAssertTrue(app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5))
-        selectWelcomeTool("Chat")
+        XCTAssertTrue(app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5))
+        selectWelcomeTool("chat")
 
         _ = sendPrompt(
             "UI test engine status popover.",

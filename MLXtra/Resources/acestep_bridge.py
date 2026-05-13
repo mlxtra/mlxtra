@@ -11,9 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from bridge_utils import (
-    coerce_bool,
-    coerce_float,
-    coerce_int,
+    build_acestep_generation_inputs,
     coerce_string,
     log_exception,
     normalize_music_model_id,
@@ -70,12 +68,7 @@ def last_user_prompt(messages: list[dict]) -> str:
     return ""
 
 
-def generate_music_once(request: dict) -> None:
-    with contextlib.redirect_stdout(sys.stderr):
-        from acestep.handler import AceStepHandler
-        from acestep.inference import GenerationConfig, GenerationParams, generate_music
-        from acestep.llm_inference import LLMHandler
-
+def generate_music_once(request: dict) -> bool:
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
     # Normalize the model ID for ACE-Step lookup
     normalized_id = normalize_music_model_id(model_id)
@@ -95,7 +88,12 @@ def generate_music_once(request: dict) -> None:
             {"type": "error", "message": "No prompt provided for music generation"},
             request=request,
         )
-        return
+        return False
+
+    with contextlib.redirect_stdout(sys.stderr):
+        from acestep.handler import AceStepHandler
+        from acestep.inference import GenerationConfig, GenerationParams, generate_music
+        from acestep.llm_inference import LLMHandler
 
     package_spec = importlib.util.find_spec("acestep")
     project_root = (
@@ -125,7 +123,7 @@ def generate_music_once(request: dict) -> None:
             {"type": "error", "message": f"Model initialization failed: {error_msg}"},
             request=request,
         )
-        return
+        return False
     with contextlib.redirect_stdout(sys.stderr):
         llm_handler = LLMHandler()
     send_model_loading(
@@ -137,44 +135,13 @@ def generate_music_once(request: dict) -> None:
     send_json({"type": "model.loaded", "model": model_id}, request=request)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    seed = coerce_int(parameters.get("seed"), time.time_ns() % 2_147_483_647)
-    thinking = coerce_bool(parameters.get("thinking"), False)
-    instrumental = coerce_bool(parameters.get("instrumental"), False)
-    params_kwargs = {
-        "task_type": "text2music",
-        "caption": prompt,
-        "lyrics": lyrics,
-        "duration": coerce_float(parameters.get("duration"), 30.0),
-        "inference_steps": coerce_int(parameters.get("inference_steps"), 8),
-        "seed": seed,
-        "shift": coerce_float(parameters.get("shift"), 3.0),
-        "infer_method": coerce_string(parameters.get("infer_method"), "ode") or "ode",
-        "thinking": thinking,
-        "use_cot_metas": thinking,
-        "use_cot_caption": thinking,
-        "use_cot_lyrics": False,
-        "use_cot_language": thinking,
-        "instrumental": instrumental,
-    }
-    bpm = coerce_int(parameters.get("bpm"), 0)
-    if bpm:
-        params_kwargs["bpm"] = bpm
-    keyscale = coerce_string(parameters.get("keyscale")).strip()
-    if keyscale:
-        params_kwargs["keyscale"] = keyscale
-    timesignature = coerce_string(parameters.get("timesignature")).strip()
-    if timesignature:
-        params_kwargs["timesignature"] = timesignature
-    vocal_language = coerce_string(parameters.get("vocal_language")).strip()
-    if vocal_language and vocal_language != "unknown":
-        params_kwargs["vocal_language"] = vocal_language
-
-    config = GenerationConfig(
-        batch_size=coerce_int(parameters.get("batch_size"), 1),
-        audio_format=coerce_string(parameters.get("audio_format"), "wav") or "wav",
-        use_random_seed=False,
-        seeds=[seed],
+    seed, params_kwargs, config_kwargs = build_acestep_generation_inputs(
+        parameters,
+        prompt=prompt,
+        lyrics=lyrics,
+        seed_default=time.time_ns() % 2_147_483_647,
     )
+    config = GenerationConfig(**config_kwargs)
 
     send_json(
         {"type": "model.loading", "model": model_id, "status": "generating"},
@@ -192,7 +159,7 @@ def generate_music_once(request: dict) -> None:
     if not result.success:
         message = result.error or result.status_message or "Music generation failed"
         send_json({"type": "error", "message": message}, request=request)
-        return
+        return False
 
     for audio in result.audios:
         path = audio.get("path")
@@ -217,16 +184,20 @@ def generate_music_once(request: dict) -> None:
         },
         request=request,
     )
+    return True
 
 
 def main() -> None:
     request = None
     try:
         request = json.loads(sys.stdin.readline())
-        generate_music_once(request)
+        success = generate_music_once(request)
+        if not success:
+            raise SystemExit(1)
     except Exception as exc:
         error_msg = log_exception("[ACE-Step Bridge] Unhandled error", exc)
         send_json({"type": "error", "message": error_msg}, request=request)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

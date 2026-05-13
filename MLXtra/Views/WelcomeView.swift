@@ -105,12 +105,15 @@ struct WelcomeView: View {
 }
 
 private struct WelcomePromptItem: Identifiable {
+    let id: String
     let title: String
     let icon: String
     let tool: Tool
     let prompt: String
 
-    var id: String { title }
+    var accessibilityIdentifier: String {
+        "welcome.tool.\(id)"
+    }
 }
 
 private struct WelcomePromptChips: View {
@@ -118,36 +121,42 @@ private struct WelcomePromptChips: View {
 
     private let items: [WelcomePromptItem] = [
         WelcomePromptItem(
+            id: "chat",
             title: "Ask",
             icon: "bubble.left.and.bubble.right",
             tool: .chat,
             prompt: ""
         ),
         WelcomePromptItem(
+            id: "analyze-image",
             title: "Analyze image",
             icon: "eye",
             tool: .chat,
             prompt: ""
         ),
         WelcomePromptItem(
+            id: "image",
             title: "Create image",
             icon: "photo",
             tool: .image,
             prompt: ""
         ),
         WelcomePromptItem(
+            id: "tts",
             title: "Create speech",
             icon: "waveform",
             tool: .tts,
             prompt: ""
         ),
         WelcomePromptItem(
+            id: "music",
             title: "Make music",
             icon: "music.note",
             tool: .music,
             prompt: ""
         ),
         WelcomePromptItem(
+            id: "research",
             title: "Research",
             icon: "magnifyingglass",
             tool: .research,
@@ -207,7 +216,7 @@ private struct WelcomePromptChip: View {
         .help(item.title)
         .accessibilityLabel(item.title)
         .accessibilityHint("Starts \(item.title)")
-        .accessibilityIdentifier("welcome.tool.\(item.tool.id)")
+        .accessibilityIdentifier(item.accessibilityIdentifier)
     }
 }
 

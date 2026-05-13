@@ -156,6 +156,183 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertEqual(state, .readyToGenerate)
         XCTAssertNil(state.blockedToolMessage)
     }
+
+    @MainActor
+    func testMusicComposerDefaultsAmbiguousPromptToInstrumentalDraft() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Create a moody cyberpunk track"
+
+        let resolution = viewModel.musicComposerResolution()
+        let draft = viewModel.composerDraft
+
+        XCTAssertEqual(resolution.resolvedMode, .auto)
+        XCTAssertEqual(resolution.generationDraft?.vocalMode, .instrumental)
+        XCTAssertEqual(resolution.generationDraft?.lyrics, "[Instrumental]")
+        XCTAssertNil(resolution.promptState)
+        XCTAssertEqual(viewModel.composerPlaceholder, "Describe the music you want...")
+        XCTAssertTrue(viewModel.shouldShowMusicComposerControls)
+        XCTAssertEqual(viewModel.composerPrimaryActionTitle, "Create music")
+        XCTAssertEqual(viewModel.composerPrimaryActionSystemImage, "music.note")
+        XCTAssertEqual(viewModel.composerPrimaryActionHelp, "Create music")
+        XCTAssertTrue(viewModel.isComposerPrimaryActionEnabled)
+        XCTAssertEqual(draft.primaryAction, .createSong)
+    }
+
+    @MainActor
+    func testMusicComposerRequestsLyricsForExplicitVocalPrompt() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Create a pop song with vocals"
+        viewModel.selectMusicVocalMode(.vocals)
+
+        let resolution = viewModel.musicComposerResolution()
+
+        XCTAssertEqual(resolution.resolvedMode, .vocals)
+        XCTAssertEqual(resolution.promptState, .needsLyrics)
+        XCTAssertNil(resolution.generationDraft)
+        XCTAssertEqual(viewModel.musicComposerPrompt, .needsLyrics)
+        XCTAssertEqual(viewModel.composerPrimaryActionHelp, "Add lyrics or choose Instrumental")
+        XCTAssertEqual(viewModel.composerPrimaryActionDisabledHelp, "Add lyrics or choose Instrumental")
+        XCTAssertFalse(viewModel.isComposerPrimaryActionEnabled)
+    }
+
+    @MainActor
+    func testPrepareMusicGenerationSetsInstrumentalDraftAndClearsLyricsState() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.musicLyricsText = "[verse]\nOld draft"
+        viewModel.musicLyricsApproved = true
+        viewModel.isMusicLyricsEditorVisible = true
+
+        let canGenerate = viewModel.prepareMusicGenerationIfNeeded(prompt: "  instrumental synthwave beat  ")
+
+        XCTAssertTrue(canGenerate)
+        XCTAssertEqual(viewModel.activeMusicGenerationDraft?.vocalMode, .instrumental)
+        XCTAssertEqual(viewModel.activeMusicGenerationDraft?.lyrics, "[Instrumental]")
+        XCTAssertFalse(viewModel.musicLyricsApproved)
+        XCTAssertFalse(viewModel.isMusicLyricsEditorVisible)
+    }
+
+    @MainActor
+    func testPrepareMusicGenerationRequiresLyricsForVocalPrompt() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.selectMusicVocalMode(.vocals)
+
+        let canGenerate = viewModel.prepareMusicGenerationIfNeeded(prompt: "Create a bright pop song with vocals")
+
+        XCTAssertFalse(canGenerate)
+        XCTAssertNil(viewModel.activeMusicGenerationDraft)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+    }
+
+    @MainActor
+    func testPrepareMusicGenerationUsesApprovedLyrics() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Create a bright pop song"
+        viewModel.musicLyricsText = "  [verse]\nNeon hearts wake up  "
+        viewModel.approveMusicLyrics()
+
+        let canGenerate = viewModel.prepareMusicGenerationIfNeeded(prompt: viewModel.inputText)
+
+        XCTAssertTrue(canGenerate)
+        XCTAssertEqual(viewModel.activeMusicGenerationDraft?.vocalMode, .vocals)
+        XCTAssertEqual(viewModel.activeMusicGenerationDraft?.lyrics, "[verse]\nNeon hearts wake up")
+        XCTAssertTrue(viewModel.hasApprovedMusicLyrics)
+    }
+
+    @MainActor
+    func testPrepareMusicGenerationExtractsEmbeddedLyrics() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.selectMusicVocalMode(.vocals)
+
+        let canGenerate = viewModel.prepareMusicGenerationIfNeeded(
+            prompt: """
+            Create a song:
+            [verse]
+            Static lights in the rain
+            [chorus]
+            We keep moving
+            """
+        )
+
+        XCTAssertTrue(canGenerate)
+        XCTAssertEqual(viewModel.activeMusicGenerationDraft?.vocalMode, .vocals)
+        XCTAssertEqual(
+            viewModel.activeMusicGenerationDraft?.lyrics,
+            "[verse]\nStatic lights in the rain\n[chorus]\nWe keep moving"
+        )
+    }
+
+    @MainActor
+    func testMusicVocalModeSelectionUpdatesComposerState() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Create a track"
+        viewModel.musicLyricsText = "[verse]\nDraft"
+        viewModel.musicLyricsApproved = true
+
+        viewModel.performComposerSlotAction(.chooseInstrumental)
+        XCTAssertEqual(viewModel.musicVocalMode, .instrumental)
+        XCTAssertFalse(viewModel.musicLyricsApproved)
+        XCTAssertFalse(viewModel.isMusicLyricsEditorVisible)
+
+        viewModel.performComposerSlotAction(.chooseVocals)
+        XCTAssertEqual(viewModel.musicVocalMode, .vocals)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+
+        viewModel.performComposerSlotAction(.showLyricsEditor)
+        XCTAssertEqual(viewModel.musicVocalMode, .vocals)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+
+        viewModel.selectMusicVocalMode(.auto)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+    }
+
+    @MainActor
+    func testApprovingEmptyLyricsKeepsEditorOpen() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.musicLyricsText = "  \n "
+
+        viewModel.approveMusicLyrics()
+
+        XCTAssertFalse(viewModel.musicLyricsApproved)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+    }
+
+    @MainActor
+    func testComposerPrimaryActionDisabledWhenInputDisabled() {
+        let viewModel = makeViewModel()
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Create an instrumental cue"
+        viewModel.isGenerating = true
+
+        XCTAssertFalse(viewModel.isComposerPrimaryActionEnabled)
+        XCTAssertEqual(viewModel.composerPrimaryActionDisabledHelp, "Describe the music you want")
+
+        viewModel.performComposerPrimaryAction()
+        XCTAssertEqual(viewModel.chats.first?.messages.count, 0)
+    }
+
+    @MainActor
+    func testMusicPromptHelpersRecognizeVocalAndLyricsMarkers() {
+        let viewModel = makeViewModel()
+
+        XCTAssertTrue(viewModel.promptSoundsVocal("A sung vocal hook"))
+        XCTAssertTrue(viewModel.promptContainsLyrics("lyrics: We keep moving"))
+        XCTAssertEqual(viewModel.resolvedMusicVocalMode(for: "No vocals, only piano"), .instrumental)
+        XCTAssertEqual(viewModel.resolvedMusicVocalMode(for: "A chorus with lyrics"), .vocals)
+        XCTAssertEqual(viewModel.resolvedMusicVocalMode(for: "Soft ambient cue"), .auto)
+    }
+
+    @MainActor
+    private func makeViewModel() -> ChatViewModel {
+        ChatViewModel(chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil))
+    }
 }
 
 @MainActor

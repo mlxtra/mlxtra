@@ -8,6 +8,28 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         ModelCapabilityProfile.bestProfile(for: .vision)?.modelId
             ?? AIModel.defaultForCurrentHardware.modelId
     }
+    private var standardDefaultsSnapshot: [String: Any?] = [:]
+
+    override func setUp() {
+        super.setUp()
+        standardDefaultsSnapshot = [
+            PromptConfiguration.systemPromptKey: UserDefaults.standard.object(forKey: PromptConfiguration.systemPromptKey),
+            PromptConfiguration.deepResearchSystemPromptKey: UserDefaults.standard.object(forKey: PromptConfiguration.deepResearchSystemPromptKey),
+            PromptConfiguration.toolDefinitionsKey: UserDefaults.standard.object(forKey: PromptConfiguration.toolDefinitionsKey),
+        ]
+    }
+
+    override func tearDown() {
+        for (key, value) in standardDefaultsSnapshot {
+            if let value {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        standardDefaultsSnapshot = [:]
+        super.tearDown()
+    }
 
     func testExecuteWebSearchReturnsContext() async {
         let executor = MockChatModelExecutor()
@@ -85,6 +107,27 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertNotNil(metrics?.timeToFirstToken)
         XCTAssertEqual(executor.receivedRequests.count, 1)
         XCTAssertEqual(executor.receivedRequests[0].modelId, "image-model")
+    }
+
+    func testExecuteMediaToolInitializesExecutorWhenNeeded() async {
+        let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
+        let executor = MockChatModelExecutor(events: [
+            .image(assetURL),
+            .complete("Generated image.", usage: TokenUsage(promptTokens: 1, completionTokens: 1))
+        ])
+        executor.isReady = false
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+
+        _ = await service.executeMediaTool(plan: makePlan()) { _ in }
+
+        XCTAssertEqual(executor.initializeCount, 1)
+        XCTAssertEqual(executor.receivedRequests.count, 1)
     }
 
     func testInjectedPersistenceRestoresChatsAndNormalizesStreamingMessages() {
@@ -1429,6 +1472,7 @@ private final class MockChatModelExecutor: ChatModelExecuting {
     private let eventDelayNanoseconds: UInt64
     private(set) var receivedRequests: [ExecutionRequest] = []
     private(set) var terminateCount = 0
+    private(set) var initializeCount = 0
 
     init(events: [ExecutionEvent] = [], eventDelayNanoseconds: UInt64 = 0) {
         self.eventBatches = [events]
@@ -1440,7 +1484,10 @@ private final class MockChatModelExecutor: ChatModelExecuting {
         self.eventDelayNanoseconds = eventDelayNanoseconds
     }
 
-    func initialize() async throws {}
+    func initialize() async throws {
+        initializeCount += 1
+        isReady = true
+    }
 
     func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
         let requestIndex = receivedRequests.count

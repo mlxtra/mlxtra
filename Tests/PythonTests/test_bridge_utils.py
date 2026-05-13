@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MLXtra" / "Resources"))
 from bridge_utils import (
+    build_acestep_generation_inputs,
     coerce_bool,
     coerce_float,
     coerce_int,
@@ -52,6 +53,62 @@ class TestCoercionHelpers(unittest.TestCase):
     def test_coerce_string_handles_non_strings(self):
         self.assertEqual(coerce_string(123), "123")
         self.assertEqual(coerce_string(None, "fallback"), "fallback")
+
+
+class TestBuildAceStepGenerationInputs(unittest.TestCase):
+    def test_builds_generation_and_config_kwargs(self):
+        seed, generation_kwargs, config_kwargs = build_acestep_generation_inputs(
+            {
+                "duration": "12.5",
+                "inference_steps": "4",
+                "shift": "2.5",
+                "thinking": "true",
+                "instrumental": "false",
+                "bpm": "120",
+                "keyscale": "C major",
+                "timesignature": "4/4",
+                "vocal_language": "en",
+                "batch_size": "2",
+                "audio_format": "mp3",
+            },
+            prompt="ambient pop",
+            lyrics="hello",
+            seed_default=42,
+        )
+
+        self.assertEqual(seed, 42)
+        self.assertEqual(generation_kwargs["caption"], "ambient pop")
+        self.assertEqual(generation_kwargs["lyrics"], "hello")
+        self.assertEqual(generation_kwargs["duration"], 12.5)
+        self.assertEqual(generation_kwargs["inference_steps"], 4)
+        self.assertTrue(generation_kwargs["thinking"])
+        self.assertFalse(generation_kwargs["instrumental"])
+        self.assertEqual(generation_kwargs["bpm"], 120)
+        self.assertEqual(generation_kwargs["keyscale"], "C major")
+        self.assertEqual(generation_kwargs["timesignature"], "4/4")
+        self.assertEqual(generation_kwargs["vocal_language"], "en")
+        self.assertEqual(config_kwargs["batch_size"], 2)
+        self.assertEqual(config_kwargs["audio_format"], "mp3")
+        self.assertEqual(config_kwargs["seeds"], [42])
+        self.assertFalse(config_kwargs["use_random_seed"])
+
+    def test_omits_empty_optional_fields(self):
+        _, generation_kwargs, _ = build_acestep_generation_inputs(
+            {
+                "bpm": 0,
+                "keyscale": "",
+                "timesignature": "",
+                "vocal_language": "unknown",
+            },
+            prompt="prompt",
+            lyrics="",
+            seed_default=7,
+        )
+
+        self.assertNotIn("bpm", generation_kwargs)
+        self.assertNotIn("keyscale", generation_kwargs)
+        self.assertNotIn("timesignature", generation_kwargs)
+        self.assertNotIn("vocal_language", generation_kwargs)
 
 
 class TestLogException(unittest.TestCase):

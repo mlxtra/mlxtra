@@ -16,6 +16,7 @@ SKIP_RUNTIME_ARCHIVE=0
 WRITE_CHANNEL=0
 CATALOG_VERSION=""
 RUNTIME_VERSION=""
+RUNTIME_VERSION_OVERRIDE=0
 
 usage() {
     cat <<'USAGE'
@@ -29,7 +30,7 @@ Options:
   --output-dir path              Directory for generated assets. Default: .build/release
   --catalog-version version      Override catalog version. Default: model-catalog.json catalogVersion
   --runtime-version version      Override runtime version. Default: runtime-manifest.json runtimeVersion
-  --skip-runtime-archive         Do not zip the runtime. Keeps existing runtime SHA/size from stable-channel.json.
+  --skip-runtime-archive         Do not zip the runtime. Reuses the existing runtime entry from stable-channel.json, if any.
   --write-channel                Replace MLXtra/Resources/stable-channel.json with the generated channel file.
   -h, --help                     Show this help.
 
@@ -61,6 +62,30 @@ else:
 PY
 }
 
+optional_json_value() {
+    local path="$1"
+    local key_path="$2"
+    /usr/bin/python3 - "$path" "$key_path" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        value = json.load(handle)
+
+    for key in sys.argv[2].split("."):
+        if isinstance(value, list):
+            value = value[int(key)]
+        else:
+            value = value[key]
+except (FileNotFoundError, KeyError, IndexError, ValueError, TypeError):
+    value = None
+
+if value is not None:
+    print(value)
+PY
+}
+
 file_size() {
     local path="$1"
     if stat -f%z "$path" >/dev/null 2>&1; then
@@ -74,26 +99,43 @@ sha256_file() {
     shasum -a 256 "$1" | awk '{print $1}'
 }
 
+require_option_value() {
+    local option="$1"
+    local value="${2:-}"
+
+    if [ -z "${value}" ] || [[ "${value}" == --* ]]; then
+        echo "${option} requires a value." >&2
+        usage >&2
+        exit 2
+    fi
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --repo)
+            require_option_value "$1" "${2:-}"
             REPOSITORY="$2"
             shift 2
             ;;
         --channel)
+            require_option_value "$1" "${2:-}"
             CHANNEL="$2"
             shift 2
             ;;
         --output-dir)
+            require_option_value "$1" "${2:-}"
             OUTPUT_DIR="$2"
             shift 2
             ;;
         --catalog-version)
+            require_option_value "$1" "${2:-}"
             CATALOG_VERSION="$2"
             shift 2
             ;;
         --runtime-version)
+            require_option_value "$1" "${2:-}"
             RUNTIME_VERSION="$2"
+            RUNTIME_VERSION_OVERRIDE=1
             shift 2
             ;;
         --skip-runtime-archive)
@@ -145,12 +187,13 @@ fi
 if [ -z "${RUNTIME_VERSION}" ]; then
     RUNTIME_VERSION="$(json_value "${RUNTIME_MANIFEST}" "runtimeVersion")"
 fi
+RUNTIME_COMPATIBILITY_API="$(json_value "${RUNTIME_MANIFEST}" "compatibilityApi")"
 
 CATALOG_TAG="catalog-${CATALOG_VERSION}"
-RUNTIME_TAG="runtime-${RUNTIME_VERSION}"
 CATALOG_ASSET="${OUTPUT_DIR}/model-catalog.json"
 CHANNEL_ASSET="${OUTPUT_DIR}/stable-channel.json"
-RUNTIME_ARCHIVE="${OUTPUT_DIR}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+RUNTIME_ARCHIVE=""
+INCLUDE_RUNTIME=1
 
 mkdir -p "${OUTPUT_DIR}"
 cp "${CATALOG_PATH}" "${CATALOG_ASSET}"
@@ -162,11 +205,30 @@ CATALOG_SHA="$(sha256_file "${CATALOG_ASSET}")"
 CATALOG_SIZE="$(file_size "${CATALOG_ASSET}")"
 RUNTIME_SHA=""
 RUNTIME_SIZE=""
+RUNTIME_URL=""
 
 if [ "${SKIP_RUNTIME_ARCHIVE}" = "1" ]; then
-    RUNTIME_SHA="$(json_value "${CHANNEL_PATH}" "runtimes.0.sha256")"
-    RUNTIME_SIZE="$(json_value "${CHANNEL_PATH}" "runtimes.0.sizeBytes")"
+    EXISTING_RUNTIME_VERSION="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.version")"
+    EXISTING_RUNTIME_URL="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.url")"
+    RUNTIME_SHA="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.sha256")"
+    RUNTIME_SIZE="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.sizeBytes")"
+    EXISTING_RUNTIME_COMPATIBILITY_API="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.compatibilityApi")"
+    if [ -z "${EXISTING_RUNTIME_VERSION}" ] && [ -z "${EXISTING_RUNTIME_URL}" ] && [ -z "${RUNTIME_SHA}" ] && [ -z "${RUNTIME_SIZE}" ]; then
+        INCLUDE_RUNTIME=0
+    else
+        if [ "${RUNTIME_VERSION_OVERRIDE}" = "1" ]; then
+            echo "Cannot use --runtime-version with --skip-runtime-archive when reusing an existing runtime entry." >&2
+            echo "Build the archive or update stable-channel.json after publishing the runtime asset." >&2
+            exit 2
+        fi
+        RUNTIME_VERSION="${EXISTING_RUNTIME_VERSION}"
+        RUNTIME_URL="${EXISTING_RUNTIME_URL}"
+        RUNTIME_COMPATIBILITY_API="${EXISTING_RUNTIME_COMPATIBILITY_API}"
+    fi
 else
+    RUNTIME_TAG="runtime-${RUNTIME_VERSION}"
+    RUNTIME_ARCHIVE="${OUTPUT_DIR}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+    RUNTIME_URL="https://github.com/${REPOSITORY}/releases/download/${RUNTIME_TAG}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
     echo "Creating ${RUNTIME_ARCHIVE}"
     rm -f "${RUNTIME_ARCHIVE}"
     /usr/bin/ditto -c -k --sequesterRsrc --keepParent "${RUNTIME_DIR}" "${RUNTIME_ARCHIVE}"
@@ -175,7 +237,6 @@ else
 fi
 
 CATALOG_URL="https://github.com/${REPOSITORY}/releases/download/${CATALOG_TAG}/model-catalog.json"
-RUNTIME_URL="https://github.com/${REPOSITORY}/releases/download/${RUNTIME_TAG}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
 
 /usr/bin/python3 - "${CHANNEL_ASSET}" \
     "${CHANNEL}" \
@@ -186,7 +247,9 @@ RUNTIME_URL="https://github.com/${REPOSITORY}/releases/download/${RUNTIME_TAG}/r
     "${RUNTIME_VERSION}" \
     "${RUNTIME_URL}" \
     "${RUNTIME_SHA}" \
-    "${RUNTIME_SIZE}" <<'PY'
+    "${RUNTIME_SIZE}" \
+    "${RUNTIME_COMPATIBILITY_API}" \
+    "${INCLUDE_RUNTIME}" <<'PY'
 import json
 import sys
 
@@ -200,6 +263,8 @@ runtime_version = sys.argv[7]
 runtime_url = sys.argv[8]
 runtime_sha = sys.argv[9]
 runtime_size = int(sys.argv[10]) if sys.argv[10] else None
+runtime_compatibility_api = int(sys.argv[11]) if sys.argv[11] else None
+include_runtime = sys.argv[12] == "1"
 
 manifest = {
     "schemaVersion": 1,
@@ -210,7 +275,11 @@ manifest = {
         "sha256": catalog_sha,
         "sizeBytes": catalog_size,
     },
-    "runtimes": [
+    "runtimes": [],
+}
+
+if include_runtime:
+    manifest["runtimes"].append(
         {
             "version": runtime_version,
             "platform": "macos",
@@ -218,10 +287,9 @@ manifest = {
             "url": runtime_url,
             "sha256": runtime_sha,
             "sizeBytes": runtime_size,
-            "compatibilityApi": 1,
+            "compatibilityApi": runtime_compatibility_api,
         }
-    ],
-}
+    )
 
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2)
@@ -254,7 +322,9 @@ echo "Legal assets: ${OUTPUT_DIR}/LICENSE, ${OUTPUT_DIR}/NOTICE, ${OUTPUT_DIR}/T
 if [ "${SKIP_RUNTIME_ARCHIVE}" = "0" ]; then
     echo "Runtime asset: ${RUNTIME_ARCHIVE}"
     echo "Runtime SHA-256: ${RUNTIME_SHA}"
+elif [ "${INCLUDE_RUNTIME}" = "1" ]; then
+    echo "Runtime archive skipped; existing runtime entry was reused in the generated channel."
 else
-    echo "Runtime archive skipped; existing runtime SHA/size were reused in the generated channel."
+    echo "Runtime archive skipped; generated channel contains no remote runtime update."
 fi
 echo "Channel candidate: ${CHANNEL_ASSET}"

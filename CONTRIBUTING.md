@@ -27,9 +27,14 @@ Run the lightweight checks before opening a pull request:
 
 ```bash
 Scripts/validate-release-metadata.py --allow-runtime-placeholders
-swift test
+Scripts/check-swift-coverage.sh
 python3 -m py_compile MLXtra/Resources/python_bridge.py MLXtra/Resources/acestep_bridge.py
 ```
+
+The Swift coverage script enforces 80% line coverage for deterministic core
+Swift code. It still runs the full Swift test suite, but the threshold excludes
+UI views, app entrypoints, subprocess/runtime orchestration, network adapters,
+cache wrappers, renderer adapters, and debug instrumentation.
 
 For bridge changes, also run:
 
@@ -41,6 +46,12 @@ PYTHONPATH=../../../MLXtra/Resources python3 test_acestep_bridge.py -v
 
 Integration tests that exercise Metal, local models, or generated media may
 require local runtime/model setup and are not expected to pass on every machine.
+To force a full local model gate and allow missing models to be downloaded first,
+run:
+
+```bash
+MLXTRA_ALLOW_MODEL_DOWNLOADS=1 MLXTRA_REQUIRE_ALL_MODELS=1 python3 test_all_models_integration.py
+```
 
 ## Pull Requests
 

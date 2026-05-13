@@ -263,12 +263,15 @@ final class BridgeProtocolSequenceTests: XCTestCase {
     }
 }
 
-private final class PersistentBridgeSession {
+private final class PersistentBridgeSession: @unchecked Sendable {
     private let process: Process
     private let stdinPipe: Pipe
     private let stdoutPipe: Pipe
     private let stderrPipe: Pipe
-    private var lineBuffer = ""
+    private let lock = NSLock()
+    private var stdoutBuffer = ""
+    private var stderrText = ""
+    private var messages: [[String: Any]] = []
 
     init(scriptURL: URL) throws {
         process = Process()
@@ -281,9 +284,12 @@ private final class PersistentBridgeSession {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
         try process.run()
+        installReadHandlers()
     }
 
     func terminate() {
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
         stdinPipe.fileHandleForWriting.closeFile()
         if process.isRunning {
             process.terminate()
@@ -309,22 +315,16 @@ private final class PersistentBridgeSession {
     func readMessage(timeout: TimeInterval = 2.0) -> [String: Any] {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if let message = nextBufferedMessage() {
+            if let message = popMessage() {
                 return message
             }
 
             if !process.isRunning {
-                let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                XCTFail("Bridge exited before sending message. stderr: \(stderr)")
+                XCTFail("Bridge exited before sending message. stderr: \(collectedStderr())")
                 return [:]
             }
 
-            let data = stdoutPipe.fileHandleForReading.availableData
-            if data.isEmpty {
-                Thread.sleep(forTimeInterval: 0.01)
-                continue
-            }
-            lineBuffer += String(data: data, encoding: .utf8) ?? ""
+            Thread.sleep(forTimeInterval: 0.01)
         }
 
         XCTFail("Timed out waiting for bridge message")
@@ -345,16 +345,52 @@ private final class PersistentBridgeSession {
         ])
     }
 
-    private func nextBufferedMessage() -> [String: Any]? {
-        while let newlineRange = lineBuffer.range(of: "\n") {
-            let line = String(lineBuffer[..<newlineRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-            lineBuffer.removeSubrange(...newlineRange.lowerBound)
+    private func installReadHandlers() {
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            self?.appendStdout(String(data: data, encoding: .utf8) ?? "")
+        }
+
+        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            self?.appendStderr(String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+
+    private func appendStdout(_ text: String) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        stdoutBuffer += text
+        while let newlineRange = stdoutBuffer.range(of: "\n") {
+            let line = String(stdoutBuffer[..<newlineRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            stdoutBuffer.removeSubrange(...newlineRange.lowerBound)
             guard !line.isEmpty else { continue }
             if let data = line.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                return json
+                messages.append(json)
             }
         }
-        return nil
+    }
+
+    private func appendStderr(_ text: String) {
+        lock.lock()
+        stderrText += text
+        lock.unlock()
+    }
+
+    private func popMessage() -> [String: Any]? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !messages.isEmpty else { return nil }
+        return messages.removeFirst()
+    }
+
+    private func collectedStderr() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return stderrText
     }
 }

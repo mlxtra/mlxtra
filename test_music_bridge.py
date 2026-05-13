@@ -233,30 +233,36 @@ class BridgeTest:
             print("\nWaiting for generation to complete...")
             start = time.time()
             timeout = 120  # 2 minutes
+            seen_stdout_lines = 0
+            generated_audio_path = None
 
             while time.time() - start < timeout:
-                msg = self.wait_for_message("*", timeout=1)  # Poll for any message
-
-                # Check stdout for messages
                 with self.lock:
-                    for line in self.stdout_lines:
-                        try:
-                            msg = json.loads(line)
-                            msg_type = msg.get("type")
+                    lines = self.stdout_lines[seen_stdout_lines:]
+                    seen_stdout_lines = len(self.stdout_lines)
 
-                            if msg_type == "model.loading":
-                                print(f"  → Model loading: {msg.get('status')}")
-                            elif msg_type == "model.loaded":
-                                print(f"  → Model loaded: {msg.get('model')}")
-                            elif msg_type == "error":
-                                print(f"\n✗ FAILED: {msg.get('message')}")
-                                return False
-                            elif msg_type == "assistant":
-                                print(f"\n✓ SUCCESS: Music generation completed!")
-                                print(f"  Output: {msg.get('content', '')[:200]}...")
-                                return True
-                        except json.JSONDecodeError:
-                            pass
+                for line in lines:
+                    try:
+                        msg = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    msg_type = msg.get("type")
+                    if msg_type == "model.loading":
+                        print(f"  → Model loading: {msg.get('status')}")
+                    elif msg_type == "model.loaded":
+                        print(f"  → Model loaded: {msg.get('model')}")
+                    elif msg_type == "audio.generated":
+                        generated_audio_path = msg.get("path")
+                        print(f"  → Audio generated: {generated_audio_path}")
+                    elif msg_type == "chat.completion.complete":
+                        print("\n✓ SUCCESS: Music generation completed!")
+                        if generated_audio_path:
+                            print(f"  Output: {generated_audio_path}")
+                        return True
+                    elif msg_type == "error":
+                        print(f"\n✗ FAILED: {msg.get('message')}")
+                        return False
 
                 # Check if process is still running
                 if self.proc.poll() is not None:

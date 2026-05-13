@@ -21,9 +21,7 @@ from typing import List, Dict, Optional, Any
 from pathlib import Path
 
 from bridge_utils import (
-    coerce_bool,
-    coerce_float,
-    coerce_int,
+    build_acestep_generation_inputs,
     coerce_string,
     log_exception,
     normalize_music_model_id,
@@ -36,8 +34,19 @@ AUDIO_MODEL_REGISTRY: Dict[str, Any] = {}
 MUSIC_MODEL_REGISTRY: Dict[str, Any] = {}
 
 
+def bridge_debug_enabled() -> bool:
+    return os.environ.get("MLXTRA_BRIDGE_DEBUG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def log_debug(msg: str):
-    """Log debug message to stderr (not stdout, which is for JSON only)"""
+    """Log debug message to stderr when explicitly enabled."""
+    if not bridge_debug_enabled():
+        return
     print(msg, file=sys.stderr, flush=True)
 
 
@@ -1016,6 +1025,8 @@ def _forward_music_request(child, request):
     child.stdin.flush()
 
     saw_error = False
+    request_id = request.get("request_id")
+    terminal_message_types = {"chat.completion.complete", "error"}
 
     while True:
         if child.stdout is None:
@@ -1031,8 +1042,16 @@ def _forward_music_request(child, request):
         if stripped:
             try:
                 payload = json.loads(stripped)
-                saw_error = saw_error or payload.get("type") == "error"
+                message_type = payload.get("type")
+                payload_request_id = payload.get("request_id")
+                saw_error = saw_error or message_type == "error"
                 print(line, end="", flush=True)
+                if message_type in terminal_message_types and (
+                    request_id is None
+                    or payload_request_id is None
+                    or payload_request_id == request_id
+                ):
+                    break
             except json.JSONDecodeError:
                 log_debug(f"[ACE-Step stdout ignored] {stripped}")
 
@@ -1201,46 +1220,13 @@ def handle_music_generation(request: dict) -> None:
             request=request,
         )
 
-        seed = coerce_int(parameters.get("seed"), time.time_ns() % 2_147_483_647)
-        duration = coerce_float(parameters.get("duration"), 30.0)
-        thinking = coerce_bool(parameters.get("thinking"), False)
-        instrumental = coerce_bool(parameters.get("instrumental"), False)
-
-        params_kwargs = {
-            "task_type": "text2music",
-            "caption": prompt,
-            "lyrics": lyrics,
-            "duration": duration,
-            "inference_steps": coerce_int(parameters.get("inference_steps"), 8),
-            "seed": seed,
-            "shift": coerce_float(parameters.get("shift"), 3.0),
-            "infer_method": coerce_string(parameters.get("infer_method"), "ode") or "ode",
-            "thinking": thinking,
-            "use_cot_metas": thinking,
-            "use_cot_caption": thinking,
-            "use_cot_lyrics": False,
-            "use_cot_language": thinking,
-            "instrumental": instrumental,
-        }
-        bpm = coerce_int(parameters.get("bpm"), 0)
-        if bpm:
-            params_kwargs["bpm"] = bpm
-        keyscale = coerce_string(parameters.get("keyscale")).strip()
-        if keyscale:
-            params_kwargs["keyscale"] = keyscale
-        timesignature = coerce_string(parameters.get("timesignature")).strip()
-        if timesignature:
-            params_kwargs["timesignature"] = timesignature
-        vocal_language = coerce_string(parameters.get("vocal_language")).strip()
-        if vocal_language and vocal_language != "unknown":
-            params_kwargs["vocal_language"] = vocal_language
-
-        config = GenerationConfig(
-            batch_size=coerce_int(parameters.get("batch_size"), 1),
-            audio_format=coerce_string(parameters.get("audio_format"), "wav") or "wav",
-            use_random_seed=False,
-            seeds=[seed],
+        seed, params_kwargs, config_kwargs = build_acestep_generation_inputs(
+            parameters,
+            prompt=prompt,
+            lyrics=lyrics,
+            seed_default=time.time_ns() % 2_147_483_647,
         )
+        config = GenerationConfig(**config_kwargs)
 
         with contextlib.redirect_stdout(sys.stderr):
             result = generate_music(

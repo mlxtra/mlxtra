@@ -40,6 +40,20 @@ require_option_value() {
     fi
 }
 
+verify_sha256() {
+    local path="$1"
+    local expected="$2"
+    local actual
+
+    actual="$(shasum -a 256 "${path}" | awk '{print $1}')"
+    if [ "${actual}" != "${expected}" ]; then
+        echo "Checksum mismatch for ${path}" >&2
+        echo "  expected: ${expected}" >&2
+        echo "  actual:   ${actual}" >&2
+        return 1
+    fi
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --build-dir)
@@ -100,6 +114,11 @@ if [ ! -f "${PYTHON_PKG_PATH}" ]; then
     curl -fL --retry 3 --continue-at - -o "${PYTHON_PKG_PATH}" "${PYTHON_URL}"
 else
     echo "Using cached Python package: ${PYTHON_PKG_PATH}"
+fi
+if ! verify_sha256 "${PYTHON_PKG_PATH}" "${PYTHON_PKG_SHA256}"; then
+    echo "Deleting invalid cached Python package. Re-run the script to download a clean copy." >&2
+    rm -f "${PYTHON_PKG_PATH}"
+    exit 1
 fi
 
 echo "Step 2: Extracting Python..."

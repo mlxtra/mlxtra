@@ -9,6 +9,12 @@ from typing import Optional
 
 # Add the runtime venv path
 REPO_ROOT = Path(__file__).resolve().parent
+RESOURCES_DIR = REPO_ROOT / "MLXtra/Resources"
+
+if str(RESOURCES_DIR) not in sys.path:
+    sys.path.insert(0, str(RESOURCES_DIR))
+
+from bridge_utils import normalize_music_model_id
 
 
 def _derived_data_runtime_candidates() -> list[Path]:
@@ -88,7 +94,7 @@ def test_model_presence():
     main_exists = check_main_model_exists(checkpoints_dir)
     print(f"\nMain model exists: {main_exists}")
 
-    model_id = "ACE-Step/acestep-v15-turbo-continuous"
+    model_id = normalize_music_model_id("ACE-Step/acestep-v15-turbo-continuous")
     dit_exists = check_model_exists(model_id, checkpoints_dir)
     print(f"DiT model '{model_id}' exists: {dit_exists}")
 
@@ -116,7 +122,7 @@ def test_initialization():
             else Path.cwd()
         )
 
-        config_path = "ACE-Step/acestep-v15-turbo-continuous"
+        config_path = normalize_music_model_id("ACE-Step/acestep-v15-turbo-continuous")
 
         print(f"Project root: {project_root}")
         print(f"Config path: {config_path}")
@@ -228,6 +234,8 @@ def main():
         status = "✓ PASS" if passed else "✗ FAIL"
         print(f"  {status}: {name}")
 
+    return all(passed for _, passed in results)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

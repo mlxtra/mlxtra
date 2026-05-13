@@ -238,4 +238,185 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertEqual(status.detail, "The local engine stopped. Restart to continue.")
         XCTAssertEqual(status.primaryAction, .restart)
     }
+
+    func testLastErrorMessageOverridesRuntimeErrorFallback() {
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .error("Python failed"),
+            isPythonLoading: false,
+            isModelLoading: false,
+            isGenerating: false,
+            loadingMessage: "",
+            isExecutorReady: false,
+            isModelLoaded: false,
+            selectedModelName: "Qwen 3.5",
+            activeModelName: nil,
+            activeModelRole: .chat,
+            pendingDownloadModelId: nil,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: "  Bridge process exited  "
+        )
+
+        XCTAssertEqual(status.state, .needsAttention)
+        XCTAssertEqual(status.detail, "Bridge process exited")
+    }
+
+    func testPreparingStatesUseProgressOrFallbackMessage() {
+        let progress = ModelLoadProgress(
+            modelId: "runtime",
+            backend: .vlm,
+            phase: .preparing,
+            detail: "Extracting Python runtime"
+        )
+
+        for runtimeState in [RuntimeManager.RuntimeState.checkingBundle, .extractingBundle, .startingPython] {
+            let status = LocalEngineStatus.resolve(
+                runtimeState: runtimeState,
+                isPythonLoading: false,
+                isModelLoading: false,
+                isGenerating: false,
+                loadingMessage: "Starting",
+                loadProgress: progress,
+                isExecutorReady: false,
+                isModelLoaded: false,
+                selectedModelName: "Qwen 3.5",
+                activeModelName: nil,
+                activeModelRole: .chat,
+                pendingDownloadModelId: nil,
+                pendingDownloadModelName: nil,
+                freedModelName: nil,
+                lastErrorMessage: nil
+            )
+
+            XCTAssertEqual(status.state, .preparing)
+            XCTAssertEqual(status.detail, "Extracting Python runtime")
+            XCTAssertEqual(status.loadProgress, progress)
+            XCTAssertEqual(status.systemImage, "bolt.horizontal.circle")
+        }
+    }
+
+    func testGeneratingUsesRoleSpecificDefaultDetail() {
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .ready,
+            isPythonLoading: false,
+            isModelLoading: false,
+            isGenerating: true,
+            loadingMessage: "  ",
+            isExecutorReady: true,
+            isModelLoaded: true,
+            selectedModelName: "KugelAudio",
+            activeModelName: "KugelAudio",
+            activeModelRole: .speech,
+            pendingDownloadModelId: nil,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: nil
+        )
+
+        XCTAssertEqual(status.state, .generating)
+        XCTAssertEqual(status.title, "Generating...")
+        XCTAssertEqual(status.detail, "Creating speech audio.")
+        XCTAssertEqual(status.systemImage, "sparkles")
+        XCTAssertFalse(status.canFreeMemory)
+    }
+
+    func testExecutorReadyButModelUnloadedStaysIdleUntilNeeded() {
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .ready,
+            isPythonLoading: false,
+            isModelLoading: false,
+            isGenerating: false,
+            loadingMessage: "",
+            isExecutorReady: true,
+            isModelLoaded: false,
+            selectedModelName: "Gemma 4",
+            activeModelName: nil,
+            activeModelRole: .chat,
+            pendingDownloadModelId: nil,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: nil
+        )
+
+        XCTAssertEqual(status.state, .idle)
+        XCTAssertEqual(status.title, "Ready to load")
+        XCTAssertEqual(status.detail, "Gemma 4 will load when needed.")
+        XCTAssertFalse(status.isVisibleInComposer)
+    }
+
+    func testModelRoleTitlesAndGeneratingDetailsCoverAllModalities() {
+        XCTAssertEqual(LocalEngineModelRole.chat.loadingTitle(modelName: nil), "Loading Model")
+        XCTAssertEqual(LocalEngineModelRole.chat.readyTitle(modelName: "Qwen 3.5"), "Qwen is ready")
+        XCTAssertEqual(LocalEngineModelRole.chat.generatingDetail, "Writing a response.")
+
+        XCTAssertEqual(LocalEngineModelRole.image.loadingTitle(modelName: "FLUX"), "Loading image model")
+        XCTAssertEqual(LocalEngineModelRole.image.readyTitle(modelName: "FLUX"), "Image model is ready")
+        XCTAssertEqual(LocalEngineModelRole.image.generatingDetail, "Creating an image.")
+
+        XCTAssertEqual(LocalEngineModelRole.speech.loadingTitle(modelName: "KugelAudio"), "Loading speech model")
+        XCTAssertEqual(LocalEngineModelRole.speech.readyTitle(modelName: "KugelAudio"), "Speech model is ready")
+        XCTAssertEqual(LocalEngineModelRole.speech.generatingDetail, "Creating speech audio.")
+
+        XCTAssertEqual(LocalEngineModelRole.music.loadingTitle(modelName: "ACE-Step"), "Loading music model")
+        XCTAssertEqual(LocalEngineModelRole.music.readyTitle(modelName: "ACE-Step"), "Music model is ready")
+        XCTAssertEqual(LocalEngineModelRole.music.generatingDetail, "Creating music.")
+    }
+
+    func testModelLoadPhaseAliasesAndDisplayTitles() {
+        let cases: [(String?, ModelLoadProgress.Phase, String)] = [
+            ("queued", .preparing, "Preparing runtime"),
+            ("downloading", .loadingWeights, "Loading weights"),
+            ("waiting-for-models", .initializing, "Initializing model"),
+            ("warmup", .warming, "Warming model"),
+            ("loaded", .ready, "Ready"),
+            ("unexpected", .unknown, "Loading model"),
+            (nil, .unknown, "Loading model")
+        ]
+
+        for (rawValue, expectedPhase, expectedTitle) in cases {
+            let phase = ModelLoadProgress.Phase(bridgeValue: rawValue)
+            XCTAssertEqual(phase, expectedPhase)
+            XCTAssertEqual(phase.displayTitle, expectedTitle)
+        }
+    }
+
+    func testModelLoadProgressBridgeEventParsesFallbacksAndNumberFormats() {
+        let stringFraction = ModelLoadProgress.bridgeEvent(
+            [
+                "type": "model.loading",
+                "status": "components_ready",
+                "fraction_completed": "0.25",
+                "message": "  Components ready  "
+            ],
+            fallbackModelId: "fallback",
+            fallbackBackend: .music
+        )
+
+        XCTAssertEqual(stringFraction.modelId, "fallback")
+        XCTAssertEqual(stringFraction.backend, .music)
+        XCTAssertEqual(stringFraction.phase, .initializing)
+        XCTAssertEqual(stringFraction.fractionCompleted, 0.25)
+        XCTAssertEqual(stringFraction.detail, "Components ready")
+        XCTAssertEqual(stringFraction.compactTitle(modelName: "ACE-Step 1.5"), "Initializing ACE-Step")
+
+        let numericPercentage = ModelLoadProgress.bridgeEvent(
+            [
+                "type": "model.loading",
+                "model": "kugelaudio/kugelaudio-0-open",
+                "backend": "audio",
+                "phase": "ready",
+                "percentage": NSNumber(value: 42.0),
+                "detail": ""
+            ],
+            fallbackModelId: "fallback",
+            fallbackBackend: .vlm
+        )
+
+        XCTAssertEqual(numericPercentage.modelId, "kugelaudio/kugelaudio-0-open")
+        XCTAssertEqual(numericPercentage.backend, .audio)
+        XCTAssertEqual(numericPercentage.phase, .ready)
+        XCTAssertEqual(numericPercentage.fractionCompleted, 0.42)
+        XCTAssertNil(numericPercentage.detail)
+        XCTAssertEqual(numericPercentage.compactTitle(modelName: "KugelAudio"), "Ready")
+    }
 }

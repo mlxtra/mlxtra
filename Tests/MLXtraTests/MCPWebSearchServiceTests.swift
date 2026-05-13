@@ -24,8 +24,22 @@ final class MCPWebSearchServiceTests: XCTestCase {
 
     func testMCPErrorLocalizedDescription() {
         XCTAssertEqual(MCPError.invalidResponse.localizedDescription, "Invalid MCP response")
+        XCTAssertEqual(MCPError.disabled.localizedDescription, "Web search is disabled")
         XCTAssertEqual(MCPError.missingTool.localizedDescription, "No MCP search tool found")
         XCTAssertEqual(MCPError.serverError("Server error message").localizedDescription, "Server error message")
+    }
+
+    func testDefaultSearchServiceIsDisabledUntilOptedIn() async throws {
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = MCPWebSearchService(userDefaults: defaults)
+
+        do {
+            _ = try await service.searchContext(for: "swift")
+            XCTFail("Expected disabled web search to throw")
+        } catch let error as MCPError {
+            XCTAssertEqual(error.localizedDescription, MCPError.disabled.localizedDescription)
+        }
     }
 
     func testSearchArgumentsUseQueryKey() {
@@ -155,5 +169,14 @@ final class MCPWebSearchServiceTests: XCTestCase {
 
         XCTAssertTrue(text.contains("otherField"))
         XCTAssertTrue(text.contains("numberField"))
+    }
+
+    private func makeUserDefaults() throws -> (UserDefaults, String) {
+        let suiteName = "MLXtraTests.MCPWebSearchServiceTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            throw XCTSkip("Failed to create isolated UserDefaults suite")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        return (defaults, suiteName)
     }
 }

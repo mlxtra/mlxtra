@@ -17,6 +17,7 @@ struct MCPTool {
 
 enum MCPError: LocalizedError {
     case invalidResponse
+    case disabled
     case missingTool
     case serverError(String)
 
@@ -24,6 +25,8 @@ enum MCPError: LocalizedError {
         switch self {
         case .invalidResponse:
             return "Invalid MCP response"
+        case .disabled:
+            return "Web search is disabled"
         case .missingTool:
             return "No MCP search tool found"
         case .serverError(let message):
@@ -44,19 +47,33 @@ private func stringifyJSON(_ value: Any) -> String {
 
 @MainActor
 final class MCPWebSearchService {
+    static let enabledKey = "MLXtra.webSearch.enabled"
+    static let serverURLKey = "MLXtra.webSearch.serverURL"
+    static let defaultServerURL = URL(string: "https://mcp.exa.ai/mcp")!
+
     private let servers: [String: MCPServerConfig]
 
     init(
-        servers: [String: MCPServerConfig] = [
-            "exa": MCPServerConfig(url: URL(string: "https://mcp.exa.ai/mcp")!)
-        ]
+        servers: [String: MCPServerConfig]? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
-        self.servers = servers
+        if let servers {
+            self.servers = servers
+        } else if userDefaults.bool(forKey: Self.enabledKey) {
+            let configuredURL = userDefaults.string(forKey: Self.serverURLKey)
+                .flatMap(URL.init(string:))
+            self.servers = [
+                "exa": MCPServerConfig(url: configuredURL ?? Self.defaultServerURL)
+            ]
+        } else {
+            self.servers = [:]
+        }
     }
 
     func searchContext(for query: String) async throws -> String? {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return nil }
+        guard !servers.isEmpty else { throw MCPError.disabled }
 
         for (name, config) in servers {
             let client = MCPHTTPClient(serverName: name, url: config.url)

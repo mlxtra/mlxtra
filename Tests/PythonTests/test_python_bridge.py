@@ -305,12 +305,21 @@ class TestRequestIDPropagation(unittest.TestCase):
 
 
 class TestLogDebug(unittest.TestCase):
-    def test_uses_stderr(self):
+    def test_disabled_by_default(self):
         import io
         from contextlib import redirect_stderr
 
         captured = io.StringIO()
-        with redirect_stderr(captured):
+        with patch.dict(os.environ, {}, clear=True), redirect_stderr(captured):
+            python_bridge.log_debug("test message")
+        assert captured.getvalue() == ""
+
+    def test_uses_stderr_when_enabled(self):
+        import io
+        from contextlib import redirect_stderr
+
+        captured = io.StringIO()
+        with patch.dict(os.environ, {"MLXTRA_BRIDGE_DEBUG": "1"}), redirect_stderr(captured):
             python_bridge.log_debug("test message")
         assert "test message" in captured.getvalue()
 
@@ -728,6 +737,38 @@ class TestAceStepForwarding(unittest.TestCase):
                     "path": "/tmp/out.wav",
                 }
             ]
+
+    def test_forward_music_request_returns_on_completion_without_sentinel(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            helper = Path(temp_dir) / "helper.py"
+            helper.write_text(
+                "import json, sys, time\n"
+                "request = json.loads(sys.stdin.readline())\n"
+                "print(json.dumps({'type': 'audio.generated', 'request_id': request.get('request_id'), 'path': '/tmp/out.wav'}), flush=True)\n"
+                "print(json.dumps({'type': 'chat.completion.complete', 'request_id': request.get('request_id'), 'choices': [{'message': {'content': 'done'}}]}), flush=True)\n"
+                "time.sleep(30)\n"
+            )
+
+            child = None
+            with patch("sys.stdout", new_callable=__import__("io").StringIO) as captured_stdout:
+                try:
+                    child = python_bridge._ensure_music_subprocess(sys.executable, helper)
+                    return_code = python_bridge._forward_music_request(
+                        child,
+                        {"request_id": "req-music", "type": "music.generate"},
+                    )
+                finally:
+                    if child is not None and child.poll() is None:
+                        python_bridge._terminate_child(child, timeout=1)
+                    if child is not None:
+                        for pipe in (child.stdin, child.stdout, child.stderr):
+                            if pipe is not None and not pipe.closed:
+                                pipe.close()
+                    python_bridge._music_process = None
+
+            assert return_code == 0
+            lines = [json.loads(line) for line in captured_stdout.getvalue().splitlines() if line.strip()]
+            assert [line["type"] for line in lines] == ["audio.generated", "chat.completion.complete"]
 
 
 class TestImageModelLoading(unittest.TestCase):

@@ -71,6 +71,60 @@ def coerce_string(value: Any, default: str = "") -> str:
     return str(value)
 
 
+def build_acestep_generation_inputs(
+    parameters: dict[str, Any],
+    *,
+    prompt: str,
+    lyrics: str,
+    seed_default: int,
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    seed = coerce_int(parameters.get("seed"), seed_default)
+    thinking = coerce_bool(parameters.get("thinking"), False)
+    instrumental = coerce_bool(parameters.get("instrumental"), False)
+
+    generation_kwargs: dict[str, Any] = {
+        "task_type": "text2music",
+        "caption": prompt,
+        "lyrics": lyrics,
+        "duration": coerce_float(parameters.get("duration"), 30.0),
+        "inference_steps": coerce_int(parameters.get("inference_steps"), 8),
+        "seed": seed,
+        "shift": coerce_float(parameters.get("shift"), 3.0),
+        "infer_method": coerce_string(parameters.get("infer_method"), "ode") or "ode",
+        "thinking": thinking,
+        "use_cot_metas": thinking,
+        "use_cot_caption": thinking,
+        "use_cot_lyrics": False,
+        "use_cot_language": thinking,
+        "instrumental": instrumental,
+    }
+
+    bpm = coerce_int(parameters.get("bpm"), 0)
+    if bpm:
+        generation_kwargs["bpm"] = bpm
+
+    keyscale = coerce_string(parameters.get("keyscale")).strip()
+    if keyscale:
+        generation_kwargs["keyscale"] = keyscale
+
+    timesignature = coerce_string(parameters.get("timesignature")).strip()
+    if timesignature:
+        generation_kwargs["timesignature"] = timesignature
+
+    vocal_language = coerce_string(parameters.get("vocal_language")).strip()
+    if vocal_language and vocal_language != "unknown":
+        generation_kwargs["vocal_language"] = vocal_language
+
+    config_kwargs = {
+        "batch_size": coerce_int(parameters.get("batch_size"), 1),
+        "audio_format": coerce_string(parameters.get("audio_format"), "wav") or "wav",
+        "use_random_seed": False,
+        "seeds": [seed],
+    }
+
+    return seed, generation_kwargs, config_kwargs
+
+
 def exception_message(exc: BaseException) -> str:
     message = str(exc).strip()
     return message or exc.__class__.__name__

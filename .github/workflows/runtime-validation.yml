@@ -1,0 +1,25 @@
+name: Runtime Validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  runtime:
+    name: Runtime Bundle Release Gate
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build bundled runtime
+        run: Scripts/build-runtime-bundle.sh
+
+      - name: Validate bundled runtime
+        run: Scripts/validate-runtime-bundle.sh
+
+      - name: Build app with runtime validation
+        run: xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug CODE_SIGNING_ALLOWED=NO build

@@ -6,6 +6,24 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
     private var tempDirectory: URL!
     private var mockBridgePath: URL!
 
+    private final class LockedOutput {
+        private let lock = NSLock()
+        private var data = Data()
+
+        func append(_ newData: Data) {
+            lock.lock()
+            data.append(newData)
+            lock.unlock()
+        }
+
+        func string() -> String {
+            lock.lock()
+            let snapshot = data
+            lock.unlock()
+            return String(data: snapshot, encoding: .utf8) ?? ""
+        }
+    }
+
     override func setUp() {
         super.setUp()
         tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -148,11 +166,26 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
         process.arguments = [path]
 
         let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        let stdout = LockedOutput()
+        let stderr = LockedOutput()
         process.standardOutput = outputPipe
-        process.standardError = Pipe()
+        process.standardError = errorPipe
 
         let inputPipe = Pipe()
         process.standardInput = inputPipe
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                stdout.append(data)
+            }
+        }
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                stderr.append(data)
+            }
+        }
 
         do {
             try process.run()
@@ -177,10 +210,27 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
         let timeout = group.wait(timeout: .now() + 10)
         if timeout == .timedOut {
             process.terminate()
+            _ = group.wait(timeout: .now() + 2)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            XCTFail("Timed out waiting for bridge process. stderr: \(stderr.string())")
             return "TIMEOUT"
         }
 
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        outputPipe.fileHandleForReading.readabilityHandler = nil
+        errorPipe.fileHandleForReading.readabilityHandler = nil
+        let trailingOutput = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let trailingError = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        stdout.append(trailingOutput)
+        stderr.append(trailingError)
+        let errorText = stderr.string().trimmingCharacters(in: .whitespacesAndNewlines)
+        if !errorText.isEmpty {
+            XCTContext.runActivity(named: "bridge stderr") { activity in
+                let attachment = XCTAttachment(string: errorText)
+                attachment.lifetime = .keepAlways
+                activity.add(attachment)
+            }
+        }
+        return stdout.string().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

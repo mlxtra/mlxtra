@@ -362,7 +362,8 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         // Second pass: nothing new yet
         let second = splitter.splitStablePrefix(
             "First paragraph.\n\nSecond paragraph.\n\nthird",
-            committedEndIndex: first.newCommittedEndIndex
+            committedEndIndex: first.newCommittedEndIndex,
+            committedUTF16Offset: first.newCommittedUTF16Offset
         )
 
         XCTAssertEqual(second.newBlocks, [])
@@ -371,11 +372,36 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         // Third pass: more content arrived
         let third = splitter.splitStablePrefix(
             "First paragraph.\n\nSecond paragraph.\n\nthird part\n\nfourth",
-            committedEndIndex: first.newCommittedEndIndex
+            committedEndIndex: first.newCommittedEndIndex,
+            committedUTF16Offset: first.newCommittedUTF16Offset
         )
 
         XCTAssertEqual(third.newBlocks, [.paragraph(content: "third part")])
         XCTAssertEqual(third.tail, .paragraph("fourth"))
+    }
+
+    func testCommittedUTF16OffsetRecoversPositionForNewStringInstance() {
+        let first = splitter.splitStablePrefix(
+            "First paragraph.\n\nSecond paragraph.\n\nthird",
+            committedEndIndex: nil
+        )
+        let rebuilt = String("First paragraph.\n\nSecond paragraph.\n\nthird part\n\nfourth")
+
+        let result = splitter.splitStablePrefix(
+            rebuilt,
+            committedEndIndex: first.newCommittedEndIndex,
+            committedUTF16Offset: first.newCommittedUTF16Offset
+        )
+
+        XCTAssertEqual(result.newBlocks, [.paragraph(content: "third part")])
+        XCTAssertEqual(result.tail, .paragraph("fourth"))
+    }
+
+    func testTailRangeClampsStaleStorageLocation() {
+        let state = StreamingMarkdownState()
+        state.stableStorageEndLocation = 50
+
+        XCTAssertEqual(state.tailRange(storageLength: 12), NSRange(location: 12, length: 0))
     }
 
     // MARK: - Multiple blocks

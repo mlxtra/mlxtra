@@ -287,6 +287,44 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testModelStorageStatusUsesProvidedHuggingFaceCacheRoot() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let defaultCheckpoints = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: defaultCheckpoints)
+        }
+
+        let modelId = "org/custom-cache-model"
+        let modelCachePath = RuntimeManager.modelCachePath(
+            modelId: modelId,
+            huggingFaceCacheRoot: cacheRoot
+        )
+        let snapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("revision")
+        try FileManager.default.createDirectory(
+            at: snapshotPath,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: modelCachePath.appendingPathComponent("refs"),
+            withIntermediateDirectories: true
+        )
+        try Data("revision".utf8).write(to: modelCachePath.appendingPathComponent("refs/main"))
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(
+                modelId: modelId,
+                checkpointsPath: defaultCheckpoints,
+                huggingFaceCacheRoot: cacheRoot
+            ),
+            .downloaded
+        )
+    }
+
     func testPreferredRuntimeUsesValidInstalledRuntime() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

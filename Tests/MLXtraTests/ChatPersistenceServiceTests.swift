@@ -60,6 +60,26 @@ final class ChatPersistenceServiceTests: XCTestCase {
         XCTAssertEqual(service.loadSelectedChatId(), chat.id)
     }
 
+    func testDebouncedSaveClearsSelectedChatIdWhenNil() throws {
+        let storageDirectory = try makeTemporaryDirectory()
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
+
+        let service = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+        let chatId = UUID()
+
+        service.saveSelectedChatId(chatId)
+        XCTAssertEqual(service.loadSelectedChatId(), chatId)
+
+        service.scheduleSave([], selectedChatId: nil)
+        service.flushPendingSave()
+
+        XCTAssertNil(service.loadSelectedChatId())
+    }
+
     func testDeinitPersistsDebouncedSnapshot() throws {
         let storageDirectory = try makeTemporaryDirectory()
         let (defaults, suiteName) = try makeUserDefaults()

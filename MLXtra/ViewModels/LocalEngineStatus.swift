@@ -392,9 +392,9 @@ struct LocalEngineStatus: Equatable {
         runtimeState: RuntimeManager.RuntimeState,
         lastErrorMessage: String?
     ) -> String? {
-        if let lastErrorMessage,
-           !lastErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return lastErrorMessage
+        if let trimmedLastErrorMessage = lastErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !trimmedLastErrorMessage.isEmpty {
+            return trimmedLastErrorMessage
         }
 
         if case .error = runtimeState {

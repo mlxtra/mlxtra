@@ -28,7 +28,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testChatGenerateRouteReturnsAssistantMessage() {
-        selectWelcomeTool("Chat")
+        selectWelcomeTool("chat")
         enterPrompt("Answer with a short deterministic sentence.")
         clickGenerate()
 
@@ -38,7 +38,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testResearchGenerateRouteReturnsAssistantMessage() {
-        selectWelcomeTool("Research")
+        selectWelcomeTool("research")
         enterPrompt("Research a deterministic UI test topic.")
         clickGenerate()
 
@@ -48,7 +48,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testImageGenerateRouteCreatesImageAttachment() {
-        selectWelcomeTool("Image")
+        selectWelcomeTool("image")
         enterPrompt("Create a simple gradient square.")
         clickGenerate()
 
@@ -60,7 +60,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testSpeechGenerateRouteCreatesAudioAttachment() {
-        selectWelcomeTool("Speech")
+        selectWelcomeTool("tts")
         enterPrompt("Say this generated speech test sentence.")
         clickGenerate()
 
@@ -72,7 +72,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testMusicGenerateRouteCreatesAudioAttachment() {
-        selectWelcomeTool("Music")
+        selectWelcomeTool("music")
         enterPrompt("Moody cyberpunk instrumental music.")
         clickGenerate()
 
@@ -84,7 +84,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testCommandNCreatesEmptyChat() {
-        selectWelcomeTool("Chat")
+        selectWelcomeTool("chat")
         enterPrompt("Answer with a short deterministic sentence.")
         clickGenerate()
 
@@ -101,7 +101,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
         app.typeKey("n", modifierFlags: [.command])
 
         XCTAssertTrue(
-            app.buttons["welcome.tool.Chat"].waitForExistence(timeout: 5),
+            app.buttons["welcome.tool.chat"].waitForExistence(timeout: 5),
             "Cmd+N should switch to a new empty chat"
         )
         XCTAssertEqual(
@@ -112,7 +112,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testCommandPeriodStopsActiveGeneration() {
-        selectWelcomeTool("Chat")
+        selectWelcomeTool("chat")
         enterPrompt("UI test streaming scroll response.")
         clickGenerate()
 
@@ -136,7 +136,7 @@ final class MLXtraGenerateRoutesUITests: XCTestCase {
     }
 
     func testOptionCommandFFocusesComposer() {
-        selectWelcomeTool("Chat")
+        selectWelcomeTool("chat")
 
         let input = composerInput()
         XCTAssertTrue(input.waitForExistence(timeout: 5), "Missing composer input")

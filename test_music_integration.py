@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import wave
 from pathlib import Path
@@ -77,7 +78,14 @@ GENERATED_MUSIC_DIR = (
     Path.home() / "Library/Application Support/MLXtra/GeneratedMusic"
 )
 ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXtra/checkpoints"
-REQUIRE_ALL_MODELS = os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
+REQUIRE_ALL_MODELS = (
+    os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
+    or "--strict" in sys.argv[1:]
+)
+ALLOW_MODEL_DOWNLOADS = (
+    os.environ.get("MLXTRA_ALLOW_MODEL_DOWNLOADS") == "1"
+    or "--allow-downloads" in sys.argv[1:]
+)
 
 
 def path_has_content(path: Path) -> bool:
@@ -139,11 +147,68 @@ class MusicGenerationIntegrationTest:
         self.skipped_tests.add(test_name)
         self.log(f"↷ SKIPPED: {message}")
         self.log(
-            "   Restore/download ACE-Step checkpoints locally, or set MLXTRA_REQUIRE_ALL_MODELS=1 to make this fail."
+            "   Restore checkpoints locally, or run with MLXTRA_ALLOW_MODEL_DOWNLOADS=1 MLXTRA_REQUIRE_ALL_MODELS=1 to repair and gate."
         )
         return None
 
+    def ensure_music_model_downloaded(self) -> bool:
+        if ace_step_model_is_complete():
+            return True
+
+        if not ALLOW_MODEL_DOWNLOADS:
+            return False
+
+        helper = RUNTIME / "acestep_download_helper.py"
+        if not helper.exists():
+            self.log(f"ACE-Step download helper not found: {helper}", "ERROR")
+            return False
+
+        self.log("Downloading missing ACE-Step checkpoints because MLXTRA_ALLOW_MODEL_DOWNLOADS=1.")
+        try:
+            proc = subprocess.run(
+                [
+                    str(VENV_PYTHON),
+                    "-u",
+                    str(helper),
+                    "ACE-Step/acestep-v15-turbo-continuous",
+                    str(ACESTEP_CHECKPOINTS_DIR),
+                ],
+                capture_output=True,
+                text=True,
+                env=self.get_env(),
+                timeout=1800,
+            )
+        except subprocess.TimeoutExpired:
+            self.log("ACE-Step checkpoint download timed out.", "ERROR")
+            return False
+
+        for line in proc.stdout.splitlines()[-20:]:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            if event_type in {"download.progress", "download.complete", "download.error"}:
+                self.log(f"  [download] {event.get('status') or event.get('message') or event_type}")
+
+        if proc.returncode != 0:
+            self.log(f"ACE-Step download helper exited with code {proc.returncode}", "ERROR")
+            for line in proc.stderr.splitlines()[-20:]:
+                self.log(f"  [download stderr] {line[:160]}", "ERROR")
+            return False
+
+        if not ace_step_model_is_complete():
+            self.log("ACE-Step download completed but required checkpoint files are still incomplete.", "ERROR")
+            return False
+
+        self.log("ACE-Step checkpoints downloaded and verified.")
+        return True
+
     def require_music_model(self, test_name: str) -> Optional[bool]:
+        if self.ensure_music_model_downloaded():
+            self.log("Local ACE-Step checkpoints verified.")
+            return True
+
         if ace_step_model_is_complete():
             self.log("Local ACE-Step checkpoints verified.")
             return True
@@ -218,6 +283,9 @@ class MusicGenerationIntegrationTest:
             if not exists:
                 all_present = False
 
+        if not all_present and ALLOW_MODEL_DOWNLOADS:
+            return self.ensure_music_model_downloaded()
+
         return all_present or not REQUIRE_ALL_MODELS
 
     def test_model_normalization(self) -> bool:
@@ -226,19 +294,9 @@ class MusicGenerationIntegrationTest:
         self.log("TEST 2: Model ID Normalization")
         self.log("=" * 60)
 
-        # Read normalization function from acestep_bridge.py
-        bridge_code = ACESTEP_BRIDGE.read_text()
-
-        # Extract and exec the normalization function
-        namespace = {"__file__": str(ACESTEP_BRIDGE)}
         if str(RESOURCES) not in sys.path:
             sys.path.insert(0, str(RESOURCES))
-        exec(bridge_code.split("def generate_music_once")[0], namespace)
-        normalize_fn = namespace.get("normalize_music_model_id")
-
-        if not normalize_fn:
-            self.log("Could not extract normalization function", "ERROR")
-            return False
+        from bridge_utils import normalize_music_model_id
 
         test_cases = [
             ("ACE-Step/acestep-v15-turbo-continuous", "acestep-v15-turbo"),
@@ -249,7 +307,7 @@ class MusicGenerationIntegrationTest:
 
         all_passed = True
         for input_id, expected in test_cases:
-            result = normalize_fn(input_id)
+            result = normalize_music_model_id(input_id)
             passed = result == expected
             status = "✓" if passed else "✗"
             self.log(f"  {status} '{input_id}' → '{result}' (expected: '{expected}')")
@@ -527,31 +585,59 @@ class MusicGenerationIntegrationTest:
 
             assert proc.stdin is not None
             assert proc.stdout is not None
+            assert proc.stderr is not None
             proc.stdin.write(json.dumps(request) + "\n")
             proc.stdin.close()
 
             stdout_lines = []
+            stderr_lines = []
+            stdout_lock = threading.Lock()
+            stderr_lock = threading.Lock()
+
+            def drain_stdout():
+                assert proc is not None and proc.stdout is not None
+                for line in proc.stdout:
+                    with stdout_lock:
+                        stdout_lines.append(line)
+
+            def drain_stderr():
+                assert proc is not None and proc.stderr is not None
+                for line in proc.stderr:
+                    with stderr_lock:
+                        stderr_lines.append(line)
+
+            stdout_thread = threading.Thread(target=drain_stdout, daemon=True)
+            stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
+
             deadline = time.time() + 300
+            seen_stdout_lines = 0
+            saw_terminal_message = False
             while time.time() < deadline:
-                line = proc.stdout.readline()
-                if not line:
-                    if proc.poll() is not None:
+                with stdout_lock:
+                    new_lines = stdout_lines[seen_stdout_lines:]
+                    seen_stdout_lines = len(stdout_lines)
+
+                for line in new_lines:
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        self.log(f"  [non-json stdout] {line.strip()[:150]}", "ERROR")
+                        continue
+
+                    msg_type = payload.get("type")
+                    if msg_type in ("system.ready", "model.loading", "model.loaded", "audio.generated", "error"):
+                        self.log(f"  [{msg_type}] {json.dumps(payload)[:100]}...")
+                    if msg_type in ("chat.completion.complete", "error"):
+                        saw_terminal_message = True
                         break
-                    time.sleep(0.1)
-                    continue
 
-                stdout_lines.append(line)
-                try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
-                    self.log(f"  [non-json stdout] {line.strip()[:150]}", "ERROR")
-                    continue
-
-                msg_type = payload.get("type")
-                if msg_type in ("system.ready", "model.loading", "model.loaded", "audio.generated", "error"):
-                    self.log(f"  [{msg_type}] {json.dumps(payload)[:100]}...")
-                if msg_type in ("chat.completion.complete", "error"):
+                if saw_terminal_message:
                     break
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
 
             elapsed = time.time() - start_time
             if proc.poll() is None:
@@ -561,7 +647,10 @@ class MusicGenerationIntegrationTest:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=5)
-            stderr = proc.stderr.read() if proc.stderr else ""
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+            with stderr_lock:
+                stderr = "".join(stderr_lines)
 
             return self.validate_generation_output("".join(stdout_lines), stderr, elapsed)
         except Exception as e:
@@ -596,6 +685,9 @@ class MusicGenerationIntegrationTest:
         if not errors:
             self.log("\n✗ FAILED: Missing prompt did not return an error", "ERROR")
             return False
+        if proc.returncode == 0:
+            self.log("\n✗ FAILED: Missing prompt returned exit code 0", "ERROR")
+            return False
 
         self.log(f"  [error] {errors[0].get('message')}")
         return "No prompt provided" in errors[0].get("message", "")
@@ -624,6 +716,8 @@ class MusicGenerationIntegrationTest:
                 else "skip missing models by default"
             )
         )
+        if ALLOW_MODEL_DOWNLOADS:
+            self.log("Model downloads: enabled for missing checkpoint repair")
 
         tests = [
             ("Setup Verification", self.test_setup),
@@ -658,9 +752,15 @@ class MusicGenerationIntegrationTest:
             self.log(f"  {status}: {name}")
 
         all_passed = all(passed for _, passed in results)
-        self.log(
-            "\n" + ("✓ All tests passed!" if all_passed else "✗ Some tests failed!")
-        )
+        if all_passed and self.skipped_tests:
+            self.log(
+                f"\n✓ All non-skipped tests passed; {len(self.skipped_tests)} model-backed test(s) were skipped."
+            )
+            self.log("   Use --strict or MLXTRA_REQUIRE_ALL_MODELS=1 for a release gate.")
+        else:
+            self.log(
+                "\n" + ("✓ All tests passed!" if all_passed else "✗ Some tests failed!")
+            )
 
         return all_passed
 

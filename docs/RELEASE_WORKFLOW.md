@@ -18,9 +18,10 @@ The app must always keep working with the bundled catalog and bundled runtime if
 
 `MLXtra/Resources/stable-channel.json`
 
-- Stable pointer to the current catalog and runtime assets.
+- Stable pointer to the current catalog and any published runtime update assets.
 - Contains version, URL, size, and SHA-256 for each asset.
 - This file is the only metadata that should move forward between immutable asset releases.
+- `runtimes` can be empty when no remote runtime update has been published yet; the app keeps using the bundled runtime.
 
 Runtime archive
 
@@ -36,7 +37,7 @@ Run this before preparing or publishing release assets:
 Scripts/validate-release-metadata.py
 ```
 
-While the runtime archive checksum is still a local placeholder, use:
+While a generated channel candidate still contains a local runtime archive placeholder, use:
 
 ```bash
 Scripts/validate-release-metadata.py --allow-runtime-placeholders
@@ -74,6 +75,11 @@ If you only want to stage the catalog/channel shape without zipping the 3GB runt
 ```bash
 Scripts/prepare-release-assets.sh --skip-runtime-archive
 ```
+
+When the checked-in stable channel has no published runtime entry, this writes a
+catalog-only channel candidate with an empty `runtimes` array. When it does have
+one, the script reuses that whole runtime entry unchanged; do not combine this
+mode with `--runtime-version`.
 
 ## Catalog-Only Update
 
@@ -129,6 +135,31 @@ PYTHONPATH=../../../MLXtra/Resources python3 test_python_bridge.py -v
 PYTHONPATH=../../../MLXtra/Resources python3 test_acestep_bridge.py -v
 cd ../..
 xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug build
+MLXTRA_REQUIRE_ALL_MODELS=1 python3 test_music_integration.py
+MLXTRA_REQUIRE_ALL_MODELS=1 python3 test_all_models_integration.py
+```
+
+The `MLXTRA_REQUIRE_ALL_MODELS=1` runs are the release gate. Without that
+setting, the integration scripts keep local development convenient by reporting
+missing model files as skips.
+
+GitHub Actions also includes a manual `Runtime Validation` workflow. Run it
+before publishing a binary/runtime release; it builds the runtime bundle, runs
+`Scripts/validate-runtime-bundle.sh`, and builds the app without
+`MLXTRA_SKIP_RUNTIME_VALIDATION`.
+
+## Binary App Release
+
+The Xcode Release configuration enables the hardened runtime. For a public
+binary app, archive with a Developer ID Application identity and notarize the
+exported `.app` or `.dmg`; the checked-in project uses ad-hoc signing for local
+source builds unless those signing values are supplied at archive time.
+
+Minimum signing validation before upload:
+
+```bash
+codesign -dvvv --entitlements :- path/to/MLXtra.app
+spctl -a -vv path/to/MLXtra.app
 ```
 
 ## Rollback

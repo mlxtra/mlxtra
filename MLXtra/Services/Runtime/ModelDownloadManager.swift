@@ -1,81 +1,44 @@
 import Foundation
 import Darwin
 
-private final class DownloadLineBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var buffer = ""
-
-    func append(_ text: String) -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-
-        buffer += text
-        let lines = buffer.components(separatedBy: .newlines)
-        buffer = lines.last ?? ""
-        return Array(lines.dropLast())
-    }
-
-    func flush() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let remaining = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
-        buffer = ""
-        return remaining.isEmpty ? nil : remaining
-    }
-}
-
-private final class DownloadOutputLog: @unchecked Sendable {
-	private let lock = NSLock()
-	private var text = ""
-    private let maxCharacters: Int
-
-    init(maxCharacters: Int = 40_000) {
-        self.maxCharacters = maxCharacters
-    }
-
-	func append(_ newText: String) {
-		lock.lock()
-		defer { lock.unlock() }
-		text += newText
-        if text.count > maxCharacters {
-            text = String(text.suffix(maxCharacters))
-        }
-	}
-
-	func value() -> String {
-		lock.lock()
-		defer { lock.unlock() }
-		return text
-	}
-}
-
 private enum DownloadStopReason: Equatable {
     case pause
     case cancel
 }
 
+private enum DownloadDiagnostics {
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["MLXTRA_DOWNLOAD_DEBUG"] == "1"
+            || UserDefaults.standard.bool(forKey: "MLXtra.downloadDebug")
+    }
+
+    static func log(_ message: @autoclosure () -> String) {
+        guard isEnabled else { return }
+        print(message())
+    }
+}
+
 final class DownloadErrorTracker: @unchecked Sendable {
-	private let lock = NSLock()
-	private var receivedError: [String: Bool] = [:]
+    private let lock = NSLock()
+    private var receivedError: [String: Bool] = [:]
 
-	func setErrorReceived(for modelId: String) {
-		lock.lock()
-		defer { lock.unlock() }
-		receivedError[modelId] = true
-	}
+    func setErrorReceived(for modelId: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        receivedError[modelId] = true
+    }
 
-	func clearErrorReceived(for modelId: String) {
-		lock.lock()
-		defer { lock.unlock() }
-		receivedError[modelId] = nil
-	}
+    func clearErrorReceived(for modelId: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        receivedError[modelId] = nil
+    }
 
-	func errorWasReceived(for modelId: String) -> Bool {
-		lock.lock()
-		defer { lock.unlock() }
-		return receivedError[modelId] ?? false
-	}
+    func errorWasReceived(for modelId: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return receivedError[modelId] ?? false
+    }
 }
 
 @MainActor
@@ -267,15 +230,17 @@ final class ModelDownloadManager: ObservableObject {
             return model
         }
         let checkpointsPath = self.checkpointsPath
+        let huggingFaceCacheRoot = self.huggingFaceCacheRoot
 
-        Task { [modelsToCheck, checkpointsPath] in
+        Task { [modelsToCheck, checkpointsPath, huggingFaceCacheRoot] in
             let results = await Task.detached(priority: .utility) {
                 modelsToCheck.map { model in
                     (
                         model.id,
                         RuntimeManager.modelStorageStatus(
                             model: model,
-                            checkpointsPath: checkpointsPath
+                            checkpointsPath: checkpointsPath,
+                            huggingFaceCacheRoot: huggingFaceCacheRoot
                         )
                     )
                 }
@@ -352,7 +317,7 @@ final class ModelDownloadManager: ObservableObject {
             guard let self else { return }
 
             do {
-                try runtimeManager.validateDownloadSupport(for: model)
+                try await runtimeManager.validateDownloadSupportOffMain(for: model)
                 if model.source.usesComponentBundle {
                     try await runAceStepDownload(model: model)
                 } else {
@@ -561,16 +526,26 @@ final class ModelDownloadManager: ObservableObject {
             return await modelStorageStatusOffMain(model: model)
         }
 
-        let checkpointsPath = runtimeManager.checkpointsPath
+        let checkpointsPath = self.checkpointsPath
+        let huggingFaceCacheRoot = self.huggingFaceCacheRoot
         return await Task.detached(priority: .utility) {
-            RuntimeManager.modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath)
+            RuntimeManager.modelStorageStatus(
+                modelId: modelId,
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: huggingFaceCacheRoot
+            )
         }.value
     }
 
     private func modelStorageStatusOffMain(model: DownloadableModel) async -> RuntimeManager.ModelStorageStatus {
-        let checkpointsPath = runtimeManager.checkpointsPath
+        let checkpointsPath = self.checkpointsPath
+        let huggingFaceCacheRoot = self.huggingFaceCacheRoot
         return await Task.detached(priority: .utility) {
-            RuntimeManager.modelStorageStatus(model: model, checkpointsPath: checkpointsPath)
+            RuntimeManager.modelStorageStatus(
+                model: model,
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: huggingFaceCacheRoot
+            )
         }.value
     }
 
@@ -603,106 +578,28 @@ final class ModelDownloadManager: ObservableObject {
         let modelId = model.id
         let repoId = model.source.downloadRepository ?? model.modelId
 
-        print("[ModelDownloadManager] Running ACE-Step download helper with Python at \(pythonPath.path)")
+        DownloadDiagnostics.log("[ModelDownloadManager] Running ACE-Step download helper with Python at \(pythonPath.path)")
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let process = Process()
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
-            let lineBuffer = DownloadLineBuffer()
-            let outputLog = DownloadOutputLog()
-            let errorLog = DownloadOutputLog()
+        var downloadEnv = bundledPythonEnvironment()
+        downloadEnv["ACESTEP_CHECKPOINTS_DIR"] = localDir
 
-            process.executableURL = pythonPath
-            process.arguments = [helperPath.path, repoId, localDir]
-            var downloadEnv = bundledPythonEnvironment()
-            downloadEnv["ACESTEP_CHECKPOINTS_DIR"] = localDir
-            process.environment = downloadEnv
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
+        let result = try await runDownloadHelper(
+            modelId: modelId,
+            executableURL: pythonPath,
+            arguments: [helperPath.path, repoId, localDir],
+            environment: downloadEnv
+        )
 
-            outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let data = handle.availableData
-                guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
-
-                outputLog.append(output)
-                for line in lineBuffer.append(output) {
-                    Task { @MainActor [weak self] in
-                        self?.handleDownloadEventLine(line, modelId: modelId)
-                    }
-                }
-            }
-
-            errorPipe.fileHandleForReading.readabilityHandler = { [weak errorLog] handle in
-                let data = handle.availableData
-                guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
-
-                errorLog?.append(output)
-            }
-
-            process.terminationHandler = { process in
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-
-                let trailingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                if !trailingData.isEmpty, let trailingOutput = String(data: trailingData, encoding: .utf8) {
-                    outputLog.append(trailingOutput)
-                    for line in lineBuffer.append(trailingOutput) {
-                        Task { @MainActor [weak self] in
-                            self?.handleDownloadEventLine(line, modelId: modelId)
-                        }
-                    }
-                }
-
-                if let remainingLine = lineBuffer.flush() {
-                    Task { @MainActor [weak self] in
-                        self?.handleDownloadEventLine(remainingLine, modelId: modelId)
-                    }
-                }
-
-                let errorTrailingData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                if !errorTrailingData.isEmpty, let trailingErrorOutput = String(data: errorTrailingData, encoding: .utf8) {
-                    errorLog.append(trailingErrorOutput)
-                }
-
-                let output = outputLog.value()
-                let errorOutput = errorLog.value()
-
-                print("[ModelDownloadManager] ACE-Step helper output: \(output.prefix(500))")
-                if !errorOutput.isEmpty {
-                    print("[ModelDownloadManager] ACE-Step helper stderr: \(errorOutput.prefix(500))")
-                }
-
-                Task { @MainActor [weak self] in
-                    guard let self else {
-                        continuation.resume(throwing: ModelDownloadError.downloadFailed("Download manager was released."))
-                        return
-                    }
-
-                    self.processes[modelId] = nil
-                    self.handleDownloadEventLines(output, modelId: modelId)
-
-                    if self.stopReasons[modelId] != nil {
-                        continuation.resume(throwing: ModelDownloadError.stoppedByUser)
-                        return
-                    }
-
-                    if process.terminationStatus == 0 {
-                        continuation.resume()
-                    } else {
-                        continuation.resume(throwing: ModelDownloadError.downloadFailed(output.isEmpty ? errorOutput : output))
-                    }
-                }
-            }
-
-            do {
-                try process.run()
-                processes[modelId] = process
-            } catch {
-                processes[modelId] = nil
-                continuation.resume(throwing: error)
-            }
+        DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step helper output: \(result.output.prefix(500))")
+        if !result.errorOutput.isEmpty {
+            DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step helper stderr: \(result.errorOutput.prefix(500))")
         }
+
+        try finishDownloadHelperRun(
+            result,
+            modelId: modelId,
+            failureMessage: result.output.isEmpty ? result.errorOutput : result.output
+        )
     }
 
     private func runSnapshotDownload(model: DownloadableModel) async throws {
@@ -711,98 +608,58 @@ final class ModelDownloadManager: ObservableObject {
         let modelId = model.id
         let repoId = model.source.downloadRepository ?? model.modelId
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let process = Process()
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
-            let lineBuffer = DownloadLineBuffer()
-            let outputLog = DownloadOutputLog()
-            let errorLog = DownloadOutputLog()
+        let result = try await runDownloadHelper(
+            modelId: modelId,
+            executableURL: pythonPath,
+            arguments: [helperPath.path, repoId],
+            environment: bundledPythonEnvironment()
+        )
+        let errorOutput = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try finishDownloadHelperRun(
+            result,
+            modelId: modelId,
+            failureMessage: errorOutput.isEmpty ? "huggingface_hub exited with status \(result.terminationStatus)" : errorOutput
+        )
+    }
 
-            process.executableURL = pythonPath
-            process.arguments = [helperPath.path, repoId]
-
-            process.environment = bundledPythonEnvironment()
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
-
-            outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let data = handle.availableData
-                guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
-
-                outputLog.append(output)
-                for line in lineBuffer.append(output) {
-                    Task { @MainActor [weak self] in
-                        self?.handleDownloadEventLine(line, modelId: modelId)
-                    }
+    private func runDownloadHelper(
+        modelId: String,
+        executableURL: URL,
+        arguments: [String],
+        environment: [String: String]
+    ) async throws -> DownloadHelperProcessResult {
+        do {
+            return try await DownloadHelperProcessRunner.run(
+                executableURL: executableURL,
+                arguments: arguments,
+                environment: environment,
+                onProcessStarted: { [weak self] process in
+                    self?.processes[modelId] = process
+                },
+                onOutputLine: { [weak self] line in
+                    self?.handleDownloadEventLine(line, modelId: modelId)
                 }
-            }
+            )
+        } catch {
+            processes[modelId] = nil
+            throw error
+        }
+    }
 
-            errorPipe.fileHandleForReading.readabilityHandler = { [weak errorLog] handle in
-                let data = handle.availableData
-                guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+    private func finishDownloadHelperRun(
+        _ result: DownloadHelperProcessResult,
+        modelId: String,
+        failureMessage: String
+    ) throws {
+        processes[modelId] = nil
+        handleDownloadEventLines(result.output, modelId: modelId)
 
-                errorLog?.append(output)
-            }
+        if stopReasons[modelId] != nil {
+            throw ModelDownloadError.stoppedByUser
+        }
 
-            process.terminationHandler = { process in
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-
-                let trailingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                if !trailingData.isEmpty, let trailingOutput = String(data: trailingData, encoding: .utf8) {
-                    outputLog.append(trailingOutput)
-                    for line in lineBuffer.append(trailingOutput) {
-                        Task { @MainActor [weak self] in
-                            self?.handleDownloadEventLine(line, modelId: modelId)
-                        }
-                    }
-                }
-
-                if let remainingLine = lineBuffer.flush() {
-                    Task { @MainActor [weak self] in
-                        self?.handleDownloadEventLine(remainingLine, modelId: modelId)
-                    }
-                }
-
-                let errorTrailingData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                if !errorTrailingData.isEmpty, let trailingErrorOutput = String(data: errorTrailingData, encoding: .utf8) {
-                    errorLog.append(trailingErrorOutput)
-                }
-
-                let output = outputLog.value()
-                let errorOutput = errorLog.value()
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                Task { @MainActor [weak self] in
-                    guard let self else {
-                        continuation.resume(throwing: ModelDownloadError.downloadFailed("Download manager was released."))
-                        return
-                    }
-
-                    self.processes[modelId] = nil
-                    self.handleDownloadEventLines(output, modelId: modelId)
-
-                    if self.stopReasons[modelId] != nil {
-                        continuation.resume(throwing: ModelDownloadError.stoppedByUser)
-                        return
-                    }
-
-                    if process.terminationStatus == 0 {
-                        continuation.resume()
-                    } else {
-                        continuation.resume(throwing: ModelDownloadError.downloadFailed(errorOutput.isEmpty ? "huggingface_hub exited with status \(process.terminationStatus)" : errorOutput))
-                    }
-                }
-            }
-
-            do {
-                try process.run()
-                processes[modelId] = process
-            } catch {
-                processes[modelId] = nil
-                continuation.resume(throwing: error)
-            }
+        guard result.terminationStatus == 0 else {
+            throw ModelDownloadError.downloadFailed(failureMessage)
         }
     }
 

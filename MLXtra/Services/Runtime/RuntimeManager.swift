@@ -2,6 +2,61 @@ import Foundation
 import Combine
 import CryptoKit
 
+private enum RuntimeDiagnostics {
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["MLXTRA_RUNTIME_DEBUG"] == "1"
+            || UserDefaults.standard.bool(forKey: "MLXtra.runtimeDebug")
+    }
+
+    static func log(_ message: @autoclosure () -> String) {
+        guard isEnabled else { return }
+        print(message())
+    }
+}
+
+private final class PipeDataReader: @unchecked Sendable {
+    private let handle: FileHandle
+    private let lock = NSLock()
+    private var data = Data()
+
+    init(handle: FileHandle) {
+        self.handle = handle
+    }
+
+    func start(on queue: DispatchQueue, group: DispatchGroup) {
+        group.enter()
+        queue.async {
+            let readData = self.handle.readDataToEndOfFile()
+            self.lock.lock()
+            self.data = readData
+            self.lock.unlock()
+            group.leave()
+        }
+    }
+
+    func collectedData() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+}
+
+private struct DownloadSupportValidationContext: Sendable {
+    enum RuntimeKind: Sendable {
+        case aceStep
+        case huggingFace
+    }
+
+    let kind: RuntimeKind
+    let runtimeBundleURL: URL
+    let pythonHomePath: URL
+    let pythonExecutablePath: URL
+    let helperPath: URL
+    let importPackages: [String]
+    let importContext: String
+    let environment: [String: String]
+}
+
 struct RuntimeManifest: Codable, Equatable {
     let runtimeVersion: String
     let compatibilityApi: Int
@@ -296,16 +351,16 @@ class RuntimeManager: ObservableObject {
         fileManager: FileManager = .default
     ) -> URL {
         if isRuntimeBundleStructurallyValid(installed, fileManager: fileManager) {
-            print("[RuntimeManager] Using installed runtime bundle at: \(installed.path)")
+            RuntimeDiagnostics.log("[RuntimeManager] Using installed runtime bundle at: \(installed.path)")
             return installed
         }
 
         for path in candidates where fileManager.fileExists(atPath: path.path) {
-            print("[RuntimeManager] Found bundled runtime bundle at: \(path.path)")
+            RuntimeDiagnostics.log("[RuntimeManager] Found bundled runtime bundle at: \(path.path)")
             return path
         }
 
-        print("[RuntimeManager] Runtime bundle not found in expected locations, using default")
+        RuntimeDiagnostics.log("[RuntimeManager] Runtime bundle not found in expected locations, using default")
         return candidates[0]
     }
 
@@ -361,6 +416,7 @@ class RuntimeManager: ObservableObject {
         }
 
         let runtimeRoot = try normalizedRuntimeRoot(in: extractedURL, fileManager: fileManager)
+        try validateExtractedRuntimeTree(runtimeRoot, fileManager: fileManager)
         guard isRuntimeBundleStructurallyValid(runtimeRoot, fileManager: fileManager) else {
             throw RuntimeUpdateError.invalidRuntime
         }
@@ -387,6 +443,8 @@ class RuntimeManager: ObservableObject {
     }
 
     private nonisolated static func extractZipArchive(_ archiveURL: URL, to destinationURL: URL) throws {
+        try validateZipArchiveEntries(archiveURL)
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         process.arguments = ["-x", "-k", archiveURL.path, destinationURL.path]
@@ -415,6 +473,80 @@ class RuntimeManager: ObservableObject {
         }
         throw RuntimeUpdateError.invalidRuntime
     }
+
+    private nonisolated static func validateZipArchiveEntries(_ archiveURL: URL) throws {
+        let process = Process()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zipinfo")
+        process.arguments = ["-1", archiveURL.path]
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+        } catch {
+            throw RuntimeUpdateError.unsupportedArchive
+        }
+
+        let stdoutReader = PipeDataReader(handle: outputPipe.fileHandleForReading)
+        let stderrReader = PipeDataReader(handle: errorPipe.fileHandleForReading)
+        let group = DispatchGroup()
+        stdoutReader.start(on: DispatchQueue(label: "com.localstudio.mlxtra.zipinfo.stdout", qos: .utility), group: group)
+        stderrReader.start(on: DispatchQueue(label: "com.localstudio.mlxtra.zipinfo.stderr", qos: .utility), group: group)
+        process.waitUntilExit()
+        group.wait()
+
+        guard process.terminationStatus == 0 else {
+            throw RuntimeUpdateError.unsupportedArchive
+        }
+
+        let output = String(data: stdoutReader.collectedData(), encoding: .utf8) ?? ""
+        for rawEntry in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard isSafeArchiveEntryPath(String(rawEntry)) else {
+                throw RuntimeUpdateError.invalidRuntime
+            }
+        }
+    }
+
+    private nonisolated static func isSafeArchiveEntryPath(_ entry: String) -> Bool {
+        guard !entry.isEmpty, !entry.hasPrefix("/") else {
+            return false
+        }
+        let components = entry.split(separator: "/", omittingEmptySubsequences: true)
+        return !components.contains("..")
+    }
+
+    private nonisolated static func validateExtractedRuntimeTree(
+        _ rootURL: URL,
+        fileManager: FileManager
+    ) throws {
+        let root = rootURL.resolvingSymlinksInPath().standardizedFileURL
+        guard let enumerator = fileManager.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.isSymbolicLinkKey],
+            options: [.skipsPackageDescendants]
+        ) else {
+            throw RuntimeUpdateError.invalidRuntime
+        }
+
+        for case let url as URL in enumerator {
+            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey])
+            guard values.isSymbolicLink == true else {
+                continue
+            }
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+            guard isURL(resolved, containedIn: root) else {
+                throw RuntimeUpdateError.invalidRuntime
+            }
+        }
+    }
+
+    private nonisolated static func isURL(_ candidate: URL, containedIn root: URL) -> Bool {
+        let candidatePath = candidate.path
+        let rootPath = root.path
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
+    }
     
     /// Initialize the Python runtime
     func initialize() async throws {
@@ -430,35 +562,35 @@ class RuntimeManager: ObservableObject {
 
         do {
             let bundlePath = runtimeBundleURL
-            try validateRequiredDirectory(bundlePath, error: .bundleNotFound(bundlePath.path))
+            try Self.validateRequiredDirectory(bundlePath, error: .bundleNotFound(bundlePath.path))
 
             let pythonHome = pythonHomePath()
-            try validateRequiredDirectory(
+            try Self.validateRequiredDirectory(
                 pythonHome,
                 error: .runtimeComponentNotFound("Bundled Python home", pythonHome.path)
             )
 
             let pythonPath = pythonExecutablePath()
-            try validateRequiredFile(pythonPath, error: .pythonNotFound(pythonPath.path), executable: true)
+            try Self.validateRequiredFile(pythonPath, error: .pythonNotFound(pythonPath.path), executable: true)
 
             let bridgePath = bridgeScriptPath()
-            try validateRequiredFile(bridgePath, error: .bridgeScriptNotFound(bridgePath.path))
+            try Self.validateRequiredFile(bridgePath, error: .bridgeScriptNotFound(bridgePath.path))
 
             let huggingFaceHelper = huggingFaceDownloadHelperPath()
-            try validateRequiredFile(
+            try Self.validateRequiredFile(
                 huggingFaceHelper,
                 error: .runtimeComponentNotFound("Hugging Face download helper", huggingFaceHelper.path)
             )
 
             let aceStepPython = acestepPythonExecutablePath()
-            try validateRequiredFile(
+            try Self.validateRequiredFile(
                 aceStepPython,
                 error: .runtimeComponentNotFound("ACE-Step Python executable", aceStepPython.path),
                 executable: true
             )
 
             let aceStepHelper = acestepDownloadHelperPath()
-            try validateRequiredFile(
+            try Self.validateRequiredFile(
                 aceStepHelper,
                 error: .runtimeComponentNotFound("ACE-Step download helper", aceStepHelper.path)
             )
@@ -492,57 +624,98 @@ class RuntimeManager: ObservableObject {
     /// Validate only the runtime pieces needed to download this model.
     /// Downloading should not require unrelated model runtimes to be present.
     func validateDownloadSupport(for model: DownloadableModel) throws {
-        let bundlePath = runtimeBundleURL
-        try validateRequiredDirectory(bundlePath, error: .bundleNotFound(bundlePath.path))
+        let context = try downloadSupportValidationContext(for: model)
+        try Self.validateDownloadSupport(context)
+    }
 
+    func validateDownloadSupportOffMain(for model: DownloadableModel) async throws {
+        let context = try downloadSupportValidationContext(for: model)
+        try await Task.detached(priority: .utility) {
+            try Self.validateDownloadSupport(context)
+        }.value
+    }
+
+    private func downloadSupportValidationContext(for model: DownloadableModel) throws -> DownloadSupportValidationContext {
         guard model.isRuntimeCompatible else {
             throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
         }
 
-        let pythonHome = pythonHomePath()
-        try validateRequiredDirectory(
-            pythonHome,
-            error: .runtimeComponentNotFound("Bundled Python home", pythonHome.path)
-        )
-
         if model.source.usesComponentBundle {
             let aceStepPython = acestepPythonExecutablePath()
-            try validateRequiredFile(
-                aceStepPython,
-                error: .runtimeComponentNotFound("ACE-Step Python executable", aceStepPython.path),
-                executable: true
-            )
-
             let aceStepHelper = acestepDownloadHelperPath()
-            try validateRequiredFile(
-                aceStepHelper,
-                error: .runtimeComponentNotFound("ACE-Step download helper", aceStepHelper.path)
-            )
-
-            try validatePythonImports(
-                pythonPath: aceStepPython,
-                packages: ["huggingface_hub", "tqdm", "acestep"],
-                context: "ACE-Step download runtime"
+            return DownloadSupportValidationContext(
+                kind: .aceStep,
+                runtimeBundleURL: runtimeBundleURL,
+                pythonHomePath: pythonHomePath(),
+                pythonExecutablePath: aceStepPython,
+                helperPath: aceStepHelper,
+                importPackages: ["huggingface_hub", "tqdm", "acestep"],
+                importContext: "ACE-Step download runtime",
+                environment: bundledPythonEnvironment()
             )
         } else {
             let pythonPath = pythonExecutablePath()
-            try validateRequiredFile(pythonPath, error: .pythonNotFound(pythonPath.path), executable: true)
-
             let huggingFaceHelper = huggingFaceDownloadHelperPath()
-            try validateRequiredFile(
-                huggingFaceHelper,
-                error: .runtimeComponentNotFound("Hugging Face download helper", huggingFaceHelper.path)
-            )
-
-            try validatePythonImports(
-                pythonPath: pythonPath,
-                packages: ["huggingface_hub", "tqdm"],
-                context: "Hugging Face download runtime"
+            return DownloadSupportValidationContext(
+                kind: .huggingFace,
+                runtimeBundleURL: runtimeBundleURL,
+                pythonHomePath: pythonHomePath(),
+                pythonExecutablePath: pythonPath,
+                helperPath: huggingFaceHelper,
+                importPackages: ["huggingface_hub", "tqdm"],
+                importContext: "Hugging Face download runtime",
+                environment: bundledPythonEnvironment()
             )
         }
     }
 
-    private func validatePythonImports(pythonPath: URL, packages: [String], context: String) throws {
+    private nonisolated static func validateDownloadSupport(_ context: DownloadSupportValidationContext) throws {
+        try validateRequiredDirectory(
+            context.runtimeBundleURL,
+            error: .bundleNotFound(context.runtimeBundleURL.path)
+        )
+        try validateRequiredDirectory(
+            context.pythonHomePath,
+            error: .runtimeComponentNotFound("Bundled Python home", context.pythonHomePath.path)
+        )
+
+        switch context.kind {
+        case .aceStep:
+            try validateRequiredFile(
+                context.pythonExecutablePath,
+                error: .runtimeComponentNotFound("ACE-Step Python executable", context.pythonExecutablePath.path),
+                executable: true
+            )
+            try validateRequiredFile(
+                context.helperPath,
+                error: .runtimeComponentNotFound("ACE-Step download helper", context.helperPath.path)
+            )
+        case .huggingFace:
+            try validateRequiredFile(
+                context.pythonExecutablePath,
+                error: .pythonNotFound(context.pythonExecutablePath.path),
+                executable: true
+            )
+            try validateRequiredFile(
+                context.helperPath,
+                error: .runtimeComponentNotFound("Hugging Face download helper", context.helperPath.path)
+            )
+        }
+
+        try validatePythonImports(
+            pythonPath: context.pythonExecutablePath,
+            packages: context.importPackages,
+            context: context.importContext,
+            environment: context.environment
+        )
+    }
+
+    private nonisolated static func validatePythonImports(
+        pythonPath: URL,
+        packages: [String],
+        context: String,
+        environment: [String: String]
+    ) throws {
         let process = Process()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -552,7 +725,7 @@ class RuntimeManager: ObservableObject {
             "-c",
             "import importlib, sys; [importlib.import_module(package) for package in sys.argv[1:]]",
         ] + packages
-        process.environment = bundledPythonEnvironment()
+        process.environment = environment
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
@@ -562,13 +735,20 @@ class RuntimeManager: ObservableObject {
             throw RuntimeError.pythonValidationFailed(context, error.localizedDescription)
         }
 
-        // Read pipes before waitUntilExit() to prevent pipe-buffer deadlock
-        // when Python writes more than the pipe buffer can hold before exiting
-        let stdoutData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let group = DispatchGroup()
+        let stdoutReader = PipeDataReader(handle: outputPipe.fileHandleForReading)
+        let stderrReader = PipeDataReader(handle: errorPipe.fileHandleForReading)
+        let stdoutQueue = DispatchQueue(label: "com.localstudio.mlxtra.runtime-validation.stdout", qos: .utility)
+        let stderrQueue = DispatchQueue(label: "com.localstudio.mlxtra.runtime-validation.stderr", qos: .utility)
+
+        stdoutReader.start(on: stdoutQueue, group: group)
+        stderrReader.start(on: stderrQueue, group: group)
         process.waitUntilExit()
+        group.wait()
 
         guard process.terminationStatus == 0 else {
+            let stdoutData = stdoutReader.collectedData()
+            let stderrData = stderrReader.collectedData()
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
             let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
             let details = (stderr.isEmpty ? stdout : stderr)
@@ -578,16 +758,20 @@ class RuntimeManager: ObservableObject {
     }
 
     private func bundledPythonEnvironment() -> [String: String] {
+        Self.bundledPythonEnvironment(pythonHome: pythonHomePath())
+    }
+
+    private nonisolated static func bundledPythonEnvironment(pythonHome: URL) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         for key in ["PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"] {
             environment.removeValue(forKey: key)
         }
-        environment["PYTHONHOME"] = pythonHomePath().path
+        environment["PYTHONHOME"] = pythonHome.path
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         return environment
     }
 
-    private func validateRequiredDirectory(_ url: URL, error: RuntimeError) throws {
+    private nonisolated static func validateRequiredDirectory(_ url: URL, error: RuntimeError) throws {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
@@ -595,7 +779,7 @@ class RuntimeManager: ObservableObject {
         }
     }
 
-    private func validateRequiredFile(_ url: URL, error: RuntimeError, executable: Bool = false) throws {
+    private nonisolated static func validateRequiredFile(_ url: URL, error: RuntimeError, executable: Bool = false) throws {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
               !isDirectory.boolValue else {
@@ -694,29 +878,41 @@ class RuntimeManager: ObservableObject {
         Self.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
     }
 
-    nonisolated static func isModelDownloaded(modelId: String, checkpointsPath: URL) -> Bool {
-        modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath).isDownloaded
+    nonisolated static func isModelDownloaded(
+        modelId: String,
+        checkpointsPath: URL,
+        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
+    ) -> Bool {
+        modelStorageStatus(
+            modelId: modelId,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: huggingFaceCacheRoot
+        ).isDownloaded
     }
 
     func modelStorageStatus(modelId: String) -> ModelStorageStatus {
         Self.modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath)
     }
 
-    nonisolated static func modelStorageStatus(modelId: String, checkpointsPath: URL) -> ModelStorageStatus {
+    nonisolated static func modelStorageStatus(
+        modelId: String,
+        checkpointsPath: URL,
+        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
+    ) -> ModelStorageStatus {
         // Special handling for ACE-Step models - check component subdirectories under checkpoints/
         if modelId.hasPrefix("ACE-Step/") {
             return aceStepModelStorageStatus(checkpointsPath: checkpointsPath)
         }
 
         // For other models, check HF cache structure
-        let path = modelCachePath(modelId: modelId)
-        print("[RuntimeManager] Checking HF cache for \(modelId) at \(path.path)")
+        let path = modelCachePath(modelId: modelId, huggingFaceCacheRoot: huggingFaceCacheRoot)
+        RuntimeDiagnostics.log("[RuntimeManager] Checking HF cache for \(modelId) at \(path.path)")
 
         // Check if directory exists and has contents
         guard FileManager.default.fileExists(atPath: path.path),
               let contents = try? FileManager.default.contentsOfDirectory(atPath: path.path),
               !contents.isEmpty else {
-            print("[RuntimeManager] Model \(modelId) not in HF cache")
+            RuntimeDiagnostics.log("[RuntimeManager] Model \(modelId) not in HF cache")
             return .missing
         }
 
@@ -725,17 +921,21 @@ class RuntimeManager: ObservableObject {
         if FileManager.default.fileExists(atPath: snapshotsPath.path) {
             for snapshotPath in Self.snapshotCandidates(modelCachePath: path, snapshotsPath: snapshotsPath) {
                 if Self.snapshotContainsModelFiles(snapshotPath) {
-                    print("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
+                    RuntimeDiagnostics.log("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
                     return .downloaded
                 }
             }
         }
 
-        print("[RuntimeManager] Model \(modelId) cache is incomplete")
+        RuntimeDiagnostics.log("[RuntimeManager] Model \(modelId) cache is incomplete")
         return .incomplete("Local Hugging Face cache is incomplete. Repair will verify the snapshot and redownload missing files.")
     }
 
-    nonisolated static func modelStorageStatus(model: DownloadableModel, checkpointsPath: URL) -> ModelStorageStatus {
+    nonisolated static func modelStorageStatus(
+        model: DownloadableModel,
+        checkpointsPath: URL,
+        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
+    ) -> ModelStorageStatus {
         if model.source.usesComponentBundle {
             return componentBundleStorageStatus(
                 checkpointsPath: checkpointsPath,
@@ -745,7 +945,8 @@ class RuntimeManager: ObservableObject {
 
         return modelStorageStatus(
             modelId: model.source.downloadRepository ?? model.modelId,
-            checkpointsPath: checkpointsPath
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: huggingFaceCacheRoot
         )
     }
 
@@ -771,22 +972,22 @@ class RuntimeManager: ObservableObject {
         var foundAnyComponent = false
         var incompleteComponents: [String] = []
 
-        print("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
+        RuntimeDiagnostics.log("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
 
         for component in requiredComponents {
             let componentPath = checkpointsDir.appendingPathComponent(component)
             if !FileManager.default.fileExists(atPath: componentPath.path) {
-                print("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
+                RuntimeDiagnostics.log("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
                 incompleteComponents.append(component)
                 continue
             }
             foundAnyComponent = true
             if !Self.containsModelWeights(at: componentPath) {
-                print("[RuntimeManager] ACE-Step component missing weight files: \(componentPath.path)")
+                RuntimeDiagnostics.log("[RuntimeManager] ACE-Step component missing weight files: \(componentPath.path)")
                 incompleteComponents.append(component)
                 continue
             }
-            print("[RuntimeManager] ACE-Step component found with weights: \(componentPath.path)")
+            RuntimeDiagnostics.log("[RuntimeManager] ACE-Step component found with weights: \(componentPath.path)")
         }
 
         if !incompleteComponents.isEmpty {
@@ -794,222 +995,222 @@ class RuntimeManager: ObservableObject {
             return .incomplete("ACE-Step checkpoints are incomplete: \(incompleteComponents.joined(separator: ", ")). Repair will redownload missing components.")
         }
 
-        print("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
+        RuntimeDiagnostics.log("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
         return .downloaded
     }
 
-        private nonisolated static func snapshotCandidates(modelCachePath: URL, snapshotsPath: URL) -> [URL] {
-            var candidates: [URL] = []
-            let refsPath = modelCachePath.appendingPathComponent("refs/main")
-            if let revision = try? String(contentsOf: refsPath, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !revision.isEmpty {
-                candidates.append(snapshotsPath.appendingPathComponent(revision))
-            }
+    private nonisolated static func snapshotCandidates(modelCachePath: URL, snapshotsPath: URL) -> [URL] {
+        var candidates: [URL] = []
+        let refsPath = modelCachePath.appendingPathComponent("refs/main")
+        if let revision = try? String(contentsOf: refsPath, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !revision.isEmpty {
+            candidates.append(snapshotsPath.appendingPathComponent(revision))
+        }
 
-            guard let snapshots = try? FileManager.default.contentsOfDirectory(
-                at: snapshotsPath,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                return candidates
-            }
-
-            let sortedSnapshots = snapshots
-                .filter { url in
-                    (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-                }
-                .sorted { lhs, rhs in
-                    let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                    let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                    return lhsDate > rhsDate
-                }
-
-            for snapshot in sortedSnapshots where !candidates.contains(snapshot) {
-                candidates.append(snapshot)
-            }
+        guard let snapshots = try? FileManager.default.contentsOfDirectory(
+            at: snapshotsPath,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
             return candidates
         }
 
-		nonisolated static func containsModelWeights(at path: URL, maximumDepth: Int = 2) -> Bool {
-			var isDirectory: ObjCBool = false
-			guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
-			      isDirectory.boolValue else {
-				return false
-			}
-
-			let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
-			guard let enumerator = FileManager.default.enumerator(
-				at: path,
-				includingPropertiesForKeys: resourceKeys,
-				options: [.skipsHiddenFiles, .skipsPackageDescendants]
-			) else {
-				return false
-			}
-
-			for case let fileURL as URL in enumerator {
-                let relativeDepth = Self.relativePathDepth(fileURL, root: path)
-                if relativeDepth > maximumDepth {
-                    if (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-                        enumerator.skipDescendants()
-                    }
-                    continue
-                }
-				guard isModelWeightArtifact(fileURL),
-				      modelWeightArtifactHasContent(fileURL) else {
-					continue
-				}
-				return true
-		}
-
-		return false
-	}
-
-        private nonisolated static func weightIndexFiles(at path: URL, maximumDepth: Int = 3) -> [URL] {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue,
-                  let enumerator = FileManager.default.enumerator(
-                    at: path,
-                    includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
-                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                  ) else {
-                return []
+        let sortedSnapshots = snapshots
+            .filter { url in
+                (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            }
+            .sorted { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return lhsDate > rhsDate
             }
 
-            var indexes: [URL] = []
-            for case let fileURL as URL in enumerator {
-                let relativeDepth = Self.relativePathDepth(fileURL, root: path)
-                if relativeDepth > maximumDepth {
-                    if (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-                        enumerator.skipDescendants()
-                    }
-                    continue
-                }
-                if Self.isWeightIndexArtifact(fileURL) {
-                    indexes.append(fileURL)
-                }
-            }
-            return indexes
+        for snapshot in sortedSnapshots where !candidates.contains(snapshot) {
+            candidates.append(snapshot)
+        }
+        return candidates
+    }
+
+    nonisolated static func containsModelWeights(at path: URL, maximumDepth: Int = 2) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return false
         }
 
-        private nonisolated static func declaredWeightFilesAreComplete(indexURL: URL) -> Bool {
-            guard let data = try? Data(contentsOf: indexURL),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let weightMap = json["weight_map"] as? [String: String],
-                  !weightMap.isEmpty else {
-                return false
-            }
+        let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: path,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return false
+        }
 
-            let baseURL = indexURL.deletingLastPathComponent()
-            let declaredFiles = Set(weightMap.values)
-            guard !declaredFiles.isEmpty else { return false }
-
-            for filename in declaredFiles {
-                let weightURL = baseURL.appendingPathComponent(filename)
-                guard Self.isModelWeightArtifact(weightURL),
-                      Self.modelWeightArtifactHasContent(weightURL) else {
-                    return false
+        for case let fileURL as URL in enumerator {
+            let relativeDepth = Self.relativePathDepth(fileURL, root: path)
+            if relativeDepth > maximumDepth {
+                if (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    enumerator.skipDescendants()
                 }
+                continue
+            }
+            guard isModelWeightArtifact(fileURL),
+                  modelWeightArtifactHasContent(fileURL) else {
+                continue
             }
             return true
         }
 
-	private nonisolated static func modelWeightArtifactHasContent(_ fileURL: URL) -> Bool {
-		let resolvedURL = fileURL.resolvingSymlinksInPath()
-		let pathToCheck = resolvedURL.path == fileURL.path ? fileURL.path : resolvedURL.path
+        return false
+    }
 
-		guard FileManager.default.fileExists(atPath: pathToCheck),
-		      let attributes = try? FileManager.default.attributesOfItem(atPath: pathToCheck),
-		      let fileType = attributes[.type] as? FileAttributeType,
-		      fileType == .typeRegular,
-		      let fileSize = attributes[.size] as? NSNumber else {
-			return false
-		}
+    private nonisolated static func weightIndexFiles(at path: URL, maximumDepth: Int = 3) -> [URL] {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              let enumerator = FileManager.default.enumerator(
+                at: path,
+                includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+              ) else {
+            return []
+        }
 
-		return fileSize.int64Value > 0
-	}
-
-		nonisolated static func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
-            guard snapshotContainsModelMetadata(snapshotPath) else { return false }
-
-            let indexes = weightIndexFiles(at: snapshotPath)
-            if !indexes.isEmpty {
-                return indexes.allSatisfy { declaredWeightFilesAreComplete(indexURL: $0) }
-            }
-
-            return containsModelWeights(at: snapshotPath)
-		}
-
-        private nonisolated static func snapshotContainsModelMetadata(_ snapshotPath: URL) -> Bool {
-            let metadataFilenames = [
-                "config.json",
-                "model_index.json",
-                "tokenizer_config.json",
-                "preprocessor_config.json",
-                "processor_config.json"
-            ]
-
-            // First check the root directory (standard for LLMs/VLMs)
-            for filename in metadataFilenames {
-                if FileManager.default.fileExists(atPath: snapshotPath.appendingPathComponent(filename).path) {
-                    return true
+        var indexes: [URL] = []
+        for case let fileURL as URL in enumerator {
+            let relativeDepth = Self.relativePathDepth(fileURL, root: path)
+            if relativeDepth > maximumDepth {
+                if (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    enumerator.skipDescendants()
                 }
+                continue
             }
-
-            // Fallback: check common subdirectories (standard for multi-component models like FLUX)
-            let subdirectories = ["transformer", "vae", "unet", "text_encoder"]
-            for subdir in subdirectories {
-                let subdirPath = snapshotPath.appendingPathComponent(subdir)
-                for filename in metadataFilenames {
-                    if FileManager.default.fileExists(atPath: subdirPath.appendingPathComponent(filename).path) {
-                        return true
-                    }
-                }
+            if Self.isWeightIndexArtifact(fileURL) {
+                indexes.append(fileURL)
             }
+        }
+        return indexes
+    }
 
+    private nonisolated static func declaredWeightFilesAreComplete(indexURL: URL) -> Bool {
+        guard let data = try? Data(contentsOf: indexURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let weightMap = json["weight_map"] as? [String: String],
+              !weightMap.isEmpty else {
             return false
         }
 
-        private nonisolated static func relativePathDepth(_ fileURL: URL, root: URL) -> Int {
-            let rootPath = root.standardizedFileURL.path
-            let filePath = fileURL.standardizedFileURL.path
-            guard filePath.hasPrefix(rootPath) else { return Int.max }
+        let baseURL = indexURL.deletingLastPathComponent()
+        let declaredFiles = Set(weightMap.values)
+        guard !declaredFiles.isEmpty else { return false }
 
-            let relative = filePath.dropFirst(rootPath.count)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            guard !relative.isEmpty else { return 0 }
-            return relative.split(separator: "/").count
+        for filename in declaredFiles {
+            let weightURL = baseURL.appendingPathComponent(filename)
+            guard Self.isModelWeightArtifact(weightURL),
+                  Self.modelWeightArtifactHasContent(weightURL) else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private nonisolated static func modelWeightArtifactHasContent(_ fileURL: URL) -> Bool {
+        let resolvedURL = fileURL.resolvingSymlinksInPath()
+        let pathToCheck = resolvedURL.path == fileURL.path ? fileURL.path : resolvedURL.path
+
+        guard FileManager.default.fileExists(atPath: pathToCheck),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: pathToCheck),
+              let fileType = attributes[.type] as? FileAttributeType,
+              fileType == .typeRegular,
+              let fileSize = attributes[.size] as? NSNumber else {
+            return false
         }
 
-	private nonisolated static func isModelWeightArtifact(_ fileURL: URL) -> Bool {
-		let filename = fileURL.lastPathComponent
-		let knownWeightFilenames = Set([
-			"model.safetensors",
-			"pytorch_model.bin",
-			"model.bin",
-			"diffusion_pytorch_model.safetensors",
-			"diffusion_pytorch_model.bin"
-		])
+        return fileSize.int64Value > 0
+    }
 
-		if knownWeightFilenames.contains(filename) {
-			return true
-		}
-		if filename.hasSuffix(".safetensors") || filename.hasSuffix(".gguf") || filename.hasSuffix(".ckpt") {
-			return true
-		}
-		if filename.hasSuffix(".bin") {
-			return filename.contains("model") || filename.contains("weight") || filename.contains("diffusion")
-		}
-		return false
-	}
+    nonisolated static func snapshotContainsModelFiles(_ snapshotPath: URL) -> Bool {
+        guard snapshotContainsModelMetadata(snapshotPath) else { return false }
 
-        private nonisolated static func isWeightIndexArtifact(_ fileURL: URL) -> Bool {
-            let filename = fileURL.lastPathComponent
-            return filename.hasSuffix(".safetensors.index.json")
-                || filename.hasSuffix(".bin.index.json")
+        let indexes = weightIndexFiles(at: snapshotPath)
+        if !indexes.isEmpty {
+            return indexes.allSatisfy { declaredWeightFilesAreComplete(indexURL: $0) }
         }
-    
+
+        return containsModelWeights(at: snapshotPath)
+    }
+
+    private nonisolated static func snapshotContainsModelMetadata(_ snapshotPath: URL) -> Bool {
+        let metadataFilenames = [
+            "config.json",
+            "model_index.json",
+            "tokenizer_config.json",
+            "preprocessor_config.json",
+            "processor_config.json"
+        ]
+
+        // First check the root directory (standard for LLMs/VLMs)
+        for filename in metadataFilenames {
+            if FileManager.default.fileExists(atPath: snapshotPath.appendingPathComponent(filename).path) {
+                return true
+            }
+        }
+
+        // Fallback: check common subdirectories (standard for multi-component models like FLUX)
+        let subdirectories = ["transformer", "vae", "unet", "text_encoder"]
+        for subdir in subdirectories {
+            let subdirPath = snapshotPath.appendingPathComponent(subdir)
+            for filename in metadataFilenames {
+                if FileManager.default.fileExists(atPath: subdirPath.appendingPathComponent(filename).path) {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    private nonisolated static func relativePathDepth(_ fileURL: URL, root: URL) -> Int {
+        let rootPath = root.standardizedFileURL.path
+        let filePath = fileURL.standardizedFileURL.path
+        guard filePath.hasPrefix(rootPath) else { return Int.max }
+
+        let relative = filePath.dropFirst(rootPath.count)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !relative.isEmpty else { return 0 }
+        return relative.split(separator: "/").count
+    }
+
+    private nonisolated static func isModelWeightArtifact(_ fileURL: URL) -> Bool {
+        let filename = fileURL.lastPathComponent
+        let knownWeightFilenames = Set([
+            "model.safetensors",
+            "pytorch_model.bin",
+            "model.bin",
+            "diffusion_pytorch_model.safetensors",
+            "diffusion_pytorch_model.bin"
+        ])
+
+        if knownWeightFilenames.contains(filename) {
+            return true
+        }
+        if filename.hasSuffix(".safetensors") || filename.hasSuffix(".gguf") || filename.hasSuffix(".ckpt") {
+            return true
+        }
+        if filename.hasSuffix(".bin") {
+            return filename.contains("model") || filename.contains("weight") || filename.contains("diffusion")
+        }
+        return false
+    }
+
+    private nonisolated static func isWeightIndexArtifact(_ fileURL: URL) -> Bool {
+        let filename = fileURL.lastPathComponent
+        return filename.hasSuffix(".safetensors.index.json")
+            || filename.hasSuffix(".bin.index.json")
+    }
+
     /// Get estimated model size
     func estimatedModelSize(modelId: String) -> Double {
         // These are rough estimates in GB

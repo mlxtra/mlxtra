@@ -20,6 +20,18 @@ private enum VLMStreamDiagnostics {
 }
 #endif
 
+private enum VLMBridgeDiagnostics {
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["MLXTRA_BRIDGE_DEBUG"] == "1"
+            || UserDefaults.standard.bool(forKey: "MLXtra.bridgeDebug")
+    }
+
+    static func log(_ message: @autoclosure () -> String) {
+        guard isEnabled else { return }
+        print(message())
+    }
+}
+
 /// Executor for Vision Language Models using mlx-vlm via Python bridge
 @MainActor
 class VLMExecutor: NSObject, ModelExecutor {
@@ -198,6 +210,11 @@ class VLMExecutor: NSObject, ModelExecutor {
         // Set critical env vars for the bundled Python
         cleanEnv["PYTHONDONTWRITEBYTECODE"] = "1"
         cleanEnv["PYTHONUNBUFFERED"] = "1"
+        if VLMBridgeDiagnostics.isEnabled {
+            cleanEnv["MLXTRA_BRIDGE_DEBUG"] = "1"
+        } else {
+            cleanEnv.removeValue(forKey: "MLXTRA_BRIDGE_DEBUG")
+        }
         cleanEnv["HF_HOME"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path
         cleanEnv["HF_HUB_CACHE"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path
         cleanEnv["ACESTEP_CHECKPOINTS_DIR"] = runtimeManager.checkpointsPath.path
@@ -209,8 +226,8 @@ class VLMExecutor: NSObject, ModelExecutor {
 
         process?.environment = cleanEnv
 
-        print("[VLMExecutor] Starting Python bridge at \(pythonPath.path)")
-        print("[VLMExecutor] Bridge script at \(bridgePath.path)")
+        VLMBridgeDiagnostics.log("[VLMExecutor] Starting Python bridge at \(pythonPath.path)")
+        VLMBridgeDiagnostics.log("[VLMExecutor] Bridge script at \(bridgePath.path)")
 
         // Setup pipes
         stdinPipe = Pipe()
@@ -264,11 +281,11 @@ class VLMExecutor: NSObject, ModelExecutor {
             handler: { [weak readyState] json in
                 guard let type = json["type"] as? String else { return }
                 if type == "system.ready" {
-                    print("[VLMExecutor] Bridge is ready")
+                    VLMBridgeDiagnostics.log("[VLMExecutor] Bridge is ready")
                     Task { await readyState?.setReady() }
                 } else if type == "error" {
                     let message = json["message"] as? String ?? "Unknown error"
-                    print("[VLMExecutor] Bridge initialization error: \(message)")
+                    VLMBridgeDiagnostics.log("[VLMExecutor] Bridge initialization error: \(message)")
                 }
             }
         )
@@ -285,7 +302,7 @@ class VLMExecutor: NSObject, ModelExecutor {
                 throw ExecutionError.processNotRunning
             }
             if Date().timeIntervalSince(startTime) > timeout {
-                print("[VLMExecutor] Timeout waiting for bridge ready signal")
+                VLMBridgeDiagnostics.log("[VLMExecutor] Timeout waiting for bridge ready signal")
                 throw ExecutionError.timeout
             }
             try await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -383,7 +400,7 @@ private final class StreamFinishState: @unchecked Sendable {
         let messages = request.messages.map { $0.toDictionary() }
         var payload: [String: Any] = [
             "request_id": request.requestID,
-            "type": messageType(for: request.backend),
+            "type": Self.messageType(for: request.backend),
             "model": request.modelId,
             "messages": messages,
             "max_tokens": request.maxTokens,
@@ -483,7 +500,7 @@ private final class StreamFinishState: @unchecked Sendable {
                 guard let type = json["type"] as? String else { return }
                 switch type {
                 case "model.loaded", "model.initialized":
-                    print("[VLMExecutor] Model load handler: setting loaded (type=\(type))")
+                    VLMBridgeDiagnostics.log("[VLMExecutor] Model load handler: setting loaded (type=\(type))")
                     loadedState?.setLoaded()
                 case "model.loading":
                     let progress = ModelLoadProgress.bridgeEvent(
@@ -495,11 +512,11 @@ private final class StreamFinishState: @unchecked Sendable {
                         self?.delegate?.modelLoadingProgress(progress)
                     }
                     if let status = json["status"] as? String {
-                        print("[VLMExecutor] Model loading status: \(status)")
+                        VLMBridgeDiagnostics.log("[VLMExecutor] Model loading status: \(status)")
                     }
                 case "error":
                     let message = json["message"] as? String ?? "Unknown error"
-                    print("[VLMExecutor] Model loading error: \(message)")
+                    VLMBridgeDiagnostics.log("[VLMExecutor] Model loading error: \(message)")
                     loadedState?.setError(message)
                 default:
                     break
@@ -507,7 +524,7 @@ private final class StreamFinishState: @unchecked Sendable {
             }
         )
 
-        print("[VLMExecutor] waitForModelLoaded: handler installed for request \(requestID)")
+        VLMBridgeDiagnostics.log("[VLMExecutor] waitForModelLoaded: handler installed for request \(requestID)")
         return ModelLoadWaiter(state: loadedState, handlerID: handlerID)
     }
 
@@ -519,7 +536,7 @@ private final class StreamFinishState: @unchecked Sendable {
 
         while !waiter.state.isLoaded {
             if Task.isCancelled {
-                print("[VLMExecutor] waitForModelLoaded detected Task.isCancelled")
+                VLMBridgeDiagnostics.log("[VLMExecutor] waitForModelLoaded detected Task.isCancelled")
                 throw CancellationError()
             }
             if let error = waiter.state.errorMessage {
@@ -529,12 +546,12 @@ private final class StreamFinishState: @unchecked Sendable {
                 throw ExecutionError.processNotRunning
             }
             if Date().timeIntervalSince(startTime) > timeout {
-                print("[VLMExecutor] Timeout waiting for model loaded signal")
+                VLMBridgeDiagnostics.log("[VLMExecutor] Timeout waiting for model loaded signal")
                 throw ExecutionError.timeout
             }
             try await Task.sleep(nanoseconds: 100_000_000) // 100ms
         }
-        print("[VLMExecutor] Model load complete, isModelLoaded will be set to true")
+        VLMBridgeDiagnostics.log("[VLMExecutor] Model load complete, isModelLoaded will be set to true")
     }
 
     private func sendRequest(_ payload: [String: Any]) async throws {
@@ -689,11 +706,11 @@ private final class StreamFinishState: @unchecked Sendable {
                         continuation.yield(.modelLoadProgress(progress))
 
                     case "model.loaded":
-                        print("[VLMExecutor] Model load confirmed: \(json["model"] ?? "unknown")")
+                        VLMBridgeDiagnostics.log("[VLMExecutor] Model load confirmed: \(json["model"] ?? "unknown")")
 
                     case "error":
                         let errorMessage = json["message"] as? String ?? "Unknown Python error"
-                        print("[Python Error] \(errorMessage)")
+                        VLMBridgeDiagnostics.log("[Python Error] \(errorMessage)")
                         continuation.yield(.error(ExecutionError.pythonError(errorMessage)))
                         if finishState.finish() {
                             continuation.finish()
@@ -730,19 +747,19 @@ private final class StreamFinishState: @unchecked Sendable {
             for line in lineBuffer.append(output) {
 #if DEBUG
                 if VLMStreamDiagnostics.isEnabled {
-                    print("[VLMExecutor] Received: \(line.prefix(200))...")
+                    VLMBridgeDiagnostics.log("[VLMExecutor] Received: \(line.prefix(200))...")
                 }
 #endif
 
                 do {
                     guard let lineData = line.data(using: .utf8),
                           let json = try JSONSerialization.jsonObject(with: lineData) as? BridgeJSONMessage else {
-                        print("[VLMExecutor] Could not parse JSON or missing type field")
+                        VLMBridgeDiagnostics.log("[VLMExecutor] Could not parse JSON or missing type field")
                         continue
                     }
                     dispatcher.dispatch(json)
                 } catch {
-                    print("[VLMExecutor] Parse error: \(error)")
+                    VLMBridgeDiagnostics.log("[VLMExecutor] Parse error: \(error)")
                 }
             }
         }
@@ -760,7 +777,7 @@ private final class StreamFinishState: @unchecked Sendable {
             // Log each line separately for clarity
             let lines = output.components(separatedBy: .newlines)
             for line in lines where !line.isEmpty {
-                print("[Python STDERR] \(line)")
+                VLMBridgeDiagnostics.log("[Python STDERR] \(line)")
             }
         }
     }
@@ -773,7 +790,7 @@ private final class StreamFinishState: @unchecked Sendable {
         return !process.isRunning
     }
 
-    private func messageType(for backend: RuntimeBackend) -> String {
+    nonisolated static func messageType(for backend: RuntimeBackend) -> String {
         switch backend {
         case .image:
             return "image.generate"
@@ -787,6 +804,10 @@ private final class StreamFinishState: @unchecked Sendable {
     }
 
     private func shouldRetry(error: Error, retryCount: Int) -> Bool {
+        Self.shouldRetry(error: error, retryCount: retryCount, maxRetries: maxRetries)
+    }
+
+    nonisolated static func shouldRetry(error: Error, retryCount: Int, maxRetries: Int) -> Bool {
         guard retryCount < maxRetries else { return false }
 
         // Retry on process crashes or timeouts
@@ -893,7 +914,7 @@ final class BridgeOutputDispatcher: @unchecked Sendable {
 }
 
 // MARK: - Bridge Line Buffer
-private final class BridgeLineBuffer: @unchecked Sendable {
+final class BridgeLineBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var pending = ""
 
@@ -919,7 +940,7 @@ private final class BridgeLineBuffer: @unchecked Sendable {
 }
 
 // MARK: - Response Builder
-private final class ResponseBuilder: @unchecked Sendable {
+final class ResponseBuilder: @unchecked Sendable {
     private var parts: [String] = []
     private let lock = NSLock()
 

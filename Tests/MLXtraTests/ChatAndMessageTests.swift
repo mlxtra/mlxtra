@@ -187,6 +187,26 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertEqual(decodedMessage.performanceMetrics?.tokensPerSecond, 42)
     }
 
+    func testMessageDecodingDefaultsMissingLegacyStreamingFlag() throws {
+        let jsonString = """
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "content": "Legacy message",
+            "isUser": false,
+            "timestamp": "2024-01-01T00:00:00Z",
+            "imageURLs": [],
+            "audioURLs": []
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decodedMessage = try decoder.decode(Message.self, from: Data(jsonString.utf8))
+
+        XCTAssertFalse(decodedMessage.isStreaming)
+        XCTAssertTrue(decodedMessage.toolCalls.isEmpty)
+    }
+
     func testGenerationPerformanceMetricsPrefersBridgeTokensPerSecond() {
         let startedAt = Date(timeIntervalSince1970: 100)
         let firstOutputAt = Date(timeIntervalSince1970: 101)

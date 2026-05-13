@@ -1,0 +1,211 @@
+import Foundation
+
+private final class DownloadLineBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = ""
+
+    func append(_ text: String) -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        buffer += text
+        let lines = buffer.components(separatedBy: .newlines)
+        buffer = lines.last ?? ""
+        return Array(lines.dropLast())
+    }
+
+    func flush() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let remaining = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        buffer = ""
+        return remaining.isEmpty ? nil : remaining
+    }
+}
+
+private final class DownloadOutputLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+    private let maxCharacters: Int
+
+    init(maxCharacters: Int = 40_000) {
+        self.maxCharacters = maxCharacters
+    }
+
+    func append(_ newText: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        text += newText
+        if text.count > maxCharacters {
+            text = String(text.suffix(maxCharacters))
+        }
+    }
+
+    func value() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return text
+    }
+}
+
+private final class DownloadProcessBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+
+    func set(_ process: Process) {
+        lock.lock()
+        self.process = process
+        lock.unlock()
+    }
+
+    func clear() {
+        lock.lock()
+        process = nil
+        lock.unlock()
+    }
+
+    func terminate() {
+        lock.lock()
+        let process = self.process
+        lock.unlock()
+        if process?.isRunning == true {
+            process?.terminate()
+        }
+    }
+}
+
+private final class DownloadContinuationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+    private let continuation: CheckedContinuation<DownloadHelperProcessResult, Error>
+
+    init(_ continuation: CheckedContinuation<DownloadHelperProcessResult, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning result: DownloadHelperProcessResult) {
+        guard markResumed() else { return }
+        continuation.resume(returning: result)
+    }
+
+    func resume(throwing error: Error) {
+        guard markResumed() else { return }
+        continuation.resume(throwing: error)
+    }
+
+    private func markResumed() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didResume else { return false }
+        didResume = true
+        return true
+    }
+}
+
+struct DownloadHelperProcessResult {
+    let output: String
+    let errorOutput: String
+    let terminationStatus: Int32
+}
+
+enum DownloadHelperProcessRunner {
+    @MainActor
+    static func run(
+        executableURL: URL,
+        arguments: [String],
+        environment: [String: String],
+        onProcessStarted: @escaping @MainActor (Process) -> Void,
+        onOutputLine: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws -> DownloadHelperProcessResult {
+        let processBox = DownloadProcessBox()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<DownloadHelperProcessResult, Error>) in
+                let completion = DownloadContinuationBox(continuation)
+                let process = Process()
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                let lineBuffer = DownloadLineBuffer()
+                let outputLog = DownloadOutputLog()
+                let errorLog = DownloadOutputLog()
+
+                process.executableURL = executableURL
+                process.arguments = arguments
+                process.environment = environment
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+                processBox.set(process)
+
+                outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+
+                    outputLog.append(output)
+                    for line in lineBuffer.append(output) {
+                        Task { @MainActor in
+                            onOutputLine(line)
+                        }
+                    }
+                }
+
+                errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+
+                    errorLog.append(output)
+                }
+
+                process.terminationHandler = { process in
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    processBox.clear()
+
+                    let trailingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    if !trailingData.isEmpty, let trailingOutput = String(data: trailingData, encoding: .utf8) {
+                        outputLog.append(trailingOutput)
+                        for line in lineBuffer.append(trailingOutput) {
+                            Task { @MainActor in
+                                onOutputLine(line)
+                            }
+                        }
+                    }
+
+                    if let remainingLine = lineBuffer.flush() {
+                        Task { @MainActor in
+                            onOutputLine(remainingLine)
+                        }
+                    }
+
+                    let errorTrailingData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    if !errorTrailingData.isEmpty, let trailingErrorOutput = String(data: errorTrailingData, encoding: .utf8) {
+                        errorLog.append(trailingErrorOutput)
+                    }
+
+                    completion.resume(
+                        returning: DownloadHelperProcessResult(
+                            output: outputLog.value(),
+                            errorOutput: errorLog.value(),
+                            terminationStatus: process.terminationStatus
+                        )
+                    )
+                }
+
+                do {
+                    try process.run()
+                    if Task.isCancelled {
+                        process.terminate()
+                    }
+                    onProcessStarted(process)
+                } catch {
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    process.terminationHandler = nil
+                    processBox.clear()
+                    completion.resume(throwing: error)
+                }
+            }
+        } onCancel: {
+            processBox.terminate()
+        }
+    }
+}

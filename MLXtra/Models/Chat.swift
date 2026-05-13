@@ -109,7 +109,7 @@ struct Message: Identifiable, Codable {
         content = try container.decode(String.self, forKey: .content)
         isUser = try container.decode(Bool.self, forKey: .isUser)
         timestamp = try container.decode(Date.self, forKey: .timestamp)
-        isStreaming = try container.decode(Bool.self, forKey: .isStreaming)
+        isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
         imageURLs = try container.decodeIfPresent([URL].self, forKey: .imageURLs) ?? []
         audioURLs = try container.decodeIfPresent([URL].self, forKey: .audioURLs) ?? []
         performanceMetrics = try container.decodeIfPresent(GenerationPerformanceMetrics.self, forKey: .performanceMetrics)

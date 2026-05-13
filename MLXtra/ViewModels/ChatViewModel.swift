@@ -2,7 +2,7 @@ import SwiftUI
 import Combine
 
 #if DEBUG
-private enum ChatStreamDiagnostics {
+enum ChatStreamDiagnostics {
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["MLXTRA_STREAM_DIAGNOSTICS"] == "1"
             || UserDefaults.standard.bool(forKey: "MLXtra.streamDiagnostics")
@@ -18,146 +18,6 @@ private enum ChatStreamDiagnostics {
     }
 }
 #endif
-
-@MainActor
-final class StreamingMessageContent: ObservableObject, Identifiable {
-    let id: UUID
-    @Published private(set) var revision = 0
-    private(set) var text: String
-    private(set) var latestMutation: StreamingMessageContentMutation
-    private(set) var containsReasoningMarkup: Bool
-
-    init(id: UUID, text: String = "") {
-        self.id = id
-        self.text = text
-        self.latestMutation = .replace(text)
-        self.containsReasoningMarkup = Self.hasReasoningMarkup(text)
-    }
-
-    func update(_ text: String) {
-        guard self.text != text else { return }
-        self.text = text
-        latestMutation = .replace(text)
-        containsReasoningMarkup = Self.hasReasoningMarkup(text)
-        revision &+= 1
-    }
-
-    func append(_ text: String) {
-        guard !text.isEmpty else { return }
-        let detectionWindow = String(self.text.suffix(32)) + text
-        self.text += text
-        latestMutation = .append(text)
-        containsReasoningMarkup = containsReasoningMarkup || Self.hasReasoningMarkup(detectionWindow)
-        revision &+= 1
-    }
-
-    func clear() {
-        update("")
-    }
-
-    private static func hasReasoningMarkup(_ text: String) -> Bool {
-        text.contains("<think")
-            || text.contains("</think")
-            || text.contains("<thinking")
-            || text.contains("</thinking")
-    }
-}
-
-enum StreamingMessageContentMutation {
-    case append(String)
-    case replace(String)
-}
-
-@MainActor
-final class StreamingMessageContentStore {
-    private var entries: [UUID: StreamingMessageContent] = [:]
-
-    func begin(messageId: UUID, initialText: String = "") -> StreamingMessageContent {
-        if let existing = entries[messageId] {
-            existing.update(initialText)
-            return existing
-        }
-
-        let content = StreamingMessageContent(id: messageId, text: initialText)
-        entries[messageId] = content
-        return content
-    }
-
-    func content(for messageId: UUID) -> StreamingMessageContent? {
-        entries[messageId]
-    }
-
-    func update(messageId: UUID, text: String) {
-        if let existing = entries[messageId] {
-            existing.update(text)
-        } else {
-            _ = begin(messageId: messageId, initialText: text)
-        }
-    }
-
-    func append(messageId: UUID, text: String) {
-        if let existing = entries[messageId] {
-            existing.append(text)
-        } else {
-            _ = begin(messageId: messageId, initialText: text)
-        }
-    }
-
-    func clear(messageId: UUID) {
-        content(for: messageId)?.clear()
-    }
-
-    func end(messageId: UUID) {
-        entries.removeValue(forKey: messageId)
-    }
-}
-
-struct ChatSidebarMetadata {
-    let icon: String
-    let preview: String
-}
-
-struct ChatGenerationRequest {
-    let chatId: UUID
-    let prompt: String
-    let images: [URL]
-    let tool: Tool
-    let selectedModel: AIModel
-    let profilesByModality: [ModelModality: ModelCapabilityProfile]
-    let parametersByModelId: [String: [String: Any]]
-    let selectionDownloadRequirement: DownloadableModel?
-    let selectionOperationName: String
-
-    var isImageGeneration: Bool { tool == .image }
-    var isSpeechGeneration: Bool { tool == .tts }
-    var isMusicGeneration: Bool { tool == .music }
-    var isDeepResearch: Bool { tool == .research }
-
-    func profile(for tool: Tool) -> ModelCapabilityProfile {
-        let modality = Self.modelModality(for: tool)
-        guard let profile = profilesByModality[modality] else {
-            preconditionFailure("Missing generation profile for \(modality.rawValue)")
-        }
-        return profile
-    }
-
-    func executionParameters(for profile: ModelCapabilityProfile) -> [String: Any] {
-        parametersByModelId[profile.modelId] ?? [:]
-    }
-
-    static func modelModality(for tool: Tool) -> ModelModality {
-        switch tool {
-        case .auto, .chat, .research:
-            return .vision
-        case .image:
-            return .image
-        case .tts:
-            return .audio
-        case .music:
-            return .music
-        }
-    }
-}
 
 @MainActor
 class ChatViewModel: ObservableObject {
@@ -308,7 +168,7 @@ class ChatViewModel: ObservableObject {
     }
 
     var isInputDisabled: Bool {
-        isPythonLoading || isModelLoading || isGenerating || isDraftingMusicLyrics
+        isPythonLoading || isModelLoading || isGenerating || isDraftingMusicLyrics || generationTask != nil
     }
 
     private var generatedImagesDirectory: URL {
@@ -556,8 +416,10 @@ class ChatViewModel: ObservableObject {
     }
 
     private func startGeneration(_ request: ChatGenerationRequest) {
-        // Start generation
-        print("[ChatVM] Starting generation task for: \(request.prompt.prefix(50))...")
+        guard generationTask == nil else { return }
+#if DEBUG
+        ChatStreamDiagnostics.log("generation.start promptChars=\(request.prompt.count)")
+#endif
         generationTask = Task {
             if request.isMusicGeneration {
                 await generateMusicDirectly(for: request)
@@ -568,7 +430,9 @@ class ChatViewModel: ObservableObject {
     }
 
     func cancelGeneration() {
-        print("[ChatVM] cancelGeneration called")
+#if DEBUG
+        ChatStreamDiagnostics.log("generation.cancel")
+#endif
         generationTask?.cancel()
         generationTask = nil
         cancelMusicLyricsDraft()
@@ -583,7 +447,7 @@ class ChatViewModel: ObservableObject {
         isModelLoading = false
         loadingMessage = ""
 
-        generationTask = Task {
+        Task {
             await vlmExecutor.terminate()
         }
 
@@ -594,7 +458,10 @@ class ChatViewModel: ObservableObject {
 
     private func generateMusicDirectly(for request: ChatGenerationRequest) async {
         let trimmedPrompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPrompt.isEmpty else { return }
+        guard !trimmedPrompt.isEmpty else {
+            finishActiveGeneration(isMusicGeneration: true)
+            return
+        }
 
         do {
             let musicProfile = request.profile(for: .music)
@@ -602,7 +469,7 @@ class ChatViewModel: ObservableObject {
             setActiveEngineModel(name: musicProfile.name, role: .music)
 
             guard await requireDownloadedModel(model: model, operation: "Music generation") else {
-                activeMusicGenerationDraft = nil
+                finishActiveGeneration(isMusicGeneration: true)
                 return
             }
 
@@ -643,23 +510,11 @@ class ChatViewModel: ObservableObject {
 
             await executeMusicGenerationToolCall(toolCall, messages: &toolMessages, prompt: trimmedPrompt, generation: request)
 
-            if let toolContent = toolMessages.last(where: { $0.role == .tool })?.content,
-               isModelDownloadRequiredMessage(toolContent) {
-                removeAssistantMessage(aiMessage.id)
-            } else {
-                if let toolContent = toolMessages.last(where: { $0.role == .tool })?.content,
-                   !toolContent.contains("already displayed") {
-                    updateStreamingMessage(aiMessage.id, content: toolContent)
-                }
-                markMessageStopped(aiMessage.id)
-            }
-
-            activeMusicGenerationDraft = nil
-            isGenerating = false
-            isModelLoading = false
-            streamingMessageId = nil
-            generationTask = nil
-            loadingMessage = ""
+            finishTerminalMediaToolResult(
+                messages: toolMessages,
+                messageId: aiMessage.id,
+                isMusicGeneration: true
+            )
         } catch {
             activeMusicGenerationDraft = nil
             isPythonLoading = false
@@ -668,10 +523,7 @@ class ChatViewModel: ObservableObject {
             generationTask = nil
             loadingMessage = ""
             if Task.isCancelled {
-                if let streamingMessageId {
-                    markMessageStopped(streamingMessageId)
-                }
-                streamingMessageId = nil
+                finishCancelledGeneration(isMusicGeneration: true)
                 return
             }
             if let streamingMessageId {
@@ -682,7 +534,8 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func generateResponse(for request: ChatGenerationRequest, toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
+    func generateResponse(for request: ChatGenerationRequest, toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
+        let cancellationIsMusicGeneration = request.isMusicGeneration
         do {
             let prompt = request.prompt
             let images = request.images
@@ -711,11 +564,13 @@ class ChatViewModel: ObservableObject {
                     model: selectionRequirement,
                     operation: request.selectionOperationName
                 ) else {
+                    finishActiveGeneration(isMusicGeneration: isMusicGeneration)
                     return
                 }
             }
 
                 guard await requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
+                finishActiveGeneration(isMusicGeneration: isMusicGeneration)
                 return
             }
 
@@ -767,7 +622,7 @@ class ChatViewModel: ObservableObject {
                 guard let existingId = streamingMessageId,
                       let chatIndex = chats.firstIndex(where: { $0.id == request.chatId }),
                       let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == existingId }) else {
-                    isGenerating = false
+                    finishActiveGeneration(isMusicGeneration: isMusicGeneration)
                     return
                 }
                 _ = streamingContentStore.begin(messageId: existingId, initialText: chats[chatIndex].messages[messageIndex].content)
@@ -885,6 +740,7 @@ class ChatViewModel: ObservableObject {
 
         } catch {
             if Task.isCancelled {
+                finishCancelledGeneration(isMusicGeneration: cancellationIsMusicGeneration)
                 return
             }
             if let streamingMessageId {
@@ -895,7 +751,7 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    private func executeToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String, generation: ChatGenerationRequest) async {
+    func executeToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String, generation: ChatGenerationRequest) async {
         switch canonicalToolName(toolCall.function.name) {
         case "web_search":
             await executeWebSearchToolCall(toolCall, messages: &messages, prompt: prompt)
@@ -1088,341 +944,6 @@ class ChatViewModel: ObservableObject {
                 attachmentKind: .audio
             )
         )
-    }
-
-    private func loadModel(_ modelId: String) async throws {
-        // The executor handles lazy loading, we just need to trigger it
-        // by sending a request
-    }
-
-    private func processStream(
-        _ stream: AsyncStream<ExecutionEvent>,
-        forMessage messageId: UUID,
-        messages: [ExecutionMessage]? = nil,
-        request: ChatGenerationRequest,
-        toolDepth: Int = 0,
-        hasTools: Bool = false,
-        allowedToolNames: Set<String> = [],
-        isImageGeneration: Bool = false,
-        isSpeechGeneration: Bool = false,
-        isMusicGeneration: Bool = false
-    ) async {
-        var fullResponse = ""
-        var renderedResponse = ""
-        var pendingRenderDelta = ""
-        var lastRenderTime = Date.distantPast
-        let minimumRenderInterval: TimeInterval = 1.0 / 60.0
-        let generationStartedAt = Date()
-        var firstOutputAt: Date?
-        var observedTokenEvents = 0
-        var toolBufferTokenCount = 0
-        let overallTimeout = Self.generationTimeout
-        var timeoutTask: Task<Void, Never>?
-#if DEBUG
-        var tokenIndex = 0
-#endif
-
-        func currentPerformanceMetrics(usage: TokenUsage) -> GenerationPerformanceMetrics {
-            let outputTokenCount = usage.completionTokens > 0 ? usage.completionTokens : observedTokenEvents
-            let appMeasuredMetrics = GenerationPerformanceMetrics.measured(
-                startedAt: generationStartedAt,
-                firstOutputAt: firstOutputAt,
-                outputTokenCount: outputTokenCount
-            )
-            let metrics = GenerationPerformanceMetrics.measured(
-                startedAt: generationStartedAt,
-                firstOutputAt: firstOutputAt,
-                outputTokenCount: outputTokenCount,
-                backendTokensPerSecond: usage.tokensPerSecond
-            )
-#if DEBUG
-            if let bridgeTokensPerSecond = usage.tokensPerSecond,
-               let appTokensPerSecond = appMeasuredMetrics.tokensPerSecond {
-                ChatStreamDiagnostics.log("performance.compare bridgeTokS=\(String(format: "%.2f", bridgeTokensPerSecond)) appTokS=\(String(format: "%.2f", appTokensPerSecond)) outputTokens=\(outputTokenCount)")
-            }
-#endif
-            return metrics
-        }
-
-        func renderStreamingResponse(force: Bool = false, tokenIndex: Int? = nil, tokenReceivedAt: TimeInterval? = nil) {
-            guard !pendingRenderDelta.isEmpty else { return }
-
-            let now = Date()
-            guard force || renderedResponse.isEmpty || now.timeIntervalSince(lastRenderTime) >= minimumRenderInterval else {
-                return
-            }
-
-            appendStreamingMessage(messageId, content: pendingRenderDelta)
-            renderedResponse += pendingRenderDelta
-            pendingRenderDelta = ""
-            lastRenderTime = now
-
-#if DEBUG
-            if let tokenIndex, let tokenReceivedAt {
-                let updateFinishedAt = ChatStreamDiagnostics.now()
-                ChatStreamDiagnostics.log("message.rendered index=\(tokenIndex) responseChars=\(fullResponse.count) elapsedMs=\(String(format: "%.2f", (updateFinishedAt - tokenReceivedAt) * 1000))")
-            }
-#endif
-        }
-        
-        // Set up a timeout to terminate the executor if generation takes too long
-        timeoutTask = Task { [weak vlmExecutor] in
-            try? await Task.sleep(nanoseconds: UInt64(overallTimeout * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            print("[ChatVM] Generation timed out after \(overallTimeout)s")
-            await vlmExecutor?.terminate()
-        }
-        defer {
-            timeoutTask?.cancel()
-            timeoutTask = nil
-        }
-
-        for await event in stream {
-            if Task.isCancelled {
-                markMessageStopped(messageId)
-                break
-            }
-            
-            switch event {
-            case .started:
-                break
-                
-            case .token(let token):
-#if DEBUG
-                tokenIndex += 1
-                let tokenReceivedAt = ChatStreamDiagnostics.now()
-                ChatStreamDiagnostics.log("token.received index=\(tokenIndex) tokenChars=\(token.count) responseCharsBefore=\(fullResponse.count)")
-#endif
-                guard !token.isEmpty else {
-#if DEBUG
-                    ChatStreamDiagnostics.log("token.emptySkipped index=\(tokenIndex) responseChars=\(fullResponse.count)")
-#endif
-                    continue
-                }
-
-                firstOutputAt = firstOutputAt ?? Date()
-                observedTokenEvents += 1
-                fullResponse += token
-                if hasTools && shouldBufferToolEnabledOutput(fullResponse) {
-                    toolBufferTokenCount += 1
-                    // Once we detect a tool call, keep buffering — never flash raw tool call
-                    // JSON on screen. The tool call will be parsed at .complete time.
-                    loadingMessage = "Preparing tool..."
-#if DEBUG
-                    ChatStreamDiagnostics.log("token.buffered index=\(tokenIndex) responseChars=\(fullResponse.count)")
-#endif
-                } else {
-                    if renderedResponse.isEmpty, pendingRenderDelta.isEmpty, fullResponse != token {
-                        pendingRenderDelta = fullResponse
-                    } else {
-                        pendingRenderDelta += token
-                    }
-#if DEBUG
-                    renderStreamingResponse(force: renderedResponse.isEmpty, tokenIndex: tokenIndex, tokenReceivedAt: tokenReceivedAt)
-#else
-                    renderStreamingResponse(force: renderedResponse.isEmpty)
-#endif
-                }
-                if observedTokenEvents % 3 == 0 {
-                    await Task.yield()
-                }
-
-            case .image(let imageURL):
-                firstOutputAt = firstOutputAt ?? Date()
-                appendGeneratedImage(imageURL, toMessage: messageId)
-
-            case .audio(let audioURL):
-                firstOutputAt = firstOutputAt ?? Date()
-                appendGeneratedAudio(audioURL, toMessage: messageId)
-                
-            case .complete(let response, let usage):
-#if DEBUG
-                ChatStreamDiagnostics.log("stream.complete responseChars=\(response.count)")
-#endif
-                fullResponse = response
-                let performanceMetrics = currentPerformanceMetrics(usage: usage)
-                if hasTools,
-                   let plainTextToolCall = plainTextToolCall(from: response, prompt: request.prompt),
-                   var currentMessages = messages {
-                    guard isToolAllowed(plainTextToolCall.function.name, allowedToolNames: allowedToolNames) else {
-                        finalizeMessage(
-                            messageId,
-                            content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
-                            usage: usage,
-                            clearToolCall: false,
-                            performanceMetrics: performanceMetrics
-                        )
-                        isGenerating = false
-                        isModelLoading = false
-                        streamingMessageId = nil
-                        generationTask = nil
-                        loadingMessage = ""
-                        modelLoadProgress = nil
-                        return
-                    }
-                    guard isTerminalMediaTool(plainTextToolCall.function.name) || toolDepth < maxAutoToolDepth else {
-                        finalizeMessage(
-                            messageId,
-                            content: "Maximum tool call depth reached. Cannot execute more tool calls.",
-                            usage: usage,
-                            clearToolCall: false,
-                            performanceMetrics: performanceMetrics
-                        )
-                        isGenerating = false
-                        isModelLoading = false
-                        streamingMessageId = nil
-                        generationTask = nil
-                        loadingMessage = ""
-                        modelLoadProgress = nil
-                        return
-                    }
-
-                    updateStreamingMessage(messageId, content: "")
-                    currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [plainTextToolCall]))
-                    await executeToolCall(plainTextToolCall, messages: &currentMessages, images: request.images, prompt: request.prompt, generation: request)
-
-                    if isTerminalMediaTool(plainTextToolCall.function.name) {
-                        if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
-                           !isModelDownloadRequiredMessage(toolContent),
-                           !toolContent.contains("already displayed") {
-                            updateStreamingMessage(messageId, content: toolContent)
-                        }
-                        if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
-                           isModelDownloadRequiredMessage(toolContent) {
-                            removeAssistantMessage(messageId)
-                        } else {
-                            markMessageStopped(messageId)
-                        }
-                        isGenerating = false
-                        isModelLoading = false
-                        if isMusicGeneration {
-                            activeMusicGenerationDraft = nil
-                        }
-                        streamingMessageId = nil
-                        generationTask = nil
-                        loadingMessage = ""
-                        modelLoadProgress = nil
-                        return
-                    }
-
-                    await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
-                    return
-                }
-
-                finalizeMessage(
-                    messageId,
-                    content: (isImageGeneration || isSpeechGeneration) ? "" : fullResponse,
-                    usage: usage,
-                    clearToolCall: isImageGeneration || isSpeechGeneration,
-                    performanceMetrics: performanceMetrics
-                )
-                if isMusicGeneration {
-                    activeMusicGenerationDraft = nil
-                }
-                isGenerating = false
-                isModelLoading = false
-                streamingMessageId = nil
-                generationTask = nil
-                loadingMessage = ""
-                modelLoadProgress = nil
-
-            case .toolCalls(let toolCalls):
-                guard var currentMessages = messages else { break }
-                let executableToolCalls = toolCalls
-                    .filter { isToolAllowed($0.function.name, allowedToolNames: allowedToolNames) }
-                    .map(canonicalToolCall)
-                guard !executableToolCalls.isEmpty else {
-                    finalizeMessage(
-                        messageId,
-                        content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
-                        usage: TokenUsage(promptTokens: 0, completionTokens: 0),
-                        clearToolCall: false,
-                        performanceMetrics: currentPerformanceMetrics(usage: TokenUsage(promptTokens: 0, completionTokens: 0))
-                    )
-                    isGenerating = false
-                    isModelLoading = false
-                    streamingMessageId = nil
-                    generationTask = nil
-                    loadingMessage = ""
-                    modelLoadProgress = nil
-                    return
-                }
-                guard toolDepth < maxAutoToolDepth else {
-                    finalizeMessage(
-                        messageId,
-                        content: "Maximum tool call depth reached. Cannot execute more tool calls.",
-                        usage: TokenUsage(promptTokens: 0, completionTokens: 0),
-                        clearToolCall: false,
-                        performanceMetrics: currentPerformanceMetrics(usage: TokenUsage(promptTokens: 0, completionTokens: 0))
-                    )
-                    isGenerating = false
-                    isModelLoading = false
-                    streamingMessageId = nil
-                    generationTask = nil
-                    loadingMessage = ""
-                    modelLoadProgress = nil
-                    return
-                }
-                let hasTerminalMediaTool = executableToolCalls.contains { isTerminalMediaTool($0.function.name) }
-                for toolCall in executableToolCalls {
-                    currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
-                    await executeToolCall(toolCall, messages: &currentMessages, images: request.images, prompt: request.prompt, generation: request)
-                }
-                if hasTerminalMediaTool {
-                    if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
-                       !isModelDownloadRequiredMessage(toolContent),
-                       !toolContent.contains("already displayed") {
-                        updateStreamingMessage(messageId, content: toolContent)
-                    }
-                    if let toolContent = currentMessages.last(where: { $0.role == .tool })?.content,
-                       isModelDownloadRequiredMessage(toolContent) {
-                        removeAssistantMessage(messageId)
-                    } else {
-                        markMessageStopped(messageId)
-                    }
-                    isGenerating = false
-                    isModelLoading = false
-                    if isMusicGeneration {
-                        activeMusicGenerationDraft = nil
-                    }
-                    streamingMessageId = nil
-                    generationTask = nil
-                    loadingMessage = ""
-                    modelLoadProgress = nil
-                    return
-                }
-                await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
-                return
-
-            case .error(let error):
-                if isMusicGeneration {
-                    activeMusicGenerationDraft = nil
-                }
-                handleGenerationError(error, replacingMessageId: messageId)
-                isGenerating = false
-                streamingMessageId = nil
-                generationTask = nil
-                modelLoadProgress = nil
-                
-            case .progress(let message):
-                loadingMessage = message
-
-            case .modelLoadProgress(let progress):
-                modelLoadProgress = progress
-                loadingMessage = progress.detail ?? progress.phase.displayTitle
-            }
-        }
-
-        if Task.isCancelled {
-            renderStreamingResponse(force: true)
-            if isMusicGeneration {
-                activeMusicGenerationDraft = nil
-            }
-            isGenerating = false
-            streamingMessageId = nil
-            generationTask = nil
-            modelLoadProgress = nil
-        }
     }
 
 }

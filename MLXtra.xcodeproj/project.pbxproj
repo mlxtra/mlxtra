@@ -26,6 +26,7 @@
 		8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001015 /* MCPWebSearchService.swift */; };
 		8A0100010000000000000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001016 /* SettingsView.swift */; };
 		8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001017 /* ModelDownloadManager.swift */; };
+		8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */; };
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
 		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
@@ -43,11 +44,13 @@
 		8A0100010000000000000020 /* ChatViewModel+Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001020 /* ChatViewModel+Models.swift */; };
 		8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001021 /* ChatViewModel+Messages.swift */; };
 		8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001022 /* ChatViewModel+Tooling.swift */; };
+		8A0500010000000000000016 /* ChatViewModel+Streaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001016 /* ChatViewModel+Streaming.swift */; };
 		8A0100010000000000000023 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001023 /* UITestSupport.swift */; };
 		8A0100010000000000000024 /* ImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001024 /* ImageCache.swift */; };
 		8A0100010000000000000025 /* AudioPlayerCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001025 /* AudioPlayerCache.swift */; };
 		8A0100010000000000000026 /* StreamingMarkdownInstrumentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */; };
 		8A0100010000000000000027 /* StreamingMarkdownSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */; };
+		8A0500010000000000000018 /* StreamingMarkdownSplitter+Parsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001018 /* StreamingMarkdownSplitter+Parsing.swift */; };
 		8A0100010000000000000028 /* MarkdownCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001028 /* MarkdownCache.swift */; };
 		8A0100010000000000000029 /* MarkdownBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001029 /* MarkdownBlock.swift */; };
 		8A010001000000000000002A /* MarkdownBlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102A /* MarkdownBlockRenderer.swift */; };
@@ -58,6 +61,27 @@
 		8A0200010000000000000001 /* MLXtraGenerateRoutesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001001 /* MLXtraGenerateRoutesUITests.swift */; };
 		8A0200010000000000000002 /* MLXtraDownloadStatesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001002 /* MLXtraDownloadStatesUITests.swift */; };
 		8A0200010000000000000003 /* MLXtraChatLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001003 /* MLXtraChatLayoutUITests.swift */; };
+		8A0500010000000000000001 /* MessageGeneratedAudioAttachmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001001 /* MessageGeneratedAudioAttachmentView.swift */; };
+		8A0500010000000000000002 /* MessageGeneratedImageAttachmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001002 /* MessageGeneratedImageAttachmentView.swift */; };
+		8A0500010000000000000003 /* MessageAIContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001003 /* MessageAIContentView.swift */; };
+		8A0500010000000000000004 /* MarkdownTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001004 /* MarkdownTextView.swift */; };
+		8A0500010000000000000005 /* ToolCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001005 /* ToolCallView.swift */; };
+		8A0500010000000000000006 /* ComposerDraftControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001006 /* ComposerDraftControls.swift */; };
+		8A0500010000000000000007 /* ComposerModelControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001007 /* ComposerModelControl.swift */; };
+		8A0500010000000000000008 /* ComposerToolSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001008 /* ComposerToolSelector.swift */; };
+		8A0500010000000000000009 /* ComposerInputViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001009 /* ComposerInputViews.swift */; };
+		8A050001000000000000000A /* SettingsModelSorting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100A /* SettingsModelSorting.swift */; };
+		8A050001000000000000000B /* SettingsModelTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100B /* SettingsModelTypes.swift */; };
+		8A050001000000000000000C /* SettingsRuntimeSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100C /* SettingsRuntimeSections.swift */; };
+		8A050001000000000000000D /* SettingsModelRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100D /* SettingsModelRow.swift */; };
+		8A050001000000000000000E /* SettingsAdvancedSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100E /* SettingsAdvancedSections.swift */; };
+		8A050001000000000000000F /* SettingsModelExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100F /* SettingsModelExtensions.swift */; };
+		8A0500010000000000000010 /* ChatStreamingContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001010 /* ChatStreamingContent.swift */; };
+		8A0500010000000000000011 /* ChatGenerationRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001011 /* ChatGenerationRequest.swift */; };
+		8A0500010000000000000012 /* ModelCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001012 /* ModelCatalog.swift */; };
+		8A0500010000000000000013 /* ModelCapabilityProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001013 /* ModelCapabilityProfile.swift */; };
+		8A0500010000000000000014 /* ModelStores.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001014 /* ModelStores.swift */; };
+		8A0500010000000000000015 /* VersionComparator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001015 /* VersionComparator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -125,6 +149,30 @@
 		8A0200010000000000001002 /* MLXtraDownloadStatesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraDownloadStatesUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001003 /* MLXtraChatLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraChatLayoutUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001014 /* MLXtraUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MLXtraUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A0500010000000000001001 /* MessageGeneratedAudioAttachmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageGeneratedAudioAttachmentView.swift; sourceTree = "<group>"; };
+		8A0500010000000000001002 /* MessageGeneratedImageAttachmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageGeneratedImageAttachmentView.swift; sourceTree = "<group>"; };
+		8A0500010000000000001003 /* MessageAIContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageAIContentView.swift; sourceTree = "<group>"; };
+		8A0500010000000000001004 /* MarkdownTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextView.swift; sourceTree = "<group>"; };
+		8A0500010000000000001005 /* ToolCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallView.swift; sourceTree = "<group>"; };
+		8A0500010000000000001006 /* ComposerDraftControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraftControls.swift; sourceTree = "<group>"; };
+		8A0500010000000000001007 /* ComposerModelControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerModelControl.swift; sourceTree = "<group>"; };
+		8A0500010000000000001008 /* ComposerToolSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerToolSelector.swift; sourceTree = "<group>"; };
+		8A0500010000000000001009 /* ComposerInputViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerInputViews.swift; sourceTree = "<group>"; };
+		8A050001000000000000100A /* SettingsModelSorting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelSorting.swift; sourceTree = "<group>"; };
+		8A050001000000000000100B /* SettingsModelTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelTypes.swift; sourceTree = "<group>"; };
+		8A050001000000000000100C /* SettingsRuntimeSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRuntimeSections.swift; sourceTree = "<group>"; };
+		8A050001000000000000100D /* SettingsModelRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelRow.swift; sourceTree = "<group>"; };
+		8A050001000000000000100E /* SettingsAdvancedSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAdvancedSections.swift; sourceTree = "<group>"; };
+		8A050001000000000000100F /* SettingsModelExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelExtensions.swift; sourceTree = "<group>"; };
+		8A0500010000000000001010 /* ChatStreamingContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStreamingContent.swift; sourceTree = "<group>"; };
+		8A0500010000000000001011 /* ChatGenerationRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGenerationRequest.swift; sourceTree = "<group>"; };
+		8A0500010000000000001012 /* ModelCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCatalog.swift; sourceTree = "<group>"; };
+		8A0500010000000000001013 /* ModelCapabilityProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelCapabilityProfile.swift; sourceTree = "<group>"; };
+		8A0500010000000000001014 /* ModelStores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStores.swift; sourceTree = "<group>"; };
+		8A0500010000000000001015 /* VersionComparator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionComparator.swift; sourceTree = "<group>"; };
+		8A0500010000000000001016 /* ChatViewModel+Streaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Streaming.swift"; sourceTree = "<group>"; };
+		8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadHelperProcessRunner.swift; sourceTree = "<group>"; };
+		8A0500010000000000001018 /* StreamingMarkdownSplitter+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamingMarkdownSplitter+Parsing.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -184,8 +232,23 @@
 				8A0100010000000000001005 /* WelcomeView.swift */,
 				8A0100010000000000001006 /* ChatView.swift */,
 				8A0100010000000000001019 /* ComposerView.swift */,
+				8A0500010000000000001006 /* ComposerDraftControls.swift */,
+				8A0500010000000000001007 /* ComposerModelControl.swift */,
+				8A0500010000000000001008 /* ComposerToolSelector.swift */,
+				8A0500010000000000001009 /* ComposerInputViews.swift */,
 				8A0100010000000000001008 /* MessageBubbleView.swift */,
+				8A0500010000000000001001 /* MessageGeneratedAudioAttachmentView.swift */,
+				8A0500010000000000001002 /* MessageGeneratedImageAttachmentView.swift */,
+				8A0500010000000000001003 /* MessageAIContentView.swift */,
+				8A0500010000000000001004 /* MarkdownTextView.swift */,
+				8A0500010000000000001005 /* ToolCallView.swift */,
 				8A0100010000000000001016 /* SettingsView.swift */,
+				8A050001000000000000100A /* SettingsModelSorting.swift */,
+				8A050001000000000000100B /* SettingsModelTypes.swift */,
+				8A050001000000000000100C /* SettingsRuntimeSections.swift */,
+				8A050001000000000000100D /* SettingsModelRow.swift */,
+				8A050001000000000000100E /* SettingsAdvancedSections.swift */,
+				8A050001000000000000100F /* SettingsModelExtensions.swift */,
 				8A0100010000000000003015 /* Components */,
 			);
 			path = Views;
@@ -195,10 +258,13 @@
 			isa = PBXGroup;
 			children = (
 				8A0100010000000000001009 /* ChatViewModel.swift */,
+				8A0500010000000000001010 /* ChatStreamingContent.swift */,
+				8A0500010000000000001011 /* ChatGenerationRequest.swift */,
 				8A010001000000000000101F /* ChatViewModel+Composer.swift */,
 				8A0100010000000000001020 /* ChatViewModel+Models.swift */,
 				8A0100010000000000001021 /* ChatViewModel+Messages.swift */,
 				8A0100010000000000001022 /* ChatViewModel+Tooling.swift */,
+				8A0500010000000000001016 /* ChatViewModel+Streaming.swift */,
 				8A010001000000000000101D /* ChatComposerModels.swift */,
 				8A010001000000000000101E /* ChatServices.swift */,
 				8A010001000000000000101B /* LocalEngineStatus.swift */,
@@ -212,6 +278,10 @@
 				8A010001000000000000100A /* Chat.swift */,
 				8A010001000000000000100B /* Tool.swift */,
 				8A010001000000000000100C /* AIModel.swift */,
+				8A0500010000000000001012 /* ModelCatalog.swift */,
+				8A0500010000000000001013 /* ModelCapabilityProfile.swift */,
+				8A0500010000000000001014 /* ModelStores.swift */,
+				8A0500010000000000001015 /* VersionComparator.swift */,
 				8A010001000000000000101C /* PromptConfiguration.swift */,
 			);
 			path = Models;
@@ -281,6 +351,7 @@
 			children = (
 				8A010001000000000000100F /* RuntimeManager.swift */,
 				8A0100010000000000001017 /* ModelDownloadManager.swift */,
+				8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
@@ -304,6 +375,7 @@
 				8A0100010000000000001028 /* MarkdownCache.swift */,
 				8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */,
 				8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */,
+				8A0500010000000000001018 /* StreamingMarkdownSplitter+Parsing.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -484,6 +556,7 @@
 				8A0100010000000000000020 /* ChatViewModel+Models.swift in Sources */,
 				8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */,
 				8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */,
+				8A0500010000000000000016 /* ChatViewModel+Streaming.swift in Sources */,
 				8A0100010000000000000023 /* UITestSupport.swift in Sources */,
 				8A010001000000000000001D /* ChatComposerModels.swift in Sources */,
 				8A010001000000000000001E /* ChatServices.swift in Sources */,
@@ -497,6 +570,7 @@
 				8A010001000000000000000E /* VLMExecutor.swift in Sources */,
 				8A010001000000000000000F /* RuntimeManager.swift in Sources */,
 				8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */,
+				8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */,
 				8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */,
 				8A0100010000000000000024 /* ImageCache.swift in Sources */,
 				8A0100010000000000000025 /* AudioPlayerCache.swift in Sources */,
@@ -506,7 +580,29 @@
 				8A0100010000000000000028 /* MarkdownCache.swift in Sources */,
 				8A0100010000000000000026 /* StreamingMarkdownInstrumentation.swift in Sources */,
 				8A0100010000000000000027 /* StreamingMarkdownSplitter.swift in Sources */,
+				8A0500010000000000000018 /* StreamingMarkdownSplitter+Parsing.swift in Sources */,
 				8A010001000000000000002C /* ReasoningContentFilter.swift in Sources */,
+				8A0500010000000000000001 /* MessageGeneratedAudioAttachmentView.swift in Sources */,
+				8A0500010000000000000002 /* MessageGeneratedImageAttachmentView.swift in Sources */,
+				8A0500010000000000000003 /* MessageAIContentView.swift in Sources */,
+				8A0500010000000000000004 /* MarkdownTextView.swift in Sources */,
+				8A0500010000000000000005 /* ToolCallView.swift in Sources */,
+				8A0500010000000000000006 /* ComposerDraftControls.swift in Sources */,
+				8A0500010000000000000007 /* ComposerModelControl.swift in Sources */,
+				8A0500010000000000000008 /* ComposerToolSelector.swift in Sources */,
+				8A0500010000000000000009 /* ComposerInputViews.swift in Sources */,
+				8A050001000000000000000A /* SettingsModelSorting.swift in Sources */,
+				8A050001000000000000000B /* SettingsModelTypes.swift in Sources */,
+				8A050001000000000000000C /* SettingsRuntimeSections.swift in Sources */,
+				8A050001000000000000000D /* SettingsModelRow.swift in Sources */,
+				8A050001000000000000000E /* SettingsAdvancedSections.swift in Sources */,
+				8A050001000000000000000F /* SettingsModelExtensions.swift in Sources */,
+				8A0500010000000000000010 /* ChatStreamingContent.swift in Sources */,
+				8A0500010000000000000011 /* ChatGenerationRequest.swift in Sources */,
+				8A0500010000000000000012 /* ModelCatalog.swift in Sources */,
+				8A0500010000000000000013 /* ModelCapabilityProfile.swift in Sources */,
+				8A0500010000000000000014 /* ModelStores.swift in Sources */,
+				8A0500010000000000000015 /* VersionComparator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -698,7 +794,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = MLXtra;

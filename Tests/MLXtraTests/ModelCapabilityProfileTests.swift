@@ -23,7 +23,14 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
 
         store.setSelectedModelId(AIModel.gemma4.modelId, for: .vision)
-        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.aiModel, .gemma4)
+        XCTAssertEqual(
+            store.selectedProfile(
+                for: .vision,
+                hardwareMemoryGB: 16.0,
+                runtimeManifest: testRuntimeManifest
+            )?.aiModel,
+            .gemma4
+        )
     }
 
     func testPerModeSelectionFallsBackWhenRememberedModelIsInvalidForMode() {
@@ -84,10 +91,10 @@ final class ModelCapabilityProfileTests: XCTestCase {
         store.setSelectedModelId(speechModelId, for: .audio)
         store.setSelectedModelId(musicModelId, for: .music)
 
-        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId, AIModel.gemma4.modelId)
-        XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, imageModelId)
-        XCTAssertEqual(store.selectedProfile(for: .audio, hardwareMemoryGB: 16.0)?.modelId, speechModelId)
-        XCTAssertEqual(store.selectedProfile(for: .music, hardwareMemoryGB: 16.0)?.modelId, musicModelId)
+        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, AIModel.gemma4.modelId)
+        XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, imageModelId)
+        XCTAssertEqual(store.selectedProfile(for: .audio, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, speechModelId)
+        XCTAssertEqual(store.selectedProfile(for: .music, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, musicModelId)
     }
 
     func testModelSettingsSorterOrdersDefaultsRecommendationsReadinessFitAndSize() {
@@ -162,6 +169,28 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(values["temperature"], "0.4")
         XCTAssertNil(values["future_parameter"])
         XCTAssertEqual(store.storedValues()[qwen.modelId]?["future_parameter"], "keep")
+    }
+
+    func testPersistedParameterValuesAreValidatedAndClampedBeforeExecution() throws {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let image = ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B")!
+        let encoded = try JSONEncoder().encode([
+            image.modelId: [
+                "width": "99999",
+                "height": "not-a-number"
+            ]
+        ])
+        defaults.set(encoded, forKey: ModelParameterStore.storageKey)
+
+        let store = ModelParameterStore(userDefaults: defaults)
+        let values = store.values(for: image)
+        let parameters = store.executionParameters(for: image)
+
+        XCTAssertEqual(values["width"], image.parameterDefinition(key: "width")?.clampedString(99999))
+        XCTAssertEqual(values["height"], image.parameterDefinition(key: "height")?.defaultValue)
+        XCTAssertEqual(parameters["width"] as? Int, Int(Double(values["width"] ?? "") ?? 0))
     }
 
     func testResetOnlyClearsCurrentModelParameters() {
@@ -283,8 +312,211 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertFalse(wrongBackendRuntime.supports(profile: profile))
     }
 
+    func testVersionComparatorOrdersPrereleasesBeforeFinalReleases() {
+        XCTAssertEqual(VersionComparator.compare("0.2.0-beta", "0.2.0"), .orderedAscending)
+        XCTAssertEqual(VersionComparator.compare("0.2.0-beta.2", "0.2.0-beta.10"), .orderedAscending)
+        XCTAssertEqual(VersionComparator.compare("0.2.0+build.1", "0.2.0+build.2"), .orderedSame)
+        XCTAssertEqual(VersionComparator.compare("0.2.1", "0.2.0-rc.1"), .orderedDescending)
+    }
+
+    func testCatalogValidationRejectsUnsupportedSchemaEmptyCatalogAndDuplicateIds() throws {
+        let unsupportedSchema = Data("""
+        {
+          "schemaVersion": 2,
+          "catalogVersion": "test",
+          "models": []
+        }
+        """.utf8)
+        XCTAssertThrowsError(try ModelCatalogService.decodeCatalog(data: unsupportedSchema, appVersion: "1.0.0")) { error in
+            XCTAssertEqual(error as? ModelCatalogError, .unsupportedSchema(2))
+        }
+
+        let emptyCatalog = Data("""
+        {
+          "schemaVersion": 1,
+          "catalogVersion": "test",
+          "models": []
+        }
+        """.utf8)
+        XCTAssertThrowsError(try ModelCatalogService.decodeCatalog(data: emptyCatalog, appVersion: "1.0.0")) { error in
+            XCTAssertEqual(error as? ModelCatalogError, .emptyCatalog)
+        }
+
+        let duplicateCatalog = try makeCatalogJSON(modelId: "org/duplicate-vlm", duplicateModel: true)
+        XCTAssertThrowsError(try ModelCatalogService.decodeCatalog(data: duplicateCatalog, appVersion: "1.0.0")) { error in
+            XCTAssertEqual(error as? ModelCatalogError, .duplicateModelId("org/duplicate-vlm"))
+        }
+
+        let duplicateModelIdCatalog = try makeCatalogJSON(
+            modelId: "org/shared-vlm",
+            duplicateModelIdWithDifferentProfileId: true
+        )
+        XCTAssertThrowsError(try ModelCatalogService.decodeCatalog(data: duplicateModelIdCatalog, appVersion: "1.0.0")) { error in
+            XCTAssertEqual(error as? ModelCatalogError, .duplicateModelId("org/shared-vlm"))
+        }
+    }
+
+    func testCatalogValidationRejectsInvalidParameterDefinitions() throws {
+        let duplicateParameters = try makeCatalogJSON(
+            modelId: "org/invalid-params",
+            parameters: """
+            [
+                {"key": "width", "label": "Width", "type": "integer", "defaultValue": "512", "range": {"min": 256, "max": 1024}, "step": 64},
+                {"key": "width", "label": "Duplicate", "type": "integer", "defaultValue": "512", "range": {"min": 256, "max": 1024}, "step": 64}
+            ]
+            """
+        )
+        XCTAssertThrowsError(try ModelCatalogService.decodeCatalog(data: duplicateParameters, appVersion: "1.0.0")) { error in
+            guard case .invalidParameter(let message) = error as? ModelCatalogError else {
+                XCTFail("Expected invalid parameter error, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("duplicate parameter key width"))
+        }
+
+        let invalidDefault = try makeCatalogJSON(
+            modelId: "org/invalid-default",
+            parameters: """
+            [
+                {"key": "duration", "label": "Duration", "type": "integer", "defaultValue": "4", "range": {"min": 5, "max": 60}, "step": 1}
+            ]
+            """
+        )
+        XCTAssertThrowsError(try ModelCatalogService.decodeCatalog(data: invalidDefault, appVersion: "1.0.0")) { error in
+            guard case .invalidParameter(let message) = error as? ModelCatalogError else {
+                XCTFail("Expected invalid parameter error, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("default is outside its range"))
+        }
+    }
+
+    func testCatalogErrorsExposeReadableDescriptions() {
+        XCTAssertEqual(
+            ModelCatalogError.unsupportedSchema(7).errorDescription,
+            "Unsupported model catalog schema 7"
+        )
+        XCTAssertEqual(
+            ModelCatalogError.incompatibleAppVersion("2.0.0").errorDescription,
+            "Model catalog requires MLXtra 2.0.0 or newer"
+        )
+        XCTAssertEqual(
+            ModelCatalogError.checksumMismatch.errorDescription,
+            "Model catalog checksum did not match"
+        )
+        XCTAssertEqual(
+            ModelCatalogError.emptyCatalog.errorDescription,
+            "Model catalog does not contain any models"
+        )
+        XCTAssertEqual(
+            ModelCatalogError.duplicateModelId("org/model").errorDescription,
+            "Model catalog contains duplicate model id org/model"
+        )
+    }
+
+    func testModelModalityDecodesAliasesEncodesCanonicalValuesAndRejectsUnknowns() throws {
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+
+        XCTAssertEqual(try decoder.decode(ModelModality.self, from: Data(#""chat""#.utf8)), .vision)
+        XCTAssertEqual(try decoder.decode(ModelModality.self, from: Data(#"" speech ""#.utf8)), .audio)
+        XCTAssertEqual(try decoder.decode(ModelModality.self, from: Data(#""image""#.utf8)), .image)
+        XCTAssertEqual(try decoder.decode(ModelModality.self, from: Data(#""music""#.utf8)), .music)
+        XCTAssertEqual(String(data: try encoder.encode(ModelModality.vision), encoding: .utf8), #""vision""#)
+        XCTAssertEqual(String(data: try encoder.encode(ModelModality.music), encoding: .utf8), #""music""#)
+
+        XCTAssertThrowsError(try decoder.decode(ModelModality.self, from: Data(#""text""#.utf8)))
+    }
+
+    func testParameterDefinitionTypingClampingAndCodableDefaults() throws {
+        let decimal = ModelParameterDefinition(
+            key: "temperature",
+            label: "Temperature",
+            type: .decimal,
+            defaultValue: "0.7",
+            range: 0...2,
+            step: 0.1
+        )
+        let integer = ModelParameterDefinition(
+            key: "steps",
+            label: "Steps",
+            type: .integer,
+            defaultValue: "4",
+            range: 1...12
+        )
+        let boolean = ModelParameterDefinition(key: "enabled", label: "Enabled", type: .boolean, defaultValue: "false")
+        let option = ModelParameterDefinition(
+            key: "voice",
+            label: "Voice",
+            type: .option,
+            defaultValue: "alloy",
+            options: ["alloy", "verse"]
+        )
+        let text = ModelParameterDefinition(key: "prompt", label: "Prompt", type: .text, defaultValue: "")
+
+        XCTAssertEqual(decimal.typedValue(from: "1.25") as? Double, 1.25)
+        XCTAssertEqual(integer.typedValue(from: "4") as? Int, 4)
+        XCTAssertNil(integer.typedValue(from: "4.8"))
+        XCTAssertEqual(boolean.typedValue(from: " YES ") as? Bool, true)
+        XCTAssertEqual(boolean.typedValue(from: "no") as? Bool, false)
+        XCTAssertNil(boolean.typedValue(from: "maybe"))
+        XCTAssertEqual(option.typedValue(from: "verse") as? String, "verse")
+        XCTAssertEqual(text.typedValue(from: "hello") as? String, "hello")
+
+        XCTAssertEqual(decimal.clampedString(2.5), "2")
+        XCTAssertEqual(decimal.clampedString(1.25), "1.25")
+        XCTAssertEqual(integer.clampedString(12.9), "12")
+        XCTAssertEqual(boolean.clampedString(1), "false")
+
+        let decoded = try JSONDecoder().decode(ModelParameterDefinition.self, from: Data("""
+        {
+          "key": "duration",
+          "label": "Duration",
+          "type": "integer",
+          "defaultValue": "30",
+          "range": { "min": 5, "max": 60 }
+        }
+        """.utf8))
+        XCTAssertEqual(decoded.step, 1)
+        XCTAssertEqual(decoded.options, [])
+        XCTAssertFalse(decoded.isAdvanced)
+        XCTAssertEqual(decoded.range, 5...60)
+
+        let encoded = try JSONEncoder().encode(decimal)
+        let roundTripped = try JSONDecoder().decode(ModelParameterDefinition.self, from: encoded)
+        XCTAssertEqual(roundTripped, decimal)
+    }
+
+    func testModelSourceDefaultsAndRuntimeRequirements() {
+        let aceSource = ModelSource.defaultSource(modelId: "ACE-Step/acestep-v15-turbo-continuous")
+        XCTAssertEqual(aceSource.type, .componentBundle)
+        XCTAssertEqual(aceSource.downloadRepository, "ACE-Step/acestep-v15-turbo-continuous")
+        XCTAssertTrue(aceSource.usesComponentBundle)
+        XCTAssertEqual(aceSource.components, ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"])
+
+        let snapshotSource = ModelSource.defaultSource(modelId: "org/model")
+        XCTAssertEqual(snapshotSource.type, .huggingFaceSnapshot)
+        XCTAssertEqual(snapshotSource.downloadRepository, "org/model")
+        XCTAssertFalse(snapshotSource.usesComponentBundle)
+        XCTAssertEqual(snapshotSource.revision, "main")
+
+        let requirement = ModelRuntimeRequirement(minVersion: "0.2.0", compatibilityApi: 3)
+        XCTAssertFalse(requirement.isSatisfied(by: nil))
+        XCTAssertFalse(requirement.isSatisfied(by: RuntimeManifest(runtimeVersion: "0.1.9", compatibilityApi: 3, supportedBackends: [.vlm])))
+        XCTAssertFalse(requirement.isSatisfied(by: RuntimeManifest(runtimeVersion: "0.2.0", compatibilityApi: 2, supportedBackends: [.vlm])))
+        XCTAssertTrue(requirement.isSatisfied(by: RuntimeManifest(runtimeVersion: "0.2.0", compatibilityApi: 3, supportedBackends: [.vlm])))
+    }
+
     private var defaultsSuiteName: String {
         "MLXtraTests.ModelCapabilityProfileTests"
+    }
+
+    private var testRuntimeManifest: RuntimeManifest {
+        RuntimeManifest(
+            runtimeVersion: "9.0.0",
+            compatibilityApi: 1,
+            supportedBackends: RuntimeBackend.allCases
+        )
     }
 
     private func makeDefaults() -> UserDefaults {
@@ -317,14 +549,12 @@ final class ModelCapabilityProfileTests: XCTestCase {
         modelId: String,
         memoryGB: Double = 4.0,
         minRuntimeVersion: String = "0.1.0",
-        minAppVersion: String = "0.1.0"
+        minAppVersion: String = "0.1.0",
+        duplicateModel: Bool = false,
+        duplicateModelIdWithDifferentProfileId: Bool = false,
+        parameters: String = "[]"
     ) throws -> Data {
-        Data("""
-        {
-          "schemaVersion": 1,
-          "catalogVersion": "test",
-          "minAppVersion": "\(minAppVersion)",
-          "models": [
+        let model = """
             {
               "id": "\(modelId)",
               "name": "Example VLM",
@@ -352,9 +582,30 @@ final class ModelCapabilityProfileTests: XCTestCase {
                 "quality": 90,
                 "speed": 80
               },
-              "parameters": [],
+              "parameters": \(parameters),
               "presets": []
             }
+        """
+        let alternateProfileModel = model.replacingOccurrences(
+            of: #""id": "\#(modelId)""#,
+            with: #""id": "org/alternate-profile""#
+        )
+        let models: String
+        if duplicateModel {
+            models = "\(model),\n\(model)"
+        } else if duplicateModelIdWithDifferentProfileId {
+            models = "\(model),\n\(alternateProfileModel)"
+        } else {
+            models = model
+        }
+
+        return Data("""
+        {
+          "schemaVersion": 1,
+          "catalogVersion": "test",
+          "minAppVersion": "\(minAppVersion)",
+          "models": [
+        \(models)
           ]
         }
         """.utf8)

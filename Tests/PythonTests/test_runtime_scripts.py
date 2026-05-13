@@ -79,6 +79,7 @@ class RuntimeScriptTests(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
+                    "MLXTRA_SKIP_RUNTIME_VALIDATION": "1",
                     "SCRIPT_INPUT_FILE_COUNT": "1",
                     "SCRIPT_OUTPUT_FILE_COUNT": "1",
                     "SCRIPT_OUTPUT_FILE_0": str(stamp_path),

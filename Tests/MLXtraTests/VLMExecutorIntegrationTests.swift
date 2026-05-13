@@ -6,78 +6,30 @@ final class VLMExecutorIntegrationTests: XCTestCase {
     // MARK: - Message Type Mapping Tests
 
     func testMessageTypeForBackend() {
-        func messageType(for backend: RuntimeBackend) -> String {
-            switch backend {
-            case .image: return "image.generate"
-            case .audio: return "audio.speech"
-            case .music: return "music.generate"
-            case .vlm, .llm: return "chat.completions"
-            }
-        }
-
-        XCTAssertEqual(messageType(for: .image), "image.generate")
-        XCTAssertEqual(messageType(for: .audio), "audio.speech")
-        XCTAssertEqual(messageType(for: .music), "music.generate")
-        XCTAssertEqual(messageType(for: .vlm), "chat.completions")
-        XCTAssertEqual(messageType(for: .llm), "chat.completions")
+        XCTAssertEqual(VLMExecutor.messageType(for: .image), "image.generate")
+        XCTAssertEqual(VLMExecutor.messageType(for: .audio), "audio.speech")
+        XCTAssertEqual(VLMExecutor.messageType(for: .music), "music.generate")
+        XCTAssertEqual(VLMExecutor.messageType(for: .vlm), "chat.completions")
+        XCTAssertEqual(VLMExecutor.messageType(for: .llm), "chat.completions")
     }
 
     // MARK: - Should Retry Logic Tests
 
     func testShouldRetryForProcessCrashed() {
-        func shouldRetry(error: Error, retryCount: Int, maxRetries: Int) -> Bool {
-            guard retryCount < maxRetries else { return false }
-            if let execError = error as? ExecutionError {
-                switch execError {
-                case .processCrashed, .processNotRunning, .timeout:
-                    return true
-                default:
-                    return false
-                }
-            }
-            return false
-        }
-
-        XCTAssertTrue(shouldRetry(error: ExecutionError.processCrashed(retryCount: 0), retryCount: 0, maxRetries: 1))
-        XCTAssertTrue(shouldRetry(error: ExecutionError.processNotRunning, retryCount: 0, maxRetries: 1))
-        XCTAssertTrue(shouldRetry(error: ExecutionError.timeout, retryCount: 0, maxRetries: 1))
+        XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.processCrashed(retryCount: 0), retryCount: 0, maxRetries: 1))
+        XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.processNotRunning, retryCount: 0, maxRetries: 1))
+        XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.timeout, retryCount: 0, maxRetries: 1))
     }
 
     func testShouldRetryFalseWhenMaxRetriesReached() {
-        func shouldRetry(error: Error, retryCount: Int, maxRetries: Int) -> Bool {
-            guard retryCount < maxRetries else { return false }
-            if let execError = error as? ExecutionError {
-                switch execError {
-                case .processCrashed, .processNotRunning, .timeout:
-                    return true
-                default:
-                    return false
-                }
-            }
-            return false
-        }
-
-        XCTAssertFalse(shouldRetry(error: ExecutionError.timeout, retryCount: 1, maxRetries: 1))
-        XCTAssertFalse(shouldRetry(error: ExecutionError.processCrashed(retryCount: 2), retryCount: 2, maxRetries: 2))
+        XCTAssertFalse(VLMExecutor.shouldRetry(error: ExecutionError.timeout, retryCount: 1, maxRetries: 1))
+        XCTAssertFalse(VLMExecutor.shouldRetry(error: ExecutionError.processCrashed(retryCount: 2), retryCount: 2, maxRetries: 2))
     }
 
     func testShouldRetryFalseForOtherErrors() {
-        func shouldRetry(error: Error, retryCount: Int, maxRetries: Int) -> Bool {
-            guard retryCount < maxRetries else { return false }
-            if let execError = error as? ExecutionError {
-                switch execError {
-                case .processCrashed, .processNotRunning, .timeout:
-                    return true
-                default:
-                    return false
-                }
-            }
-            return false
-        }
-
-        XCTAssertFalse(shouldRetry(error: ExecutionError.notInitialized, retryCount: 0, maxRetries: 3))
-        XCTAssertFalse(shouldRetry(error: ExecutionError.encodingFailed, retryCount: 0, maxRetries: 3))
-        XCTAssertFalse(shouldRetry(error: ExecutionError.pythonError("test"), retryCount: 0, maxRetries: 3))
+        XCTAssertFalse(VLMExecutor.shouldRetry(error: ExecutionError.notInitialized, retryCount: 0, maxRetries: 3))
+        XCTAssertFalse(VLMExecutor.shouldRetry(error: ExecutionError.encodingFailed, retryCount: 0, maxRetries: 3))
+        XCTAssertFalse(VLMExecutor.shouldRetry(error: ExecutionError.pythonError("test"), retryCount: 0, maxRetries: 3))
     }
 
     // MARK: - Execution Request Building Tests
