@@ -5,7 +5,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
 
     let splitter = StreamingMarkdownSplitter()
 
-    // MARK: - Paragraph tests
 
     func testSimpleParagraphStabilizedAfterBlankLine() {
         let result = splitter.splitStablePrefix(
@@ -40,7 +39,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(result.tail, .paragraph("third"))
     }
 
-    // MARK: - Code fence tests
 
     func testClosedCodeFenceBecomesStableBlock() {
         let input = """
@@ -101,7 +99,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         }
     }
 
-    // MARK: - Heading tests
 
     func testHeadingStableWhenNextLineExists() {
         let result = splitter.splitStablePrefix(
@@ -129,12 +126,10 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
             committedEndIndex: nil
         )
 
-        // When only blank lines follow, heading stays in tail
         XCTAssertEqual(result.newBlocks, [])
         XCTAssertFalse(result.tail == .empty)
     }
 
-    // MARK: - Link safety tests
 
     func testHalfOpenLinkBecomesUnsafePlain() {
         let result = splitter.splitStablePrefix(
@@ -166,7 +161,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(result.tail, .unsafePlain("Here is `code"))
     }
 
-    // MARK: - List tests
 
     func testUnorderedListStabilizedAfterBlankLine() {
         let input = """
@@ -239,7 +233,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         }
     }
 
-    // MARK: - Blockquote tests
 
     func testBlockquoteStabilized() {
         let input = """
@@ -269,7 +262,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(result.tail, .paragraph("> A lonely quote"))
     }
 
-    // MARK: - Divider tests
 
     func testDividerStabilized() {
         let result = splitter.splitStablePrefix(
@@ -281,7 +273,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(result.tail, .paragraph("next"))
     }
 
-    // MARK: - Table tests
 
     func testIncompleteTableBecomesTail() {
         let result = splitter.splitStablePrefix(
@@ -318,7 +309,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         }
     }
 
-    // MARK: - Math block tests
 
     func testDisplayMathDetectedNotStableAtEOF() {
         let result = splitter.splitStablePrefix(
@@ -327,30 +317,25 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         )
 
         XCTAssertEqual(result.newBlocks, [])
-        // Open math delimiter without closing — unsafe plain
         XCTAssertEqual(result.tail, .unsafePlain("$$\nE = mc^2"))
     }
 
-    // MARK: - Index recovery tests
 
     func testStaleCommittedIndexReset() {
         let oldText = "old string"
         let oldResult = splitter.splitStablePrefix(oldText, committedEndIndex: nil)
         let oldEnd = oldResult.newCommittedEndIndex
 
-        // Use the index from oldText on a new string — should reset
         let result = splitter.splitStablePrefix(
             "new text\n\nafter",
             committedEndIndex: oldEnd
         )
 
-        // Should have parsed from scratch
         XCTAssertEqual(result.newBlocks, [.paragraph(content: "new text")])
         XCTAssertEqual(result.tail, .paragraph("after"))
     }
 
     func testCommittedEndIndexRespected() {
-        // First pass: stabilize first paragraph
         let first = splitter.splitStablePrefix(
             "First paragraph.\n\nSecond paragraph.\n\nthird",
             committedEndIndex: nil
@@ -359,7 +344,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(first.newBlocks.count, 2)
         XCTAssertEqual(first.tail, .paragraph("third"))
 
-        // Second pass: nothing new yet
         let second = splitter.splitStablePrefix(
             "First paragraph.\n\nSecond paragraph.\n\nthird",
             committedEndIndex: first.newCommittedEndIndex,
@@ -369,7 +353,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(second.newBlocks, [])
         XCTAssertEqual(second.tail, .paragraph("third"))
 
-        // Third pass: more content arrived
         let third = splitter.splitStablePrefix(
             "First paragraph.\n\nSecond paragraph.\n\nthird part\n\nfourth",
             committedEndIndex: first.newCommittedEndIndex,
@@ -404,7 +387,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(state.tailRange(storageLength: 12), NSRange(location: 12, length: 0))
     }
 
-    // MARK: - Multiple blocks
 
     func testMultipleBlocksInOneSplit() {
         let input = """
@@ -428,11 +410,9 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         } else {
             XCTFail("Expected unorderedList at index 2, got \(result.newBlocks[2])")
         }
-        // Final paragraph is at EOF → not stable, stays in tail
         XCTAssertEqual(result.tail, .paragraph("Final paragraph."))
     }
 
-    // MARK: - Empty and edge cases
 
     func testEmptyInput() {
         let result = splitter.splitStablePrefix("", committedEndIndex: nil)
@@ -458,7 +438,6 @@ final class StreamingMarkdownSplitterTests: XCTestCase {
         XCTAssertEqual(result.newCommittedUTF16Offset, 7) // "Hello\n\n" in UTF-16
     }
 
-    // MARK: - Unsafe construct tests
 
     func testPartialMathDelimiterUnsafe() {
         let result = splitter.splitStablePrefix(

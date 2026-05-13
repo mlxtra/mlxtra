@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import Optional
 
-# Paths
 REPO_ROOT = Path(__file__).resolve().parent
 
 
@@ -77,7 +76,6 @@ def get_env():
     """Get environment variables matching Swift's VLMExecutor.setupEnvironment()"""
     env = dict(os.environ)
 
-    # Remove Python-related env vars that could cause conflicts
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
     env.pop("VIRTUAL_ENV", None)
@@ -86,7 +84,6 @@ def get_env():
     env.pop("PYENV_ROOT", None)
     env.pop("PYENV_VERSION", None)
 
-    # Set critical env vars
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
     env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
@@ -162,7 +159,6 @@ class BridgeTest:
 
         print("\n✓ Found Python interpreter and bridge script")
 
-        # Start the bridge process
         env = get_env()
         print(f"\nStarting bridge process...")
 
@@ -179,13 +175,11 @@ class BridgeTest:
 
             print(f"✓ Bridge process started (PID: {self.proc.pid})")
 
-            # Start reader threads
             stdout_thread = threading.Thread(target=self.read_stdout, daemon=True)
             stderr_thread = threading.Thread(target=self.read_stderr, daemon=True)
             stdout_thread.start()
             stderr_thread.start()
 
-            # Wait for system.ready
             print("\nWaiting for system.ready...")
             msg = self.wait_for_message("system.ready", timeout=10)
             if not msg:
@@ -193,7 +187,6 @@ class BridgeTest:
                 return False
             print("✓ Bridge is ready")
 
-            # Step 1: Initialize music model
             print("\n--- Step 1: Initialize model ---")
             init_request = {
                 "type": "init",
@@ -211,7 +204,6 @@ class BridgeTest:
             print(f"✓ Model initialized: {msg.get('model')}")
             print("  (Lazy init - actual loading happens on first generate)")
 
-            # Step 2: Generate music
             print("\n--- Step 2: Generate music ---")
             generate_request = {
                 "type": "music.generate",
@@ -229,7 +221,6 @@ class BridgeTest:
             self.proc.stdin.write(json.dumps(generate_request) + "\n")
             self.proc.stdin.flush()
 
-            # Wait for completion or error
             print("\nWaiting for generation to complete...")
             start = time.time()
             timeout = 120  # 2 minutes
@@ -264,7 +255,6 @@ class BridgeTest:
                         print(f"\n✗ FAILED: {msg.get('message')}")
                         return False
 
-                # Check if process is still running
                 if self.proc.poll() is not None:
                     print(f"Process exited with code {self.proc.poll()}")
                     break
@@ -290,7 +280,6 @@ class BridgeTest:
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
 
-            # Print any stderr
             if self.stderr_lines:
                 print("\n--- Collected stderr ---")
                 for line in self.stderr_lines[-30:]:  # Last 30 lines

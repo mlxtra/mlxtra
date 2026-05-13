@@ -457,5 +457,3 @@ private final class ImageLightboxWindowController {
         activeWindow = nil
     }
 }
-
-// MARK: - AI Content View with Markdown

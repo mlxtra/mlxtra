@@ -21,7 +21,6 @@ import wave
 from pathlib import Path
 from typing import Optional
 
-# Setup paths
 REPO_ROOT = Path(__file__).resolve().parent
 
 
@@ -341,7 +340,6 @@ class MLXtraIntegrationTest:
         """Get environment variables for the Python bridge."""
         env = dict(os.environ)
 
-        # Remove Python-related env vars that could cause conflicts
         for key in [
             "PYTHONPATH",
             "PYTHONHOME",
@@ -353,7 +351,6 @@ class MLXtraIntegrationTest:
         ]:
             env.pop(key, None)
 
-        # Set critical env vars
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONHOME"] = str(
@@ -457,7 +454,6 @@ class MLXtraIntegrationTest:
             return [], False
 
         try:
-            # Start process
             proc = subprocess.Popen(
                 [str(python_exe), "-u", str(script)],
                 stdin=subprocess.PIPE,
@@ -504,7 +500,6 @@ class MLXtraIntegrationTest:
                     proc.terminate()
                     return all_messages, False
 
-                # Send request
                 proc.stdin.write(json.dumps(request) + "\n")
                 proc.stdin.flush()
 
@@ -534,13 +529,11 @@ class MLXtraIntegrationTest:
                             msg = json.loads(line)
                             all_messages.append(msg)
 
-                            # Check for completion or error
                             message_type = msg.get("type")
                             if message_type == "error":
                                 request_completed = True
                                 break
                             if request_type == "init" and message_type == "model.loaded":
-                                # Model loaded, can proceed to next request
                                 request_completed = True
                                 break
                             if request_type == "chat.completions" and message_type in (
@@ -552,7 +545,6 @@ class MLXtraIntegrationTest:
                         except json.JSONDecodeError:
                             pass
 
-                    # Check if process died
                     return_code = proc.poll()
                     if return_code is not None:
                         self.log(
@@ -704,9 +696,6 @@ class MLXtraIntegrationTest:
         )
         return True
 
-    # ==========================================================================
-    # TEST 1: Setup Verification
-    # ==========================================================================
     def test_setup(self) -> bool:
         """Verify all required files and directories exist."""
         self.log("\n" + "=" * 70)
@@ -761,7 +750,6 @@ class MLXtraIntegrationTest:
             self.log(f"  ↷ {message}")
             return True
 
-        # List contents
         try:
             for item in sorted(checkpoints_dir.iterdir()):
                 if item.is_dir():
@@ -771,9 +759,6 @@ class MLXtraIntegrationTest:
 
         return True
 
-    # ==========================================================================
-    # TEST 2: Model ID Normalization
-    # ==========================================================================
     def test_model_normalization(self) -> bool:
         """Test that HuggingFace repo IDs are normalized to local names."""
         self.log("\n" + "=" * 70)
@@ -807,9 +792,6 @@ class MLXtraIntegrationTest:
             self.log(f"Error: {e}", "ERROR")
             return False
 
-    # ==========================================================================
-    # TEST 3: Chat/Completion (VLM)
-    # ==========================================================================
     def test_chat_completion(self) -> bool:
         """Test chat completion with a simple model."""
         self.log("\n" + "=" * 70)
@@ -824,9 +806,7 @@ class MLXtraIntegrationTest:
 
         # Use persistent session for chat (init + chat in same process)
         requests = [
-            # Step 1: Initialize model
             {"type": "init", "model_id": model_id, "backend": "vlm"},
-            # Step 2: Send chat request
             {
                 "type": "chat.completions",
                 "model": model_id,
@@ -849,7 +829,6 @@ class MLXtraIntegrationTest:
                 self.log("✗ FAILED: Session failed", "ERROR")
             return False
 
-        # Check for completion
         completions = [
             m for m in messages if m.get("type") == "chat.completion.complete"
         ]
@@ -860,10 +839,8 @@ class MLXtraIntegrationTest:
                 self.log(f"✓ SUCCESS: Got response: '{content[:50]}...'")
                 return True
 
-        # Also check for streaming chunks
         chunks = [m for m in messages if m.get("type") == "chat.completion.chunk"]
         if chunks:
-            # Combine chunk content
             full_content = ""
             for chunk in chunks:
                 choices = chunk.get("choices", [])
@@ -880,9 +857,6 @@ class MLXtraIntegrationTest:
         self.log(f"  Messages received: {[m.get('type') for m in messages]}")
         return False
 
-    # ==========================================================================
-    # TEST 4: Image Generation (FLUX)
-    # ==========================================================================
     def test_image_generation(self) -> bool:
         """Test image generation with FLUX."""
         self.log("\n" + "=" * 70)
@@ -960,9 +934,6 @@ class MLXtraIntegrationTest:
         self.log(f"✓ Error returned: {errors[0].get('message')}")
         return "No prompt provided" in errors[0].get("message", "")
 
-    # ==========================================================================
-    # TEST 5: Audio/Speech (TTS)
-    # ==========================================================================
     def test_audio_speech(self) -> bool:
         """Test text-to-speech with KugelAudio."""
         self.log("\n" + "=" * 70)
@@ -1040,9 +1011,6 @@ class MLXtraIntegrationTest:
         self.log(f"✓ Error returned: {errors[0].get('message')}")
         return "No text provided" in errors[0].get("message", "")
 
-    # ==========================================================================
-    # TEST 6: Music Generation (ACE-Step)
-    # ==========================================================================
     def test_music_generation(self) -> bool:
         """Test music generation with ACE-Step."""
         self.log("\n" + "=" * 70)
@@ -1139,9 +1107,6 @@ class MLXtraIntegrationTest:
         self.log("✓ Control routes validated")
         return True
 
-    # ==========================================================================
-    # Run All Tests
-    # ==========================================================================
     def run(self) -> bool:
         """Run all integration tests."""
         self.log("\n" + "=" * 70)
@@ -1197,7 +1162,6 @@ class MLXtraIntegrationTest:
                 traceback.print_exc()
                 results.append((name, False))
 
-        # Summary
         self.log("\n" + "=" * 70)
         self.log("TEST SUMMARY")
         self.log("=" * 70)
@@ -1220,7 +1184,6 @@ class MLXtraIntegrationTest:
                 "\n" + ("✓ All tests passed!" if all_passed else "✗ Some tests failed!")
             )
 
-        # List generated files
         if self.generated_files:
             self.log("\nGenerated files:")
             for f in self.generated_files:

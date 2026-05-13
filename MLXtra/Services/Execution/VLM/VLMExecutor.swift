@@ -32,7 +32,6 @@ private enum VLMBridgeDiagnostics {
     }
 }
 
-/// Executor for Vision Language Models using mlx-vlm via Python bridge
 @MainActor
 class VLMExecutor: NSObject, ModelExecutor {
     var backend: RuntimeBackend { .vlm }
@@ -56,7 +55,6 @@ class VLMExecutor: NSObject, ModelExecutor {
 
     weak var delegate: VLMExecutionDelegate?
 
-    // MARK: - Initialization
 
     override init() {
         super.init()
@@ -68,11 +66,9 @@ class VLMExecutor: NSObject, ModelExecutor {
         let stdoutToClose = stdoutPipe
         let stderrToClose = stderrPipe
 
-        // Nullify readability handlers to break retain cycles
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
 
-        // Notify dispatcher before pipes close
         stdoutDispatcher.handleEOF()
         stdoutDispatcher.removeAll()
 
@@ -81,12 +77,10 @@ class VLMExecutor: NSObject, ModelExecutor {
         stdoutPipe = nil
         stderrPipe = nil
 
-        // Best-effort termination (deinit cannot be async)
         stdinToClose?.fileHandleForWriting.closeFile()
 
         if let processToTerminate, processToTerminate.isRunning {
             processToTerminate.terminate()
-            // Schedule a kill as a fallback after a short delay
             let pid = processToTerminate.processIdentifier
             DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
                 var zombieCheck: Int32 = 0
@@ -100,7 +94,6 @@ class VLMExecutor: NSObject, ModelExecutor {
         stderrToClose?.fileHandleForReading.closeFile()
     }
 
-    // MARK: - ModelExecutor Protocol
 
     func initialize() async throws {
         guard !isReady else { return }
@@ -180,7 +173,6 @@ class VLMExecutor: NSObject, ModelExecutor {
         retryCount = 0
     }
 
-    // MARK: - Private Methods
 
     private func startBridge() async throws {
         let runtimeManager = RuntimeManager()
@@ -193,9 +185,7 @@ class VLMExecutor: NSObject, ModelExecutor {
         process?.executableURL = pythonPath
         process?.arguments = [bridgePath.path]
 
-        // Clean environment to avoid conflicts with system Python
         var cleanEnv = ProcessInfo.processInfo.environment
-        // Remove Python-related env vars that could cause conflicts
         cleanEnv.removeValue(forKey: "PYTHONPATH")
         cleanEnv.removeValue(forKey: "VIRTUAL_ENV")
         cleanEnv.removeValue(forKey: "CONDA_PREFIX")
@@ -207,7 +197,6 @@ class VLMExecutor: NSObject, ModelExecutor {
         // the standard library and C extension modules (math, select, etc.)
         cleanEnv["PYTHONHOME"] = runtimeManager.pythonHomePath().path
 
-        // Set critical env vars for the bundled Python
         cleanEnv["PYTHONDONTWRITEBYTECODE"] = "1"
         cleanEnv["PYTHONUNBUFFERED"] = "1"
         if VLMBridgeDiagnostics.isEnabled {
@@ -229,7 +218,6 @@ class VLMExecutor: NSObject, ModelExecutor {
         VLMBridgeDiagnostics.log("[VLMExecutor] Starting Python bridge at \(pythonPath.path)")
         VLMBridgeDiagnostics.log("[VLMExecutor] Bridge script at \(bridgePath.path)")
 
-        // Setup pipes
         stdinPipe = Pipe()
         stdoutPipe = Pipe()
         stderrPipe = Pipe()
@@ -238,15 +226,12 @@ class VLMExecutor: NSObject, ModelExecutor {
         process?.standardOutput = stdoutPipe
         process?.standardError = stderrPipe
 
-        // Setup handlers
         setupOutputHandlers()
         let readyWaiter = installReadyHandler()
 
-        // Start process
         do {
             try process?.run()
 
-            // Wait for ready signal with timeout
             try await waitForReady(readyWaiter, timeout: 30.0)
         } catch {
             stdoutDispatcher.unregister(readyWaiter.handlerID)
@@ -296,7 +281,6 @@ class VLMExecutor: NSObject, ModelExecutor {
         let startTime = Date()
         defer { stdoutDispatcher.unregister(waiter.handlerID) }
 
-        // Wait with timeout
         while !(await waiter.state.isReady) {
             if process?.isRunning == false {
                 throw ExecutionError.processNotRunning
@@ -387,7 +371,6 @@ private final class StreamFinishState: @unchecked Sendable {
     private func attemptExecute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
         currentRequest = request
 
-        // Load model if needed
         let modelCacheKey = "\(request.backend.rawValue):\(request.modelId)"
         if currentModelCacheKey != modelCacheKey {
             isModelLoaded = false
@@ -764,17 +747,14 @@ private final class StreamFinishState: @unchecked Sendable {
             }
         }
 
-        // Stderr handler for debugging - capture all Python output
         stderrPipe?.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
-                // EOF: pipe closed on the write end
                 return
             }
             guard let output = String(data: data, encoding: .utf8),
                   !output.isEmpty else { return }
 
-            // Log each line separately for clarity
             let lines = output.components(separatedBy: .newlines)
             for line in lines where !line.isEmpty {
                 VLMBridgeDiagnostics.log("[Python STDERR] \(line)")
@@ -810,7 +790,6 @@ private final class StreamFinishState: @unchecked Sendable {
     nonisolated static func shouldRetry(error: Error, retryCount: Int, maxRetries: Int) -> Bool {
         guard retryCount < maxRetries else { return false }
 
-        // Retry on process crashes or timeouts
         if let execError = error as? ExecutionError {
             switch execError {
             case .processCrashed, .processNotRunning, .timeout:
@@ -913,7 +892,6 @@ final class BridgeOutputDispatcher: @unchecked Sendable {
     }
 }
 
-// MARK: - Bridge Line Buffer
 final class BridgeLineBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var pending = ""
@@ -939,7 +917,6 @@ final class BridgeLineBuffer: @unchecked Sendable {
     }
 }
 
-// MARK: - Response Builder
 final class ResponseBuilder: @unchecked Sendable {
     private var parts: [String] = []
     private let lock = NSLock()
@@ -957,7 +934,6 @@ final class ResponseBuilder: @unchecked Sendable {
     }
 }
 
-// MARK: - Delegate Protocol
 @MainActor
 protocol VLMExecutionDelegate: AnyObject {
     func modelLoadingStarted(modelId: String)

@@ -3,7 +3,6 @@ import XCTest
 
 final class ToolTests: XCTestCase {
 
-    // MARK: - Tool Cases
 
     func testToolAllCases() {
         let allCases = Tool.allCases
@@ -25,7 +24,6 @@ final class ToolTests: XCTestCase {
         XCTAssertEqual(Tool.research.rawValue, "Research")
     }
 
-    // MARK: - ID
 
     func testToolId() {
         XCTAssertEqual(Tool.auto.id, "Auto")
@@ -36,7 +34,6 @@ final class ToolTests: XCTestCase {
         XCTAssertEqual(Tool.research.id, "Research")
     }
 
-    // MARK: - Icon
 
     func testToolIcon() {
         XCTAssertEqual(Tool.auto.icon, "sparkles")
@@ -47,7 +44,6 @@ final class ToolTests: XCTestCase {
         XCTAssertEqual(Tool.research.icon, "magnifyingglass")
     }
 
-    // MARK: - Subtitle
 
     func testToolSubtitle() {
         XCTAssertEqual(Tool.auto.subtitle, "Let the app choose tools")

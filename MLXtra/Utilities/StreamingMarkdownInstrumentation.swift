@@ -1,14 +1,12 @@
 import Foundation
 import os.signpost
 
-// MARK: - OSLog for streaming Markdown profiling
 
 let streamingMarkdownLog = OSLog(
     subsystem: "com.localstudio.mlxtra",
     category: "StreamingMarkdown"
 )
 
-// MARK: - Convenience wrappers
 
 enum StreamingMarkdownInstrumentation {
 
@@ -65,7 +63,6 @@ enum StreamingMarkdownInstrumentation {
     }
 }
 
-// MARK: - Interval state
 
 struct OSSignpostIntervalState {
     let id: OSSignpostID

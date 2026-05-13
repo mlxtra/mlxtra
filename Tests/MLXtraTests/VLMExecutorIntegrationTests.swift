@@ -3,7 +3,6 @@ import XCTest
 
 final class VLMExecutorIntegrationTests: XCTestCase {
 
-    // MARK: - Message Type Mapping Tests
 
     func testMessageTypeForBackend() {
         XCTAssertEqual(VLMExecutor.messageType(for: .image), "image.generate")
@@ -13,7 +12,6 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         XCTAssertEqual(VLMExecutor.messageType(for: .llm), "chat.completions")
     }
 
-    // MARK: - Should Retry Logic Tests
 
     func testShouldRetryForProcessCrashed() {
         XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.processCrashed(retryCount: 0), retryCount: 0, maxRetries: 1))
@@ -32,7 +30,6 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         XCTAssertFalse(VLMExecutor.shouldRetry(error: ExecutionError.pythonError("test"), retryCount: 0, maxRetries: 3))
     }
 
-    // MARK: - Execution Request Building Tests
 
     func testExecutionRequestMessageTypeMapping() {
         let backend = RuntimeBackend.vlm
@@ -96,7 +93,6 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         XCTAssertNotNil(request.parameters)
     }
 
-    // MARK: - JSON Serialization Tests
 
     func testExecutionMessageToDictionary() {
         let message = ExecutionMessage(
@@ -147,7 +143,6 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         XCTAssertNotNil(dict["function"])
     }
 
-    // MARK: - JSON Message Parsing Tests
 
     func testParseModelLoadingMessage() {
         let jsonString = "{\"type\": \"model.loading\", \"request_id\": \"req-123\", \"model\": \"test-model\", \"status\": \"loading\"}"

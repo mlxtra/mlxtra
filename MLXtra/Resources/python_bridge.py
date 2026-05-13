@@ -27,7 +27,6 @@ from bridge_utils import (
     normalize_music_model_id,
 )
 
-# Model registry for hot-swapping
 MODEL_REGISTRY: Dict[str, Any] = {}
 IMAGE_MODEL_REGISTRY: Dict[str, Any] = {}
 AUDIO_MODEL_REGISTRY: Dict[str, Any] = {}
@@ -58,7 +57,6 @@ def _positive_finite_float(value: Any) -> Optional[float]:
     return number if math.isfinite(number) and number > 0 else None
 
 
-# ── Batch constants for token streaming ──
 TOKEN_BATCH_SIZE = 10
 TOKEN_BATCH_FLUSH_S = 0.030
 
@@ -309,7 +307,6 @@ def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
 
 def load_music_model_if_needed(model_id: str, request: Optional[dict] = None):
     """Lazy load ACE-Step music generation handlers."""
-    # Normalize the model ID for ACE-Step lookup
     normalized_id = normalize_music_model_id(model_id)
 
     if model_id in MUSIC_MODEL_REGISTRY:
@@ -991,7 +988,6 @@ def _terminate_child(child: subprocess.Popen, timeout: float = 5.0):
         child.wait(timeout=1.0)
 
 
-# ── Persistent music subprocess ──
 _music_process = None
 
 

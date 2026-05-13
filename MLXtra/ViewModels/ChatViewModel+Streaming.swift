@@ -3,8 +3,6 @@ import Foundation
 @MainActor
 extension ChatViewModel {
     func loadModel(_ modelId: String) async throws {
-        // The executor handles lazy loading, we just need to trigger it
-        // by sending a request.
     }
 
     func finishActiveGeneration(isMusicGeneration: Bool) {

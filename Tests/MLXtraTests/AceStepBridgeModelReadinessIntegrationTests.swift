@@ -183,12 +183,10 @@ final class AceStepBridgeModelReadinessIntegrationTests: XCTestCase {
             return "ERROR: \(error.localizedDescription)"
         }
 
-        // Write input then close
         let inputData = "done\n".data(using: .utf8)!
         inputPipe.fileHandleForWriting.write(inputData)
         inputPipe.fileHandleForWriting.closeFile()
 
-        // Use a semaphore to wait for process to complete without blocking async
         let group = DispatchGroup()
         group.enter()
 

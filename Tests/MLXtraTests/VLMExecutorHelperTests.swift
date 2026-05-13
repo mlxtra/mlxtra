@@ -3,7 +3,6 @@ import XCTest
 
 final class VLMExecutorHelperTests: XCTestCase {
 
-    // MARK: - BridgeLineBuffer Tests
 
     func testBridgeLineBufferEmpty() {
         let buffer = BridgeLineBuffer()
@@ -95,7 +94,6 @@ final class VLMExecutorHelperTests: XCTestCase {
         XCTAssertTrue(lines.count >= 1 || true) // Test passes if no crash
     }
 
-    // MARK: - ResponseBuilder Tests
 
     func testResponseBuilderInitialState() {
         let builder = ResponseBuilder()

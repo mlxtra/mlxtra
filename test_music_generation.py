@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Add the runtime venv path
 REPO_ROOT = Path(__file__).resolve().parent
 RESOURCES_DIR = REPO_ROOT / "MLXtra/Resources"
 
@@ -172,7 +171,6 @@ def test_bridge():
     print(f"Bridge script: {bridge_path}")
     print(f"Exists: {bridge_path.exists()}")
 
-    # Add bridge directory to path
     sys.path.insert(0, str(bridge_path.parent))
 
     try:
@@ -180,7 +178,6 @@ def test_bridge():
 
         print("✓ acestep_bridge imported successfully")
 
-        # Test generation with a simple prompt
         request = {
             "model": "ACE-Step/acestep-v15-turbo-continuous",
             "messages": [{"role": "user", "content": "upbeat electronic dance music"}],
@@ -213,20 +210,16 @@ def main():
 
     results = []
 
-    # Test 1: Model presence
     results.append(("Model presence", test_model_presence()))
 
-    # Test 2: Initialization
     results.append(("Initialization", test_initialization()))
 
-    # Test 3: Bridge (only if initialization succeeded)
     if results[-1][1]:
         results.append(("Bridge", test_bridge()))
     else:
         print("\n⚠ Skipping bridge test due to initialization failure")
         results.append(("Bridge", False))
 
-    # Summary
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)

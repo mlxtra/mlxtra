@@ -14,7 +14,6 @@ import wave
 from pathlib import Path
 from typing import Optional
 
-# Setup paths
 REPO_ROOT = Path(__file__).resolve().parent
 
 
@@ -219,7 +218,6 @@ class MusicGenerationIntegrationTest:
         # Start with full system environment (like Swift does)
         env = dict(os.environ)
 
-        # Remove Python-related env vars that could cause conflicts (matching Swift)
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
         env.pop("VIRTUAL_ENV", None)
@@ -228,7 +226,6 @@ class MusicGenerationIntegrationTest:
         env.pop("PYENV_ROOT", None)
         env.pop("PYENV_VERSION", None)
 
-        # Set critical env vars for the bundled Python (matching Swift)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONHOME"] = str(
@@ -739,7 +736,6 @@ class MusicGenerationIntegrationTest:
 
         self.cleanup()
 
-        # Summary
         self.log("\n" + "=" * 60)
         self.log("TEST SUMMARY")
         self.log("=" * 60)

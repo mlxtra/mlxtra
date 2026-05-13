@@ -17,39 +17,30 @@ enum AIModel: String, CaseIterable, Identifiable, Codable {
         legacyProfile.subtitle
     }
 
-    // MARK: - Model Configuration
-
-    /// HuggingFace model ID for mlx-vlm
     var modelId: String {
         legacyProfile.modelId
     }
 
-    /// Maximum context window size (in tokens)
     var maxContextWindow: Int {
         legacyProfile.maxContextWindow
     }
 
-    /// Default max tokens for generation
     var defaultMaxTokens: Int {
         legacyProfile.defaultMaxTokens
     }
 
-    /// Estimated memory requirement in GB
     var memoryRequirementGB: Double {
         legacyProfile.estimatedMemoryGB ?? 0
     }
 
-    /// Model download size in GB
     var downloadSizeGB: Double {
         legacyProfile.downloadSizeGB
     }
 
-    /// Whether the model supports vision (images)
     var supportsVision: Bool {
         legacyProfile.supportsVision
     }
 
-    /// Temperature range (min, max, default)
     var temperatureRange: (min: Double, max: Double, default: Double) {
         let parameter = legacyProfile.parameterDefinition(key: "temperature")
         return (
@@ -59,42 +50,34 @@ enum AIModel: String, CaseIterable, Identifiable, Codable {
         )
     }
 
-    /// Nucleus sampling value used by the runtime.
     var topP: Double {
         parameterDefault("top_p", fallback: 1.0)
     }
 
-    /// Top-k sampling value used by the runtime.
     var topK: Int {
         Int(parameterDefault("top_k", fallback: 0))
     }
 
-    /// Minimum probability threshold used by the runtime.
     var minP: Double {
         parameterDefault("min_p", fallback: 0)
     }
 
-    /// Repetition penalty used by the runtime.
     var repetitionPenalty: Double {
         parameterDefault("repetition_penalty", fallback: 1.0)
     }
 
-    /// Whether to ask the model chat template for reasoning content.
     var enableThinking: Bool {
         legacyProfile.parameterDefinition(key: "enable_thinking")?.defaultValue.lowercased() == "true"
     }
 
-    /// Backend type
     var backend: RuntimeBackend {
         legacyProfile.backend
     }
 
-    /// Icon for the model
     var icon: String {
         legacyProfile.icon
     }
 
-    /// Get model info for display
     var info: ModelInfo {
         return ModelInfo(
             name: displayName,

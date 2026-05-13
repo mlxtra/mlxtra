@@ -9,7 +9,6 @@ struct ChatView: View {
 
     private let bottomAnchorID = "chat-bottom-anchor"
 
-    // Access chat through viewModel so updates are observed
     var chat: Chat? {
         viewModel.chats.first { $0.id == chatId }
     }

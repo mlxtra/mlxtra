@@ -70,7 +70,6 @@ def last_user_prompt(messages: list[dict]) -> str:
 
 def generate_music_once(request: dict) -> bool:
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
-    # Normalize the model ID for ACE-Step lookup
     normalized_id = normalize_music_model_id(model_id)
 
     messages = request.get("messages", [])
@@ -116,7 +115,6 @@ def generate_music_once(request: dict) -> bool:
             config_path=str(config_path),
             device=os.environ.get("ACESTEP_DEVICE", "mps"),
         )
-    # Check if initialization succeeded
     if not init_result or init_result[1] is False:
         error_msg = init_result[0] if init_result else "Unknown initialization error"
         send_json(

@@ -3,14 +3,12 @@ import XCTest
 
 final class MarkdownRenderingTests: XCTestCase {
 
-    // MARK: - Policy
 
     func testAssistantTextUsesFastPlainRendererByDefault() {
         XCTAssertTrue(AIContentRenderingPolicy.shouldUseFastPlainText(for: "Short answer."))
     }
 
     func testMarkdownDetectionTriggersRendering() {
-        // Headings, lists, code blocks, etc. should require rendered path
         XCTAssertFalse(AIContentRenderingPolicy.shouldUseFastPlainText(for: "# Heading\n\nContent"))
         XCTAssertFalse(AIContentRenderingPolicy.shouldUseFastPlainText(for: "**bold** text"))
     }
@@ -25,7 +23,6 @@ final class MarkdownRenderingTests: XCTestCase {
         XCTAssertEqual(AudioWaveformScrubberMetrics.barHeight(ratio: 0.1, maxHeight: 40), 7)
     }
 
-    // MARK: - Block parsing (via MarkdownBlockRenderer)
 
     func testHeadings() {
         let input = """
@@ -41,7 +38,6 @@ final class MarkdownRenderingTests: XCTestCase {
         let blocks = MarkdownBlockRenderer.blocks(from: input)
 
         XCTAssertGreaterThanOrEqual(blocks.count, 3)
-        // Verify all three headings are present with correct levels
         let headings = blocks.compactMap { block -> (Int, String)? in
             if case let .heading(level, content) = block { return (level, content) }
             return nil
@@ -65,14 +61,12 @@ final class MarkdownRenderingTests: XCTestCase {
         let blocks = MarkdownBlockRenderer.blocks(from: input)
 
         XCTAssertFalse(blocks.isEmpty)
-        // Find code block
         let codeBlocks = blocks.filter { if case .codeBlock = $0 { return true }; return false }
         XCTAssertEqual(codeBlocks.count, 1, "Should have exactly one code block")
         if case let .codeBlock(language, content) = codeBlocks[0] {
             XCTAssertEqual(language, "swift")
             XCTAssertTrue(content.contains("let x = 42"))
         }
-        // Should also have surrounding paragraphs
         let paragraphs = blocks.filter { if case .paragraph = $0 { return true }; return false }
         XCTAssertGreaterThanOrEqual(paragraphs.count, 1)
     }
@@ -217,7 +211,6 @@ final class MarkdownRenderingTests: XCTestCase {
         let blocks = MarkdownBlockRenderer.blocks(from: input)
 
         XCTAssertFalse(blocks.isEmpty)
-        // Verify heading is present
         XCTAssertTrue(blocks.contains(where: { if case .heading(level: 1, content: "Title") = $0 { return true }; return false }))
     }
 
@@ -289,7 +282,6 @@ final class MarkdownRenderingTests: XCTestCase {
         XCTAssertTrue(output.contains("Gazzew Boba U4"), "Rendered table should include data rows")
     }
 
-    // MARK: - Inline segments
 
     func testInlineSegmentsSplitLatexWithoutDroppingMarkdownText() {
         let segments = MarkdownInlineSegment.parseSegments("Use **energy** $E = mc^2$ now.")

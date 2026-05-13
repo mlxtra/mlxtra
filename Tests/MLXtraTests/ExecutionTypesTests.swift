@@ -3,7 +3,6 @@ import XCTest
 
 final class ExecutionTypesTests: XCTestCase {
 
-    // MARK: - ExecutionRequest Tests
 
     func testExecutionRequestDefaultValues() {
         let request = ExecutionRequest(
@@ -65,7 +64,6 @@ final class ExecutionTypesTests: XCTestCase {
         XCTAssertNotNil(request.parameters)
     }
 
-    // MARK: - ExecutionMessage Tests
 
     func testExecutionMessageBasic() {
         let message = ExecutionMessage(role: .user, content: "Test content")
@@ -122,7 +120,6 @@ final class ExecutionTypesTests: XCTestCase {
         XCTAssertNotNil(dict["tool_calls"])
     }
 
-    // MARK: - ExecutionToolCall Tests
 
     func testExecutionToolCallFunctionToDictionary() {
         let fn = ExecutionToolCallFunction(name: "test", arguments: "{\"key\": \"value\"}")
@@ -144,7 +141,6 @@ final class ExecutionTypesTests: XCTestCase {
         XCTAssertNotNil(dict["function"])
     }
 
-    // MARK: - MessageRole Tests
 
     func testMessageRoleRawValues() {
         XCTAssertEqual(MessageRole.system.rawValue, "system")
@@ -153,24 +149,19 @@ final class ExecutionTypesTests: XCTestCase {
         XCTAssertEqual(MessageRole.tool.rawValue, "tool")
     }
 
-    // MARK: - ExecutionEvent Tests
 
     func testExecutionEventCases() {
-        // Test started case
         if case .started = ExecutionEvent.started {
-            // Pass
         } else {
             XCTFail("Expected .started case")
         }
 
-        // Test token case
         if case .token(let text) = ExecutionEvent.token("hello") {
             XCTAssertEqual(text, "hello")
         } else {
             XCTFail("Expected .token case")
         }
 
-        // Test image case
         let imageURL = URL(fileURLWithPath: "/test/image.png")
         if case .image(let url) = ExecutionEvent.image(imageURL) {
             XCTAssertEqual(url, imageURL)
@@ -178,7 +169,6 @@ final class ExecutionTypesTests: XCTestCase {
             XCTFail("Expected .image case")
         }
 
-        // Test audio case
         let audioURL = URL(fileURLWithPath: "/test/audio.wav")
         if case .audio(let url) = ExecutionEvent.audio(audioURL) {
             XCTAssertEqual(url, audioURL)
@@ -186,7 +176,6 @@ final class ExecutionTypesTests: XCTestCase {
             XCTFail("Expected .audio case")
         }
 
-        // Test complete case
         let usage = TokenUsage(promptTokens: 10, completionTokens: 20)
         if case .complete(let text, let u) = ExecutionEvent.complete("response", usage: usage) {
             XCTAssertEqual(text, "response")
@@ -196,14 +185,12 @@ final class ExecutionTypesTests: XCTestCase {
             XCTFail("Expected .complete case")
         }
 
-        // Test error case
         if case .error(let err) = ExecutionEvent.error(ExecutionError.timeout) {
             XCTAssertNotNil(err)
         } else {
             XCTFail("Expected .error case")
         }
 
-        // Test progress case
         if case .progress(let msg) = ExecutionEvent.progress("loading...") {
             XCTAssertEqual(msg, "loading...")
         } else {
@@ -211,7 +198,6 @@ final class ExecutionTypesTests: XCTestCase {
         }
     }
 
-    // MARK: - TokenUsage Tests
 
     func testTokenUsageTotalTokens() {
         let usage = TokenUsage(promptTokens: 100, completionTokens: 50)

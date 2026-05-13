@@ -9,7 +9,6 @@ struct ThinkingView: View {
     init(content: String, isStreaming: Bool = false) {
         self.content = content
         self.isStreaming = isStreaming
-        // Start expanded while streaming, collapsed when complete
         self._isExpanded = State(initialValue: isStreaming)
     }
 
@@ -36,7 +35,6 @@ struct ThinkingView: View {
     }
 }
 
-// MARK: - Markdown Text View
 struct MarkdownTextView: View {
     let text: String
     let isStreaming: Bool
@@ -450,5 +448,3 @@ enum LatexRenderer {
         return result
     }
 }
-
-// MARK: - Tool Call View

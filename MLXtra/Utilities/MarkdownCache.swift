@@ -2,7 +2,6 @@ import Foundation
 import AppKit
 import CryptoKit
 
-// MARK: - Cache key
 
 struct MarkdownCacheKey: Hashable {
     let rawMarkdown: String
@@ -14,7 +13,6 @@ struct MarkdownCacheKey: Hashable {
     static let currentRendererVersion = 2
 }
 
-// MARK: - Cache
 
 /// Caches parsed Markdown blocks and rendered attributed strings.
 /// Used by both SwiftUI MarkdownTextView (blocks) and NSTextView-based
@@ -31,7 +29,6 @@ final class MarkdownCache {
         attributedCache.countLimit = 20
     }
 
-    // MARK: - Blocks (for SwiftUI MarkdownTextView — old parser path)
 
     func blocks(for text: String) -> [MarkdownBlock]? {
         let key = cacheKey(for: text)
@@ -43,7 +40,6 @@ final class MarkdownCache {
         blockCache.setObject(blocks as NSArray, forKey: key)
     }
 
-    // MARK: - Attributed string (for NSTextView final rendering)
 
     func attributedString(for text: String, style: MarkdownRenderStyle) -> NSAttributedString? {
         let key = attributedCacheKey(for: text, style: style)
@@ -55,7 +51,6 @@ final class MarkdownCache {
         attributedCache.setObject(string, forKey: key)
     }
 
-    // MARK: - Invalidation
 
     func invalidateAll() {
         blockCache.removeAllObjects()
@@ -66,7 +61,6 @@ final class MarkdownCache {
         attributedCache.removeAllObjects()
     }
 
-    // MARK: - Keys
 
     private func cacheKey(for text: String) -> NSString {
         "\(contentDigest(for: text)).\(text.utf8.count).\(MarkdownCacheKey.currentRendererVersion)" as NSString

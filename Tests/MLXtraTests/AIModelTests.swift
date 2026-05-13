@@ -89,7 +89,6 @@ final class AIModelTests: XCTestCase {
         ]
     }
 
-    // MARK: - AIModel Cases
 
     func testAIModelAllCases() {
         XCTAssertEqual(AIModel.allCases, expectedBuiltInModels.map(\.model))
@@ -101,7 +100,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.rawValue, "Qwen 3.5 Mini")
     }
 
-    // MARK: - ID and Display Name
 
     func testAIModelId() {
         XCTAssertEqual(AIModel.qwen35.id, "Qwen 3.5")
@@ -146,7 +144,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.subtitle, "Lightweight vision model (2B parameters)")
     }
 
-    // MARK: - Model ID (HuggingFace)
 
     func testAIModelModelId() {
         XCTAssertEqual(AIModel.qwen35.modelId, "mlx-community/Qwen3.5-9B-MLX-4bit")
@@ -154,7 +151,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.modelId, "mlx-community/Qwen3.5-2B-MLX-4bit")
     }
 
-    // MARK: - Context Window
 
     func testAIModelMaxContextWindow() {
         XCTAssertEqual(AIModel.qwen35.maxContextWindow, 32768)
@@ -162,7 +158,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.maxContextWindow, 32768)
     }
 
-    // MARK: - Default Max Tokens
 
     func testAIModelDefaultMaxTokens() {
         XCTAssertEqual(AIModel.qwen35.defaultMaxTokens, 4096)
@@ -170,7 +165,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.defaultMaxTokens, 4096)
     }
 
-    // MARK: - Memory Requirement
 
     func testAIModelMemoryRequirementGB() {
         XCTAssertEqual(AIModel.qwen35.memoryRequirementGB, 6.0)
@@ -178,7 +172,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.memoryRequirementGB, 3.0)
     }
 
-    // MARK: - Download Size
 
     func testAIModelDownloadSizeGB() {
         XCTAssertEqual(AIModel.qwen35.downloadSizeGB, 5.6)
@@ -186,7 +179,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.downloadSizeGB, 1.5)
     }
 
-    // MARK: - Vision Support
 
     func testAIModelSupportsVision() {
         XCTAssertTrue(AIModel.qwen35.supportsVision)
@@ -194,7 +186,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertTrue(AIModel.mini.supportsVision)
     }
 
-    // MARK: - Temperature Range
 
     func testAIModelTemperatureRange() {
         let qwenRange = AIModel.qwen35.temperatureRange
@@ -208,7 +199,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(gemmaRange.default, 0.7)
     }
 
-    // MARK: - Sampling Parameters
 
     func testAIModelTopP() {
         XCTAssertEqual(AIModel.qwen35.topP, 0.8)
@@ -234,7 +224,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.repetitionPenalty, 1.0)
     }
 
-    // MARK: - Thinking
 
     func testAIModelEnableThinking() {
         XCTAssertFalse(AIModel.qwen35.enableThinking)
@@ -242,7 +231,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertFalse(AIModel.mini.enableThinking)
     }
 
-    // MARK: - Backend
 
     func testAIModelBackend() {
         XCTAssertEqual(AIModel.qwen35.backend, .vlm)
@@ -250,7 +238,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.backend, .vlm)
     }
 
-    // MARK: - Icon
 
     func testAIModelIcon() {
         XCTAssertEqual(AIModel.qwen35.icon, "eye")
@@ -258,7 +245,6 @@ final class AIModelTests: XCTestCase {
         XCTAssertEqual(AIModel.mini.icon, "bolt")
     }
 
-    // MARK: - Model Info
 
     func testAIModelInfo() {
         for (model, configuration) in expectedBuiltInModels {
@@ -272,7 +258,6 @@ final class AIModelTests: XCTestCase {
         }
     }
 
-    // MARK: - Hardware Recommendations
 
     func testBestModelsForLowMemoryHardwareUsesMiniFallback() {
         XCTAssertEqual(AIModel.bestModelsForHardware(memoryGB: 4.0), [.mini])

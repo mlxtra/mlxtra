@@ -3,7 +3,6 @@ import XCTest
 
 final class RuntimeManagerTests: XCTestCase {
 
-    // MARK: - RuntimeState Tests
 
     func testRuntimeStateEquatable() {
         XCTAssertEqual(RuntimeManager.RuntimeState.notInitialized, RuntimeManager.RuntimeState.notInitialized)
@@ -25,7 +24,6 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(RuntimeManager.RuntimeState.error("test error"), RuntimeManager.RuntimeState.error("test error"))
     }
 
-    // MARK: - RuntimeError Tests
 
     func testRuntimeErrorLocalizedDescriptions() {
         XCTAssertEqual(
@@ -63,11 +61,8 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
-    // MARK: - Estimated Model Size (Static Logic)
 
     func testEstimatedModelSizeLogic() {
-        // Test model size estimation without instantiating RuntimeManager
-        // These are the same values that RuntimeManager.estimatedModelSize returns
         let modelSizes: [String: Double] = [
             "mlx-community/Qwen3.5-9B-MLX-4bit": 5.6,
             "google/gemma-4-e4b-it": 3.0,
@@ -88,14 +83,11 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(modelSizes["ACE-Step/acestep-v15-xl"], 19.0)
         XCTAssertEqual(modelSizes["ACE-Step/acestep-v15-base"], 5.0)
 
-        // Unknown model defaults to 5.0
         XCTAssertEqual(modelSizes["unknown/model"], nil) // Not in map means default 5.0
     }
 
-    // MARK: - Model Cache Path Logic
 
     func testModelCachePathConstruction() {
-        // Test the path construction logic
         let expectedSuffix = "models--mlx-community--Qwen3.5-9B"
 
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
@@ -113,10 +105,8 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(result, expected)
     }
 
-    // MARK: - Python Path Structure
 
     func testPythonExecutablePathStructure() {
-        // Test that the expected suffix is correct
         let path = "/some/path/venv/bin/python"
         XCTAssertTrue(path.hasSuffix("/venv/bin/python"))
     }
@@ -126,7 +116,6 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertTrue(path.hasSuffix("/acestep-venv/bin/python"))
     }
 
-    // MARK: - Model Cache Validation
 
     func testSnapshotValidationFindsWeightsAtSnapshotRoot() throws {
         let snapshotPath = try makeTemporaryDirectory()
@@ -156,15 +145,12 @@ final class RuntimeManagerTests: XCTestCase {
         let snapshotPath = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: snapshotPath) }
 
-        // No metadata in root
         
         let transformerPath = snapshotPath.appendingPathComponent("transformer")
         try FileManager.default.createDirectory(at: transformerPath, withIntermediateDirectories: true)
         
-        // Metadata in subdirectory
         try Data("{}".utf8).write(to: transformerPath.appendingPathComponent("config.json"))
         
-        // Weights in same or other subdirectory
         try Data([1]).write(to: transformerPath.appendingPathComponent("diffusion_pytorch_model.safetensors"))
 
         XCTAssertTrue(RuntimeManager.snapshotContainsModelFiles(snapshotPath))
@@ -447,7 +433,6 @@ final class RuntimeManagerTests: XCTestCase {
     }
 }
 
-// MARK: - RuntimeError Extension for Testing
 
 extension RuntimeError: Equatable {
     public static func == (lhs: RuntimeError, rhs: RuntimeError) -> Bool {

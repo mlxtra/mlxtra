@@ -3,7 +3,6 @@ import XCTest
 
 final class ChatAndMessageTests: XCTestCase {
 
-    // MARK: - Chat Tests
 
     func testChatInitialization() {
         let messages = [
@@ -74,7 +73,6 @@ final class ChatAndMessageTests: XCTestCase {
         )
     }
 
-    // MARK: - Message Tests
 
     func testMessageInitialization() {
         let message = Message(
@@ -147,7 +145,6 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertTrue(message.isStreaming)
     }
 
-    // MARK: - Message Codable
 
     func testMessageEncodingDecoding() throws {
         let originalMessage = Message(
@@ -274,7 +271,6 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertTrue(decodedMessage.toolCalls.isEmpty)
     }
 
-    // MARK: - ToolCall Tests
 
     func testToolCallInitialization() {
         let toolCall = ToolCall(

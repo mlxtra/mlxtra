@@ -189,9 +189,6 @@ extension ChatViewModel {
             chats[chatIndex].timestamp = Date()
             streamingContentStore.end(messageId: messageId)
 
-            // Warm the attributed string cache for final Markdown rendering.
-            // This runs the full pipeline: raw Markdown → swift-markdown AST →
-            // MarkdownBlockRenderer → MarkdownAttributedRenderer → cache.
             if !AIContentRenderingPolicy.shouldUseFastPlainText(for: content) {
                 _ = MarkdownAttributedRenderer.finalRender(
                     markdown: content,
@@ -361,7 +358,6 @@ extension ChatViewModel: VLMExecutionDelegate {
         isModelLoading = false
         loadingMessage = ""
         modelLoadProgress = nil
-        // Note: handleGenerationError is called by the main task catch block
     }
 
     func executionWillRetry(attempt: Int) {
@@ -369,6 +365,5 @@ extension ChatViewModel: VLMExecutionDelegate {
     }
 
     func executionDidFail(error: Error) {
-        // Note: handleGenerationError is called by the main task catch block
     }
 }

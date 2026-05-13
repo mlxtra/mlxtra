@@ -23,14 +23,12 @@ enum ChatStreamDiagnostics {
 class ChatViewModel: ObservableObject {
     static var generationTimeout: TimeInterval = 300.0
 
-    // MARK: - Performance Caches
     private var cachedRecentChats: [Chat] = []
     private var _cachedRecentChatsRevision: UInt = 0
     private var chatsSortRevision: UInt = 0
     private var sidebarMetadataCache: [UUID: ChatSidebarMetadata] = [:]
     private var _sidebarMetadataRevision: UInt = 0
 
-    // MARK: - Published Properties
     @Published var chats: [Chat] = [] {
         didSet { chatsSortRevision &+= 1 }
     }
@@ -50,7 +48,6 @@ class ChatViewModel: ObservableObject {
     @Published var isModelMenuOpen: Bool = false
     @Published var selectedImagePaths: [URL] = []
 
-    // MARK: - VLM Integration Properties
     @Published var isPythonLoading: Bool = false
     @Published var isModelLoading: Bool = false
     @Published var isGenerating: Bool = false
@@ -79,7 +76,6 @@ class ChatViewModel: ObservableObject {
     @Published var modelParameterRevision = 0
     @Published var composerFocusRequest = 0
 
-    // MARK: - Private Properties
     let chatPersistence: ChatPersistenceServicing
     let vlmExecutor: ChatModelExecuting
     let runtimeManager: ChatRuntimeManaging
@@ -95,7 +91,6 @@ class ChatViewModel: ObservableObject {
     var activeMusicGenerationDraft: MusicGenerationDraft?
     private var isCommittingComposerInput = false
 
-    // MARK: - Computed Properties
     var hasSelectedImages: Bool {
         !selectedImagePaths.isEmpty
     }
@@ -106,7 +101,6 @@ class ChatViewModel: ObservableObject {
 
     var recentChats: [Chat] {
         if chatsSortRevision == 0 {
-            // First access after init; populate cache.
             cachedRecentChats = chats.sorted { $0.timestamp > $1.timestamp }
             chatsSortRevision = 1
         } else if _cachedRecentChatsRevision != chatsSortRevision {
@@ -126,9 +120,7 @@ class ChatViewModel: ObservableObject {
         let icon = Self.computeSidebarIcon(for: chat)
         let preview = Self.computeSidebarPreview(for: chat)
 
-        // Re-check revision before caching (in case chats were mutated during computation).
         guard _sidebarMetadataRevision == chatsSortRevision else {
-            // Fall through to return computed value without caching.
             return ChatSidebarMetadata(icon: icon, preview: preview)
         }
         let metadata = ChatSidebarMetadata(icon: icon, preview: preview)
@@ -195,7 +187,6 @@ class ChatViewModel: ObservableObject {
             .appendingPathComponent("GeneratedMusic", isDirectory: true)
     }
 
-    // MARK: - Initialization
     init(
         chatPersistence: ChatPersistenceServicing? = nil,
         vlmExecutor: ChatModelExecuting? = nil,
@@ -226,7 +217,6 @@ class ChatViewModel: ObservableObject {
         self.vlmExecutor.delegate = self
     }
 
-    // MARK: - Persistence
     private func loadConversationHistory() {
         chats = chatPersistence.loadChats().map { chat in
             var restoredChat = chat
@@ -268,7 +258,6 @@ class ChatViewModel: ObservableObject {
         chatPersistence.scheduleSave(chats, selectedChatId: selectedChatId)
     }
 
-    // MARK: - Actions
     func createNewChat() {
         cancelGeneration()
 
@@ -351,10 +340,9 @@ class ChatViewModel: ObservableObject {
             messageId: userMessageId
         )
 
-        // Build message content
         let messageContent = trimmedInput
         if images.isEmpty && trimmedInput.isEmpty {
-            return // Don't send empty messages
+            return
         }
 
         let userMessage = Message(
@@ -369,7 +357,6 @@ class ChatViewModel: ObservableObject {
             chats[index].messages.append(userMessage)
             chats[index].timestamp = Date()
             
-            // Update title if this is the first message
             if chats[index].messages.count == 1 {
                 chats[index].title = ChatDisplayText.singleLine(
                     messageContent,
@@ -451,7 +438,6 @@ class ChatViewModel: ObservableObject {
             await vlmExecutor.terminate()
         }
 
-        // Flush any pending debounced writes so state is preserved.
         chatPersistence.flushPendingSave()
         persistConversationHistory()
     }
@@ -610,7 +596,6 @@ class ChatViewModel: ObservableObject {
                     modelLoadProgress = nil
                     throw error
                 }
-                // isModelLoading will be set to false in processStream when .complete or .error is received
             }
 
             isGenerating = true

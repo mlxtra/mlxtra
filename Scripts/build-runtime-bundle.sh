@@ -4,7 +4,6 @@ set -euo pipefail
 # MLX-VLM Runtime Bundle Builder for macOS
 # Creates a self-contained Python environment with mlx-vlm and dependencies
 
-# Directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 source "${SCRIPT_DIR}/runtime-dependencies.sh"
@@ -94,7 +93,6 @@ done
 echo "=== MLX-VLM Runtime Bundle Builder v${RUNTIME_VERSION} ==="
 echo ""
 
-# Clean previous build
 if [ "${FRESH_CACHE}" = "1" ]; then
     echo "Clearing runtime cache at ${CACHE_DIR}"
     rm -rf "${CACHE_DIR}"
@@ -124,7 +122,6 @@ fi
 echo "Step 2: Extracting Python..."
 mkdir -p "${BUILD_DIR}/python"
 pkgutil --expand "${PYTHON_PKG_PATH}" "${BUILD_DIR}/python_pkg"
-# Extract Python framework
 mkdir -p "${BUILD_DIR}/python/Frameworks"
 (
     cd "${BUILD_DIR}/python_pkg"
@@ -227,10 +224,8 @@ echo "Step 4: Installing dependencies..."
 VENV_PIP="${BUILD_DIR}/venv/bin/pip"
 VENV_PYTHON="${BUILD_DIR}/venv/bin/python"
 
-# Upgrade pip
 "${VENV_PIP}" install --upgrade pip
 
-# Install core dependencies
 for package in "${RUNTIME_MAIN_PYPI_PACKAGES[@]}"; do
     echo "Installing ${package}..."
     "${VENV_PIP}" install "${package}"
@@ -251,7 +246,6 @@ if [ -d "${BUILD_DIR}/python/Frameworks" ]; then
     cp -R "${BUILD_DIR}/python/Frameworks" "${OUTPUT_DIR}/python/"
 fi
 
-# Copy venv
 cp -R "${BUILD_DIR}/venv" "${OUTPUT_DIR}/venv"
 
 echo "Creating isolated ACE-Step runtime..."

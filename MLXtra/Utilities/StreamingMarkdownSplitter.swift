@@ -1,22 +1,20 @@
 import Foundation
 
-// MARK: - Split result
 
 struct SplitResult {
-    let newBlocks: [MarkdownBlock]            // new stable blocks since committedEndIndex
+    let newBlocks: [MarkdownBlock]
     let tail: MarkdownTail
-    let newCommittedEndIndex: String.Index    // right after the last stable block
-    let newCommittedUTF16Offset: Int          // fallback for index recovery
+    let newCommittedEndIndex: String.Index
+    let newCommittedUTF16Offset: Int
 }
 
-// MARK: - Streaming state
 
 /// Tracks splitter position and NSTextStorage layout during streaming.
 /// Kept separate from the pure splitter — this is mutable view state.
 final class StreamingMarkdownState {
     var committedEndIndex: String.Index?
     var committedUTF16Offset: Int = 0
-    var stableStorageEndLocation: Int = 0    // NSTextStorage length after last stable block
+    var stableStorageEndLocation: Int = 0
     var lastSplitTime: CFTimeInterval = 0
 
     func reset() {
@@ -32,7 +30,6 @@ final class StreamingMarkdownState {
     }
 }
 
-// MARK: - Splitter
 
 /// Pure function: splits streaming Markdown text into stable completed blocks
 /// and an unstable tail. Does NOT render — only produces `MarkdownBlock` values.
@@ -72,20 +69,18 @@ struct StreamingMarkdownSplitter {
         }
 
         var blocks: [MarkdownBlock] = []
-        var cursor = 0  // index within `lines`
+        var cursor = 0
         var currentIndex = startIndex
         while cursor < lines.count {
             let line = lines[cursor]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            // Skip empty lines
             if trimmed.isEmpty {
                 cursor += 1
                 currentIndex = advanceIndexByLines(in: rawText, from: startIndex, count: cursor, lines: lines)
                 continue
             }
 
-            // Code fence
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                 let result = parseCodeFence(lines: lines, cursor: cursor)
                 if let fenceResult = result {
@@ -94,7 +89,6 @@ struct StreamingMarkdownSplitter {
                     currentIndex = advanceIndexByLines(in: rawText, from: startIndex, count: cursor, lines: lines)
                     continue
                 }
-                // Open code fence — not stable
                 let accumulated = lines[cursor...].joined(separator: "\n")
                 let tail: MarkdownTail = .openCodeFence(
                     accumulated,
@@ -108,17 +102,14 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Heading — stable only if next line has begun (not at streaming EOF)
             if let heading = parseHeadingLine(trimmed) {
                 let nextNonEmptyAfterHeading = nextNonEmptyLine(lines, from: cursor + 1)
                 if let next = nextNonEmptyAfterHeading {
-                    // Next line exists and is not empty — heading is stable
                     blocks.append(heading)
                     cursor = next.index
                     currentIndex = advanceIndexByLines(in: rawText, from: startIndex, count: cursor, lines: lines)
                     continue
                 }
-                // No next line yet — heading stays in tail, not stable
                 return SplitResult(
                     newBlocks: blocks,
                     tail: .paragraph(lines[cursor...].joined(separator: "\n")),
@@ -127,7 +118,6 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Divider
             if isDividerLine(trimmed) {
                 blocks.append(.divider)
                 cursor += 1
@@ -135,7 +125,6 @@ struct StreamingMarkdownSplitter {
                 continue
             }
 
-            // Math block
             if trimmed.hasPrefix("$$") || trimmed.hasPrefix("\\[") || trimmed.hasPrefix("\\begin{equation}") {
                 let result = parseMathBlock(lines: lines, cursor: cursor)
                 if let mathResult = result {
@@ -144,7 +133,6 @@ struct StreamingMarkdownSplitter {
                     currentIndex = advanceIndexByLines(in: rawText, from: startIndex, count: cursor, lines: lines)
                     continue
                 }
-                // Open math block — not stable
                 return SplitResult(
                     newBlocks: blocks,
                     tail: .unsafePlain(lines[cursor...].joined(separator: "\n")),
@@ -153,11 +141,9 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Table — check if this line + next line form a table
             if trimmed.contains("|") {
                 let tableEnd = findTableEnd(lines: lines, from: cursor)
                 if tableEnd > cursor + 1 {
-                    // Table has at least 2 lines (header + separator) and is complete
                     let tableLines = Array(lines[cursor..<tableEnd])
                     let tableBlock = parseTableBlock(tableLines)
                     blocks.append(tableBlock)
@@ -165,7 +151,6 @@ struct StreamingMarkdownSplitter {
                     currentIndex = advanceIndexByLines(in: rawText, from: startIndex, count: cursor, lines: lines)
                     continue
                 }
-                // Single pipe line or incomplete table
                 return SplitResult(
                     newBlocks: blocks,
                     tail: .incompleteTable(Array(lines[cursor...])),
@@ -174,11 +159,9 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Blockquote — group consecutive `>` lines
             if trimmed.hasPrefix(">") {
                 let quoteEnd = findQuoteEnd(lines: lines, from: cursor)
                 if quoteEnd < lines.count {
-                    // Quote is complete (followed by non-empty, non-quote content or blank line)
                     let quoteLines = Array(lines[cursor..<quoteEnd]).map {
                         let t = $0.trimmingCharacters(in: .whitespaces)
                         return t.hasPrefix(">") ? String(t.dropFirst()).trimmingCharacters(in: .whitespaces) : t
@@ -188,7 +171,6 @@ struct StreamingMarkdownSplitter {
                     currentIndex = advanceIndexByLines(in: rawText, from: startIndex, count: cursor, lines: lines)
                     continue
                 }
-                // Quote at end of stream — not stable
                 return SplitResult(
                     newBlocks: blocks,
                     tail: .paragraph(lines[cursor...].joined(separator: "\n")),
@@ -197,7 +179,6 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Task list
             if isTaskListItem(trimmed) {
                 let listEnd = findTaskListEnd(lines: lines, from: cursor)
                 if listEnd < lines.count {
@@ -215,7 +196,6 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Unordered list
             if isUnorderedListItem(trimmed) {
                 let listEnd = findListEnd(lines: lines, from: cursor, isOrdered: false)
                 if listEnd < lines.count {
@@ -235,7 +215,6 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Ordered list
             if isOrderedListItem(trimmed) {
                 let listEnd = findListEnd(lines: lines, from: cursor, isOrdered: true)
                 if listEnd < lines.count {
@@ -253,16 +232,13 @@ struct StreamingMarkdownSplitter {
                 )
             }
 
-            // Paragraph — collect until next boundary
             let paraEnd = findParagraphEnd(lines: lines, from: cursor)
             let paraLines = Array(lines[cursor..<paraEnd])
             let paraText = paraLines.joined(separator: "\n")
 
             if paraEnd < lines.count {
-                // Paragraph is complete (next line is empty or a boundary)
                 blocks.append(.paragraph(content: paraText))
                 cursor = paraEnd
-                // Skip trailing blank line if present
                 if cursor < lines.count && lines[cursor].trimmingCharacters(in: .whitespaces).isEmpty {
                     cursor += 1
                 }
@@ -270,7 +246,6 @@ struct StreamingMarkdownSplitter {
                 continue
             }
 
-            // Paragraph at end of stream — not stable. Check for unsafe constructs.
             if hasUnsafeConstruct(paraText) {
                 return SplitResult(
                     newBlocks: blocks,
@@ -296,7 +271,6 @@ struct StreamingMarkdownSplitter {
         )
     }
 
-    // MARK: - Index validation
 
     private func validatedStart(
         rawText: String,
@@ -314,7 +288,6 @@ struct StreamingMarkdownSplitter {
         return rawText.startIndex
     }
 
-    // MARK: - Index helpers
 
     private func indexFromUTF16Offset(_ offset: Int, in text: String) -> String.Index? {
         guard offset >= 0, offset <= text.utf16.count else { return nil }

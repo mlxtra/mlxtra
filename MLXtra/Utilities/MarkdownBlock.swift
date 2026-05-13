@@ -30,7 +30,6 @@ enum MarkdownTail: Equatable {
     case empty
 }
 
-// MARK: - Inline segments
 
 enum MarkdownInlineSegment: Equatable {
     case text(String)
@@ -98,7 +97,6 @@ extension MarkdownInlineSegment {
         }
     }
 
-    // MARK: - Helpers
 
     private static func normalizeHTMLLikeTags(_ text: String) -> String {
         var result = text

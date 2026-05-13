@@ -23,7 +23,6 @@ struct MarkdownBlockRenderer {
         return blocks
     }
 
-    // MARK: - Block conversion
 
     private static func convert(_ block: any Markup) -> [MarkdownBlock] {
         switch block {
@@ -36,7 +35,6 @@ struct MarkdownBlockRenderer {
             return [.codeBlock(language: (lang?.isEmpty ?? true) ? nil : lang, content: code)]
 
         case let paragraph as Paragraph:
-            // Check for math block patterns within paragraph text
             let text = plainText(paragraph)
             if let math = parseMathBlock(from: text) {
                 return [math]
@@ -88,7 +86,6 @@ struct MarkdownBlockRenderer {
             return [.divider]
 
         default:
-            // For unrecognized block types, attempt to extract text
             let text = plainText(block)
             guard !text.isEmpty else { return [] }
             if let math = parseMathBlock(from: text) {
@@ -98,7 +95,6 @@ struct MarkdownBlockRenderer {
         }
     }
 
-    // MARK: - Helpers
 
     /// Extracts all inline text from a Markup node, joining children with spaces.
     private static func plainText(_ node: some Markup) -> String {
@@ -140,7 +136,6 @@ struct MarkdownBlockRenderer {
             if let inlineHTML = child as? InlineHTML {
                 return inlineHTML.rawHTML
             }
-            // Recursively handle other markup types
             return plainText(child)
         }.joined(separator: "")
     }
@@ -152,7 +147,6 @@ struct MarkdownBlockRenderer {
         return trimmed.unicodeScalars.allSatisfy(allowed.contains) && trimmed.contains("-")
     }
 
-    // MARK: - Math block detection
 
     private static func parseMathBlock(from text: String) -> MarkdownBlock? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)

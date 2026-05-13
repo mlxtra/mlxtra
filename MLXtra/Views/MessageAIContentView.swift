@@ -55,8 +55,6 @@ private struct PlainAssistantTextView: View {
 
 enum AIContentRenderingPolicy {
     static func shouldUseFastPlainText(for content: String) -> Bool {
-        // Fast path: scan for structural Markdown markers.
-        // Uses line-by-line prefix checks to avoid regex overhead in the hot path.
 
         let hasHeading = content.contains("\n# ") || content.hasPrefix("# ")
         let hasBold = content.contains("**")
@@ -198,11 +196,9 @@ private final class FastStreamingTextNativeView: NSView {
     private var boundStreamingContentId: UUID?
     private var lastHeightMeasurementTime = Date.distantPast
 
-    // Reasoning-filter cache — avoids full-string filter on every streaming token.
     private var lastFilterInput = ""
     private var lastFilterOutput = ""
 
-    // Hybrid streaming Markdown state
     private let markdownState = StreamingMarkdownState()
     private let splitter = StreamingMarkdownSplitter()
     private let renderStyle = MarkdownRenderStyle.default
@@ -306,34 +302,27 @@ private final class FastStreamingTextNativeView: NSView {
 
         guard let storage = textView.textStorage else { return }
 
-        // Correct mutation order: [stable blocks][old tail] → [stable blocks][new stable][new tail]
-        //
-        // 1. Remove old tail first — otherwise stable blocks get appended after stale tail text
+        // Preserve block order by removing the unstable tail before appending newly stable blocks.
         let oldTailRange = markdownState.tailRange(storageLength: storage.length)
         if oldTailRange.length > 0 {
             storage.replaceCharacters(in: oldTailRange, with: NSAttributedString())
         }
 
-        // 2. Append newly stable blocks (rendered once, never touched again)
         if !result.newBlocks.isEmpty {
             let blockAttr = MarkdownAttributedRenderer.attributedString(
                 from: result.newBlocks,
                 style: renderStyle
             )
-            // Insert paragraph separator between existing stable blocks and new ones,
-            // matching what MarkdownAttributedRenderer does between blocks within a batch.
             if storage.length > 0 {
                 storage.append(NSAttributedString(string: "\n"))
             }
             storage.append(blockAttr)
         }
 
-        // 3. Update stable end after stable blocks are appended
         markdownState.stableStorageEndLocation = storage.length
         markdownState.committedEndIndex = result.newCommittedEndIndex
         markdownState.committedUTF16Offset = result.newCommittedUTF16Offset
 
-        // 4. Append new tail
         let tailAttr = MarkdownAttributedRenderer.tailAttributedString(
             from: result.tail,
             style: renderStyle
@@ -559,5 +548,3 @@ private struct RecoveryNoticeView: View {
         }
     }
 }
-
-// MARK: - Thinking View

@@ -4,7 +4,6 @@ import XCTest
 
 final class ModelDownloadManagerTests: XCTestCase {
 
-    // MARK: - DownloadState Tests
 
     func testDownloadStateEquatable() {
         XCTAssertEqual(ModelDownloadManager.DownloadState.notDownloaded, ModelDownloadManager.DownloadState.notDownloaded)
@@ -367,7 +366,6 @@ final class ModelDownloadManagerTests: XCTestCase {
         XCTAssertEqual(event["message"] as? String, "Usage: acestep_download_helper.py <repo_id> <local_dir>")
     }
 
-    // MARK: - ModelDownloadError Tests
 
     func testModelDownloadErrorLocalizedDescription() {
         XCTAssertEqual(

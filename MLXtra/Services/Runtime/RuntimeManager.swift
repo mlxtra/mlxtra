@@ -274,7 +274,6 @@ enum RuntimeUpdateError: LocalizedError {
     }
 }
 
-/// Manages Python runtime lifecycle and bundle
 @MainActor
 class RuntimeManager: ObservableObject {
     @Published var state: RuntimeState = .notInitialized
@@ -548,7 +547,6 @@ class RuntimeManager: ObservableObject {
         return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
     }
     
-    /// Initialize the Python runtime
     func initialize() async throws {
         switch state {
         case .notInitialized, .error:
@@ -606,8 +604,6 @@ class RuntimeManager: ObservableObject {
         loadingMessage = ""
     }
 
-    /// Validate only the runtime pieces needed to download this model.
-    /// Downloading should not require unrelated model runtimes to be present.
     func validateDownloadSupport(for modelId: String) throws {
         try validateDownloadSupport(
             for: DownloadableModel(
@@ -621,7 +617,6 @@ class RuntimeManager: ObservableObject {
         )
     }
 
-    /// Validate only the runtime pieces needed to download this model.
     /// Downloading should not require unrelated model runtimes to be present.
     func validateDownloadSupport(for model: DownloadableModel) throws {
         let context = try downloadSupportValidationContext(for: model)
@@ -791,40 +786,32 @@ class RuntimeManager: ObservableObject {
         }
     }
     
-    /// Get path to Python executable
     func pythonExecutablePath() -> URL {
         runtimeBundleURL.appendingPathComponent("venv/bin/python")
     }
 
-    /// Get path to ACE-Step Python executable (separate venv)
     func acestepPythonExecutablePath() -> URL {
         runtimeBundleURL.appendingPathComponent("acestep-venv/bin/python")
     }
 
-    /// Get path to ACE-Step download helper script
     func acestepDownloadHelperPath() -> URL {
         runtimeBundleURL.appendingPathComponent("acestep_download_helper.py")
     }
 
-    /// Get path to Hugging Face download helper script
     func huggingFaceDownloadHelperPath() -> URL {
         runtimeBundleURL.appendingPathComponent("hf_download_helper.py")
     }
     
-    /// Get Python version directory
     func pythonSitePackagesPath() -> URL {
-        // Try different Python versions
         for version in ["python3.13", "python3.12", "python3.11"] {
             let path = runtimeBundleURL.appendingPathComponent("venv/lib/\(version)/site-packages")
             if FileManager.default.fileExists(atPath: path.path) {
                 return path
             }
         }
-        // Default fallback
         return runtimeBundleURL.appendingPathComponent("venv/lib/python3.12/site-packages")
     }
     
-    /// Get path to the bundled Python framework home.
     /// This must be set as PYTHONHOME when launching the bundled Python so
     /// it can locate the standard library and C extension modules.
     func pythonHomePath() -> URL {
@@ -832,13 +819,11 @@ class RuntimeManager: ObservableObject {
             .appendingPathComponent("python/Frameworks/Versions/3.12")
     }
 
-    /// Get path to bridge script
     func bridgeScriptPath() -> URL {
         Bundle.main.bundleURL
             .appendingPathComponent("Contents/Resources/python_bridge.py")
     }
     
-    /// Get path to a specific model in HF cache
     func modelCachePath(modelId: String) -> URL {
         Self.modelCachePath(modelId: modelId)
     }
@@ -856,7 +841,6 @@ class RuntimeManager: ObservableObject {
             .appendingPathComponent("models--" + modelId.replacingOccurrences(of: "/", with: "--"))
     }
 
-    /// Get the expected local storage path for a model.
     /// Hugging Face models use the default HF cache so downloads can be shared with other apps.
     func modelStoragePath(modelId: String) -> URL {
         if modelId.hasPrefix("ACE-Step/") {
@@ -865,7 +849,6 @@ class RuntimeManager: ObservableObject {
         return modelCachePath(modelId: modelId)
     }
 
-    /// Get the expected local storage path for a catalog-backed model.
     func modelStoragePath(for model: DownloadableModel) -> URL {
         if model.source.usesComponentBundle {
             return checkpointsPath
@@ -873,7 +856,6 @@ class RuntimeManager: ObservableObject {
         return modelCachePath(modelId: model.source.downloadRepository ?? model.modelId)
     }
 
-    /// Check if model is already downloaded (HF cache)
     func isModelDownloaded(modelId: String) -> Bool {
         Self.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
     }
@@ -899,16 +881,13 @@ class RuntimeManager: ObservableObject {
         checkpointsPath: URL,
         huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
     ) -> ModelStorageStatus {
-        // Special handling for ACE-Step models - check component subdirectories under checkpoints/
         if modelId.hasPrefix("ACE-Step/") {
             return aceStepModelStorageStatus(checkpointsPath: checkpointsPath)
         }
 
-        // For other models, check HF cache structure
         let path = modelCachePath(modelId: modelId, huggingFaceCacheRoot: huggingFaceCacheRoot)
         RuntimeDiagnostics.log("[RuntimeManager] Checking HF cache for \(modelId) at \(path.path)")
 
-        // Check if directory exists and has contents
         guard FileManager.default.fileExists(atPath: path.path),
               let contents = try? FileManager.default.contentsOfDirectory(atPath: path.path),
               !contents.isEmpty else {
@@ -916,7 +895,6 @@ class RuntimeManager: ObservableObject {
             return .missing
         }
 
-        // Check for snapshots subdirectory (standard HF cache structure)
         let snapshotsPath = path.appendingPathComponent("snapshots")
         if FileManager.default.fileExists(atPath: snapshotsPath.path) {
             for snapshotPath in Self.snapshotCandidates(modelCachePath: path, snapshotsPath: snapshotsPath) {
@@ -950,8 +928,6 @@ class RuntimeManager: ObservableObject {
         )
     }
 
-    /// ACE-Step models download to component subdirectories under checkpoints/
-    /// Check if all main model components exist and contain actual weight files
     private nonisolated static func isAceStepModelDownloaded(checkpointsPath: URL) -> Bool {
         aceStepModelStorageStatus(checkpointsPath: checkpointsPath).isDownloaded
     }
@@ -1151,14 +1127,12 @@ class RuntimeManager: ObservableObject {
             "processor_config.json"
         ]
 
-        // First check the root directory (standard for LLMs/VLMs)
         for filename in metadataFilenames {
             if FileManager.default.fileExists(atPath: snapshotPath.appendingPathComponent(filename).path) {
                 return true
             }
         }
 
-        // Fallback: check common subdirectories (standard for multi-component models like FLUX)
         let subdirectories = ["transformer", "vae", "unet", "text_encoder"]
         for subdir in subdirectories {
             let subdirPath = snapshotPath.appendingPathComponent(subdir)
@@ -1211,9 +1185,7 @@ class RuntimeManager: ObservableObject {
             || filename.hasSuffix(".bin.index.json")
     }
 
-    /// Get estimated model size
     func estimatedModelSize(modelId: String) -> Double {
-        // These are rough estimates in GB
         if modelId.contains("Qwen3.5-9B") {
             return 5.6
         } else if modelId.contains("gemma-4") {
@@ -1235,7 +1207,6 @@ class RuntimeManager: ObservableObject {
     }
 }
 
-// MARK: - Errors
 
 enum RuntimeError: LocalizedError {
     case bundleNotFound(String)

@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 
-# Setup environment
 bundle_dir = Path(__file__).parent
 venv_path = bundle_dir / "MLXtra" / "Resources" / "runtime" / "macos-arm64" / "venv"
 
@@ -18,7 +17,6 @@ if venv_path.exists():
             print(f"Added {site_packages} to path")
             break
 
-# Test imports
 try:
     import mlx
 

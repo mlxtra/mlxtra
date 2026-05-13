@@ -1,7 +1,6 @@
 import Foundation
 
 extension StreamingMarkdownSplitter {
-    // MARK: - Block parsers
 
     struct CodeFenceResult {
         let block: MarkdownBlock
@@ -123,7 +122,6 @@ extension StreamingMarkdownSplitter {
         }
     }
 
-    // MARK: - Line detectors
 
     func parseHeadingLine(_ line: String) -> MarkdownBlock? {
         let hashes = line.prefix(while: { $0 == "#" }).count
@@ -164,7 +162,6 @@ extension StreamingMarkdownSplitter {
         return String(trimmed[trimmed.index(after: after)...]).trimmingCharacters(in: .whitespaces)
     }
 
-    // MARK: - Range finders
 
     func nextNonEmptyLine(_ lines: [String], from index: Int) -> (index: Int, line: String)? {
         var i = index
@@ -240,7 +237,6 @@ extension StreamingMarkdownSplitter {
         return i
     }
 
-    // MARK: - Unsafe construct detection
 
     func hasUnsafeConstruct(_ text: String) -> Bool {
         if let bracketEnd = text.range(of: "](") {

@@ -3,7 +3,6 @@ import XCTest
 
 final class RuntimeBackendAndErrorTests: XCTestCase {
 
-    // MARK: - RuntimeBackend Tests
 
     func testRuntimeBackendRawValues() {
         XCTAssertEqual(RuntimeBackend.vlm.rawValue, "vlm")
@@ -38,7 +37,6 @@ final class RuntimeBackendAndErrorTests: XCTestCase {
         XCTAssertEqual(decoded, backend)
     }
 
-    // MARK: - ExecutionError Tests
 
     func testExecutionErrorLocalizedDescriptions() {
         XCTAssertEqual(ExecutionError.notInitialized.localizedDescription, "Executor not initialized")
@@ -70,14 +68,12 @@ final class RuntimeBackendAndErrorTests: XCTestCase {
         XCTAssertTrue(error.localizedDescription.contains("Error line 2"))
     }
 
-    // MARK: - Error Conformance
 
     func testExecutionErrorIsError() {
         let error: Error = ExecutionError.timeout
         XCTAssertNotNil(error)
     }
 
-    // MARK: - Error Differentiation
 
     func testExecutionErrorsAreDifferent() {
         let error1 = ExecutionError.timeout

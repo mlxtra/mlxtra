@@ -3,7 +3,6 @@ import XCTest
 
 final class DownloadableModelTests: XCTestCase {
 
-    // MARK: - DownloadableModel Properties
 
     func testDownloadableModelProperties() {
         let model = DownloadableModel(
@@ -53,7 +52,6 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertNotEqual(model1, model3)
     }
 
-    // MARK: - Embedded Models
 
     func testEmbeddedModelsContainsVisionModels() {
         let embedded = DownloadableModel.embedded
@@ -147,7 +145,6 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertEqual(audioModels.first?.name, "KugelAudio 0 Open")
     }
 
-    // MARK: - Identifiable Conformance
 
     func testDownloadableModelIdentifiable() {
         let model = DownloadableModel(
@@ -162,7 +159,6 @@ final class DownloadableModelTests: XCTestCase {
     }
 }
 
-// MARK: - ModelModality Tests
 
 final class ModelModalityTests: XCTestCase {
 
@@ -197,7 +193,6 @@ final class ModelModalityTests: XCTestCase {
     }
 }
 
-// MARK: - ModelInfo Tests
 
 final class ModelInfoTests: XCTestCase {
 

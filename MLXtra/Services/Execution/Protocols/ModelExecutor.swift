@@ -1,6 +1,5 @@
 import Foundation
 
-/// Protocol for model executors (VLM, LLM, Audio, Image, etc.)
 @MainActor
 protocol ModelExecutor: AnyObject {
     var backend: RuntimeBackend { get }
@@ -125,7 +124,6 @@ enum ExecutionEvent {
     case modelLoadProgress(ModelLoadProgress)
 }
 
-/// Token usage statistics
 struct TokenUsage {
     let promptTokens: Int
     let completionTokens: Int
@@ -151,13 +149,12 @@ struct TokenUsage {
     var tokensPerSecond: Double? { generationTokensPerSecond }
 }
 
-/// Runtime backend types
 enum RuntimeBackend: String, Codable, CaseIterable {
-    case vlm = "vlm"           // mlx-vlm (Vision Language Model)
-    case llm = "llm"           // mlx-lm (Text-only LLM)
-    case audio = "audio"       // mlx-audio (TTS/STT)
-    case image = "image"       // mflux (Image generation)
-    case music = "music"       // ACE-Step (Music generation)
+    case vlm = "vlm"
+    case llm = "llm"
+    case audio = "audio"
+    case image = "image"
+    case music = "music"
     
     var displayName: String {
         switch self {
@@ -170,7 +167,6 @@ enum RuntimeBackend: String, Codable, CaseIterable {
     }
 }
 
-/// Execution errors
 enum ExecutionError: Error {
     case notInitialized
     case processNotRunning

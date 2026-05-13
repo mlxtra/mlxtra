@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 
-// MARK: - Render style
 
 struct MarkdownRenderStyle: @unchecked Sendable {
     let fontSize: CGFloat
@@ -27,13 +26,11 @@ struct MarkdownRenderStyle: @unchecked Sendable {
     )
 }
 
-// MARK: - Attributed string renderer
 
 /// Renders `[MarkdownBlock]` and `MarkdownTail` values to `NSAttributedString`
 /// for direct use with `NSTextStorage`.
 struct MarkdownAttributedRenderer {
 
-    // MARK: - Full pipeline (raw Markdown → NSAttributedString)
 
     /// Runs the full final-render pipeline: raw Markdown → swift-markdown AST →
     /// `MarkdownBlockRenderer` → semantic blocks → `NSAttributedString`.
@@ -50,7 +47,6 @@ struct MarkdownAttributedRenderer {
         return result
     }
 
-    // MARK: - Full document (from blocks)
 
     static func attributedString(
         from blocks: [MarkdownBlock],
@@ -66,7 +62,6 @@ struct MarkdownAttributedRenderer {
         return result
     }
 
-    // MARK: - Single block
 
     static func attributedString(
         from block: MarkdownBlock,
@@ -116,7 +111,6 @@ struct MarkdownAttributedRenderer {
         }
     }
 
-    // MARK: - Tail rendering
 
     static func tailAttributedString(
         from tail: MarkdownTail,
@@ -146,7 +140,6 @@ struct MarkdownAttributedRenderer {
         }
     }
 
-    // MARK: - Block renderers
 
     private static func heading(_ text: String, level: Int, style: MarkdownRenderStyle) -> NSAttributedString {
         let result = inlineAttributedString(text, style: style)
@@ -263,7 +256,6 @@ struct MarkdownAttributedRenderer {
         )
     }
 
-    // MARK: - Inline rendering
 
     private static func inlineAttributedString(_ text: String, style: MarkdownRenderStyle) -> NSAttributedString {
         let baseFont = NSFont.systemFont(ofSize: style.fontSize)
