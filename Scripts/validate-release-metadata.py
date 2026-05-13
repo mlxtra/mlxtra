@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate MLXHub release channel and model catalog metadata."""
+"""Validate MLXtra release channel and model catalog metadata."""
 
 from __future__ import annotations
 
@@ -406,12 +406,12 @@ def parse_args() -> argparse.Namespace:
     script_dir = pathlib.Path(__file__).resolve().parent
     project_dir = script_dir.parent
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--catalog", type=pathlib.Path, default=project_dir / "MLXHub/Resources/model-catalog.json")
-    parser.add_argument("--channel", type=pathlib.Path, default=project_dir / "MLXHub/Resources/stable-channel.json")
+    parser.add_argument("--catalog", type=pathlib.Path, default=project_dir / "MLXtra/Resources/model-catalog.json")
+    parser.add_argument("--channel", type=pathlib.Path, default=project_dir / "MLXtra/Resources/stable-channel.json")
     parser.add_argument(
         "--runtime-manifest",
         type=pathlib.Path,
-        default=project_dir / "MLXHub/Resources/runtime/macos-arm64/runtime-manifest.json",
+        default=project_dir / "MLXtra/Resources/runtime/macos-arm64/runtime-manifest.json",
     )
     parser.add_argument(
         "--allow-runtime-placeholders",

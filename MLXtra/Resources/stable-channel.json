@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "catalog": {
+    "version": "2026.05.09",
+    "url": "https://github.com/kimistudio/mlxtra/releases/download/catalog-2026.05.09/model-catalog.json",
+    "sha256": "b208da185d1bd51a05bbbf03718ca619f63aa7aae6a3df0ab1b5fd8e3c713a67",
+    "sizeBytes": 17305
+  },
+  "runtimes": [
+    {
+      "version": "0.1.0",
+      "platform": "macos",
+      "arch": "arm64",
+      "url": "https://github.com/kimistudio/mlxtra/releases/download/runtime-0.1.0/runtime-macos-arm64-0.1.0.zip",
+      "sha256": "replace-with-runtime-archive-sha256",
+      "sizeBytes": null,
+      "compatibilityApi": 1
+    }
+  ]
+}

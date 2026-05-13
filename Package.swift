@@ -3,7 +3,7 @@ import Foundation
 import PackageDescription
 
 let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let targetRoot = packageRoot.appendingPathComponent("MLXHub")
+let targetRoot = packageRoot.appendingPathComponent("MLXtra")
 let generatedResourceExcludes = [
     "Resources/__pycache__"
 ].filter {
@@ -11,14 +11,14 @@ let generatedResourceExcludes = [
 }
 
 let package = Package(
-    name: "MLXHub",
+    name: "MLXtra",
     platforms: [
         .macOS(.v14)
     ],
     products: [
         .executable(
-            name: "MLXHub",
-            targets: ["MLXHub"]
+            name: "MLXtra",
+            targets: ["MLXtra"]
         )
     ],
     dependencies: [
@@ -26,11 +26,11 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "MLXHub",
+            name: "MLXtra",
             dependencies: [
                 .product(name: "Markdown", package: "swift-markdown")
             ],
-            path: "MLXHub",
+            path: "MLXtra",
             exclude: [
                 "Resources/Info.plist",
                 "Resources/Assets.xcassets"
@@ -48,9 +48,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "MLXHubTests",
-            dependencies: ["MLXHub"],
-            path: "Tests/MLXHubTests"
+            name: "MLXtraTests",
+            dependencies: ["MLXtra"],
+            path: "Tests/MLXtraTests"
         )
     ]
 )

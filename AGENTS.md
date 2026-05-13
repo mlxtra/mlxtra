@@ -1,4 +1,4 @@
-# MLXHub
+# MLXtra
 
 ## Quick Start (for developers)
 
@@ -6,13 +6,13 @@
 ```bash
 # IMPORTANT: Always use xcodebuild, NOT swift build
 # xcodebuild creates the full .app bundle with embedded resources
-xcodebuild -project MLXHub.xcodeproj -scheme MLXHub -configuration Debug build
+xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug build
 ```
 
 ### Running the App
 ```bash
 # After building
-open /Users/$USER/Library/Developer/Xcode/DerivedData/MLXHub-*/Build/Products/Debug/MLXHub.app
+open /Users/$USER/Library/Developer/Xcode/DerivedData/MLXtra-*/Build/Products/Debug/MLXtra.app
 
 # Or from Xcode: Cmd+R
 ```
@@ -29,8 +29,8 @@ These bridge tests can exercise runtime imports, local caches, and subprocess be
 
 ```bash
 cd Tests/PythonTests
-PYTHONPATH=../../../MLXHub/Resources python3 test_python_bridge.py -v
-PYTHONPATH=../../../MLXHub/Resources python3 test_acestep_bridge.py -v
+PYTHONPATH=../../../MLXtra/Resources python3 test_python_bridge.py -v
+PYTHONPATH=../../../MLXtra/Resources python3 test_acestep_bridge.py -v
 ```
 
 **Integration Tests (end-to-end):**
@@ -52,7 +52,7 @@ python3 test_all_models_integration.py
 
 **1. Check if model files exist:**
 ```bash
-ls ~/Library/Application\ Support/MLXHub/checkpoints/
+ls ~/Library/Application\ Support/MLXtra/checkpoints/
 # Should show: acestep-v15-turbo, vae, Qwen3-Embedding-0.6B, acestep-5Hz-lm-1.7B
 ```
 
@@ -69,8 +69,8 @@ python3 test_music_integration.py
 
 **4. Check Python bridge syntax:**
 ```bash
-python3 -m py_compile MLXHub/Resources/python_bridge.py
-python3 -m py_compile MLXHub/Resources/acestep_bridge.py
+python3 -m py_compile MLXtra/Resources/python_bridge.py
+python3 -m py_compile MLXtra/Resources/acestep_bridge.py
 ```
 
 ### Model Not Found Errors
@@ -84,7 +84,7 @@ python3 -m py_compile MLXHub/Resources/acestep_bridge.py
 
 **Resources not found:**
 - Did you use `swift build` instead of `xcodebuild`?
-- Check: `ls DerivedData/.../MLXHub.app/Contents/Resources/`
+- Check: `ls DerivedData/.../MLXtra.app/Contents/Resources/`
 
 **Tests failing:**
 - Run tests individually: `swift test --filter TestName`
@@ -95,7 +95,7 @@ python3 -m py_compile MLXHub/Resources/acestep_bridge.py
 ## Key Files Reference
 
 ```
-MLXHub/
+MLXtra/
 ├── Services/
 │   ├── Execution/VLM/VLMExecutor.swift    # Main Python bridge executor
 │   │                                        - Spawns Python subprocess
@@ -128,9 +128,9 @@ MLXHub/
 | Model Type | Swift Backend | Python Bridge | Handler Function | Output Path |
 |------------|--------------|---------------|------------------|-------------|
 | VLM/LLM | `.vlm`/`.llm` | `python_bridge.py` | `handle_chat_completion()` | - |
-| Image | `.image` | `python_bridge.py` | `handle_image_generation()` | `~/Pictures/MLXHub/` |
-| Audio/TTS | `.audio` | `python_bridge.py` | `handle_audio_speech()` | `~/Music/MLXHub/` |
-| Music | `.music` | `acestep_bridge.py` (subprocess) | `generate_music_once()` | `~/Music/MLXHub/` |
+| Image | `.image` | `python_bridge.py` | `handle_image_generation()` | `~/Pictures/MLXtra/` |
+| Audio/TTS | `.audio` | `python_bridge.py` | `handle_audio_speech()` | `~/Music/MLXtra/` |
+| Music | `.music` | `acestep_bridge.py` (subprocess) | `generate_music_once()` | `~/Music/MLXtra/` |
 
 **Note:** Music uses a subprocess because ACE-Step requires incompatible package versions (torch) that conflict with the main MLX stack.
 
@@ -150,8 +150,8 @@ def log_debug(msg):
 
 **Test ACE-Step directly:**
 ```bash
-cd ~/Library/Developer/Xcode/DerivedData/MLXHub-*/Build/Products/Debug/MLXHub.app/Contents/Resources
-ACESTEP_CHECKPOINTS_DIR=~/Library/Application\ Support/MLXHub/checkpoints \
+cd ~/Library/Developer/Xcode/DerivedData/MLXtra-*/Build/Products/Debug/MLXtra.app/Contents/Resources
+ACESTEP_CHECKPOINTS_DIR=~/Library/Application\ Support/MLXtra/checkpoints \
   runtime/macos-arm64/acestep-venv/bin/python acestep_bridge.py << 'EOF'
 {"model": "ACE-Step/acestep-v15-turbo-continuous", "messages": [{"role": "user", "content": "test"}], "parameters": {"caption": "test", "duration": 5, "inference_steps": 4}}
 EOF
@@ -194,8 +194,8 @@ swift test --filter TestName
 # Python bridge tests for bridge changes
 # In Codex, run these outside the sandbox with escalation.
 cd Tests/PythonTests
-PYTHONPATH=../../../MLXHub/Resources python3 test_python_bridge.py -v
-PYTHONPATH=../../../MLXHub/Resources python3 test_acestep_bridge.py -v
+PYTHONPATH=../../../MLXtra/Resources python3 test_python_bridge.py -v
+PYTHONPATH=../../../MLXtra/Resources python3 test_acestep_bridge.py -v
 cd ../..
 
 # Integration test for the feature

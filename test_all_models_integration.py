@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive integration tests for all MLXHub model types:
+Comprehensive integration tests for all MLXtra model types:
 - Chat/VLM (Qwen3.5)
 - Image (FLUX.2-klein)
 - Audio/TTS (KugelAudio)
@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 def _derived_data_app_candidates() -> list[Path]:
     derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
-    return list(derived_data.glob("MLXHub-*/Build/Products/Debug/MLXHub.app"))
+    return list(derived_data.glob("MLXtra-*/Build/Products/Debug/MLXtra.app"))
 
 
 def _newest_existing_app() -> Optional[Path]:
@@ -42,9 +42,9 @@ def _build_app() -> None:
         [
             "xcodebuild",
             "-project",
-            "MLXHub.xcodeproj",
+            "MLXtra.xcodeproj",
             "-scheme",
-            "MLXHub",
+            "MLXtra",
             "-configuration",
             "Debug",
             "build",
@@ -55,11 +55,11 @@ def _build_app() -> None:
 
 
 def resolve_app_bundle() -> Path:
-    override = os.environ.get("MLXHUB_APP_BUNDLE")
+    override = os.environ.get("MLXTRA_APP_BUNDLE")
     if override:
         return Path(override)
 
-    if os.environ.get("MLXHUB_BUILD_APP") == "1":
+    if os.environ.get("MLXTRA_BUILD_APP") == "1":
         _build_app()
 
     app_bundle = _newest_existing_app()
@@ -71,13 +71,13 @@ def resolve_app_bundle() -> Path:
     if app_bundle:
         return app_bundle
 
-    raise FileNotFoundError("Could not find or build MLXHub.app")
+    raise FileNotFoundError("Could not find or build MLXtra.app")
 
 
-ALLOW_MODEL_DOWNLOADS = os.environ.get("MLXHUB_ALLOW_MODEL_DOWNLOADS") == "1"
-REQUIRE_ALL_MODELS = os.environ.get("MLXHUB_REQUIRE_ALL_MODELS") == "1"
+ALLOW_MODEL_DOWNLOADS = os.environ.get("MLXTRA_ALLOW_MODEL_DOWNLOADS") == "1"
+REQUIRE_ALL_MODELS = os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
 HF_CACHE = Path.home() / ".cache/huggingface/hub"
-ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXHub/checkpoints"
+ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXtra/checkpoints"
 
 
 def path_has_content(path: Path) -> bool:
@@ -207,14 +207,14 @@ VENV_PYTHON = RUNTIME / "venv/bin/python"
 ACESTEP_PYTHON = RUNTIME / "acestep-venv/bin/python"
 BRIDGE_SCRIPT = RESOURCES / "python_bridge.py"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
-APP_SUPPORT = Path.home() / "Library/Application Support/MLXHub"
+APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
 GENERATED_IMAGES_DIR = APP_SUPPORT / "GeneratedImages"
 GENERATED_SPEECH_DIR = APP_SUPPORT / "GeneratedSpeech"
 GENERATED_MUSIC_DIR = APP_SUPPORT / "GeneratedMusic"
 
 
-class MLXHubIntegrationTest:
-    """Integration tests for all MLXHub model types."""
+class MLXtraIntegrationTest:
+    """Integration tests for all MLXtra model types."""
 
     def __init__(self):
         self.results = []
@@ -231,7 +231,7 @@ class MLXHubIntegrationTest:
         if REQUIRE_ALL_MODELS:
             self.log(f"✗ FAILED: {message}", "ERROR")
             self.log(
-                "   Strict model policy is enabled by MLXHUB_REQUIRE_ALL_MODELS=1.",
+                "   Strict model policy is enabled by MLXTRA_REQUIRE_ALL_MODELS=1.",
                 "ERROR",
             )
             return False
@@ -239,7 +239,7 @@ class MLXHubIntegrationTest:
         self.skipped_tests.add(test_name)
         self.log(f"↷ SKIPPED: {message}")
         self.log(
-            "   Restore/download the model locally, or set MLXHUB_ALLOW_MODEL_DOWNLOADS=1 to allow an explicit repair/download run."
+            "   Restore/download the model locally, or set MLXTRA_ALLOW_MODEL_DOWNLOADS=1 to allow an explicit repair/download run."
         )
         return None
 
@@ -300,7 +300,7 @@ class MLXHubIntegrationTest:
         env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
         env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
         env["ACESTEP_CHECKPOINTS_DIR"] = str(
-            Path.home() / "Library/Application Support/MLXHub/checkpoints"
+            Path.home() / "Library/Application Support/MLXtra/checkpoints"
         )
         env["MTL_DEBUG_LAYER"] = "0"
         env["MTL_SHADER_VALIDATION"] = "0"
@@ -679,7 +679,7 @@ class MLXHubIntegrationTest:
             self.log(f"  ✓ Output directory: {output_dir}")
 
         # Check model directories
-        checkpoints_dir = Path.home() / "Library/Application Support/MLXHub/checkpoints"
+        checkpoints_dir = Path.home() / "Library/Application Support/MLXtra/checkpoints"
         self.log(f"\n  Checkpoints directory: {checkpoints_dir}")
 
         if not checkpoints_dir.exists():
@@ -1078,7 +1078,7 @@ class MLXHubIntegrationTest:
     def run(self) -> bool:
         """Run all integration tests."""
         self.log("\n" + "=" * 70)
-        self.log("MLXHub Integration Test Suite")
+        self.log("MLXtra Integration Test Suite")
         self.log("=" * 70)
         self.log(f"Python: {sys.version.split()[0]}")
         self.log(
@@ -1157,6 +1157,6 @@ class MLXHubIntegrationTest:
 
 
 if __name__ == "__main__":
-    test = MLXHubIntegrationTest()
+    test = MLXtraIntegrationTest()
     success = test.run()
     sys.exit(0 if success else 1)

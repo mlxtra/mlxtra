@@ -8,7 +8,7 @@ Additionally, `isRichText = false` strips all font/color/paragraph attributes fr
 
 ## Fix
 
-Three changes in `FastStreamingTextNativeView` (`MLXHub/Views/MessageBubbleView.swift`):
+Three changes in `FastStreamingTextNativeView` (`MLXtra/Views/MessageBubbleView.swift`):
 
 ### Change 1: Add `scrollView` property (after `textView` declaration, ~line 1230)
 
@@ -45,7 +45,7 @@ The NSScrollView fills the outer NSView bounds. Since the outer view's height gr
 
 ## Verification
 
-1. Build: `xcodebuild -project MLXHub.xcodeproj -scheme MLXHub -destination 'platform=macOS' build`
+1. Build: `xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -destination 'platform=macOS' build`
 2. Run the app and send a message that produces multi-line markdown output
 3. Click and drag across multiple lines — selection should extend across lines
 4. Verify text selection includes proper highlighting for headings, code blocks, bold/italic

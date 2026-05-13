@@ -1,8 +1,8 @@
-# MLXHub Design System
+# MLXtra Design System
 
-MLXHub is a native macOS productivity app for local AI work. The interface should feel quiet, precise, and durable: standard macOS structure first, custom surfaces only where chat, media, or model workflows need them.
+MLXtra is a native macOS productivity app for local AI work. The interface should feel quiet, precise, and durable: standard macOS structure first, custom surfaces only where chat, media, or model workflows need them.
 
-This document is the implementation contract for visual and interaction work. Shared tokens live in `MLXHub/Views/DesignSystem.swift`; new UI should use those tokens before adding local constants.
+This document is the implementation contract for visual and interaction work. Shared tokens live in `MLXtra/Views/DesignSystem.swift`; new UI should use those tokens before adding local constants.
 
 ## References
 
@@ -306,7 +306,7 @@ Text limits:
 
 ## Screenshot Review Checklist
 
-Run UI tests and inspect the newest timestamped folders under `MLXHubChatLayoutScreenshots` and `MLXHubDownloadStateScreenshots`. Do not compare against mixed screenshots from older runs.
+Run UI tests and inspect the newest timestamped folders under `MLXtraChatLayoutScreenshots` and `MLXtraDownloadStateScreenshots`. Do not compare against mixed screenshots from older runs.
 
 Check every screenshot for:
 
@@ -325,7 +325,7 @@ Check every screenshot for:
 
 ## Adoption Rules
 
-- New UI must use `MLXHubDesignSystem` tokens for typography, color, spacing, radius, icon sizes, text limits, motion, and elevation.
+- New UI must use `MLXtraDesignSystem` tokens for typography, color, spacing, radius, icon sizes, text limits, motion, and elevation.
 - A new local constant is acceptable only when it is truly component-specific; promote it to the design system if reused twice.
 - Avoid broad refactors when adopting tokens. Convert the touched component and leave unrelated behavior intact.
 - Visual changes require a fresh UI screenshot run and direct screenshot inspection.

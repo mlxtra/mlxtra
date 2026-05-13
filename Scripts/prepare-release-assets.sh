@@ -4,12 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 
-REPOSITORY="kimistudio/MLXHub"
+REPOSITORY="kimistudio/mlxtra"
 CHANNEL="stable"
 OUTPUT_DIR="${PROJECT_DIR}/.build/release"
-CATALOG_PATH="${PROJECT_DIR}/MLXHub/Resources/model-catalog.json"
-CHANNEL_PATH="${PROJECT_DIR}/MLXHub/Resources/stable-channel.json"
-RUNTIME_DIR="${PROJECT_DIR}/MLXHub/Resources/runtime/macos-arm64"
+CATALOG_PATH="${PROJECT_DIR}/MLXtra/Resources/model-catalog.json"
+CHANNEL_PATH="${PROJECT_DIR}/MLXtra/Resources/stable-channel.json"
+RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
 RUNTIME_MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
 SKIP_RUNTIME_ARCHIVE=0
 WRITE_CHANNEL=0
@@ -23,13 +23,13 @@ Usage: Scripts/prepare-release-assets.sh [options]
 Build local release assets and generate a stable-channel.json candidate.
 
 Options:
-  --repo owner/name              GitHub repository for release URLs. Default: kimistudio/MLXHub
+  --repo owner/name              GitHub repository for release URLs. Default: kimistudio/mlxtra
   --channel name                 Release channel name. Default: stable
   --output-dir path              Directory for generated assets. Default: .build/release
   --catalog-version version      Override catalog version. Default: model-catalog.json catalogVersion
   --runtime-version version      Override runtime version. Default: runtime-manifest.json runtimeVersion
   --skip-runtime-archive         Do not zip the runtime. Keeps existing runtime SHA/size from stable-channel.json.
-  --write-channel                Replace MLXHub/Resources/stable-channel.json with the generated channel file.
+  --write-channel                Replace MLXtra/Resources/stable-channel.json with the generated channel file.
   -h, --help                     Show this help.
 
 The runtime installer currently supports zip assets only, so this script emits

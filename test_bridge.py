@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Setup environment
 bundle_dir = Path(__file__).parent
-venv_path = bundle_dir / "MLXHub" / "Resources" / "runtime" / "macos-arm64" / "venv"
+venv_path = bundle_dir / "MLXtra" / "Resources" / "runtime" / "macos-arm64" / "venv"
 
 if venv_path.exists():
     for py_version in ["python3.13", "python3.12", "python3.11"]:

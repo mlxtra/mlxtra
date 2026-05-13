@@ -1,4 +1,4 @@
-# MLXHub Improvement Analysis
+# MLXtra Improvement Analysis
 
 ## 1. ~Conversation Persistence Debounce~ — DONE
 

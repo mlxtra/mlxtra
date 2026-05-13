@@ -36,7 +36,7 @@ def _load_helper():
     sys.modules.setdefault("tqdm.auto", tqdm_auto_module)
 
     repo_root = Path(__file__).resolve().parents[2]
-    helper_path = repo_root / "MLXHub" / "Resources" / "runtime" / "macos-arm64" / "hf_download_helper.py"
+    helper_path = repo_root / "MLXtra" / "Resources" / "runtime" / "macos-arm64" / "hf_download_helper.py"
     spec = importlib.util.spec_from_file_location("hf_download_helper", helper_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -82,7 +82,7 @@ class HuggingFaceDownloadHelperTests(unittest.TestCase):
             payload = b"changed content"
             (root / "weights.safetensors").write_bytes(payload)
 
-            with patch.dict(os.environ, {"MLXHUB_HASH_VERIFY_MAX_BYTES": "1024"}):
+            with patch.dict(os.environ, {"MLXTRA_HASH_VERIFY_MAX_BYTES": "1024"}):
                 with self.assertRaisesRegex(RuntimeError, "hash mismatches"):
                     self.helper.verify_snapshot(
                         root,
@@ -101,7 +101,7 @@ class HuggingFaceDownloadHelperTests(unittest.TestCase):
             payload = b"skip me"
             (root / "large.bin").write_bytes(payload)
 
-            with patch.dict(os.environ, {"MLXHUB_HASH_VERIFY_MAX_BYTES": "0"}):
+            with patch.dict(os.environ, {"MLXTRA_HASH_VERIFY_MAX_BYTES": "0"}):
                 result = self.helper.verify_snapshot(
                     root,
                     [

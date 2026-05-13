@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 def _derived_data_app_candidates() -> list[Path]:
     derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
-    return list(derived_data.glob("MLXHub-*/Build/Products/Debug/MLXHub.app"))
+    return list(derived_data.glob("MLXtra-*/Build/Products/Debug/MLXtra.app"))
 
 
 def _newest_existing_app() -> Optional[Path]:
@@ -34,9 +34,9 @@ def _build_app() -> None:
         [
             "xcodebuild",
             "-project",
-            "MLXHub.xcodeproj",
+            "MLXtra.xcodeproj",
             "-scheme",
-            "MLXHub",
+            "MLXtra",
             "-configuration",
             "Debug",
             "build",
@@ -47,11 +47,11 @@ def _build_app() -> None:
 
 
 def resolve_app_bundle() -> Path:
-    override = os.environ.get("MLXHUB_APP_BUNDLE")
+    override = os.environ.get("MLXTRA_APP_BUNDLE")
     if override:
         return Path(override)
 
-    if os.environ.get("MLXHUB_BUILD_APP") == "1":
+    if os.environ.get("MLXTRA_BUILD_APP") == "1":
         _build_app()
 
     app_bundle = _newest_existing_app()
@@ -63,7 +63,7 @@ def resolve_app_bundle() -> Path:
     if app_bundle:
         return app_bundle
 
-    raise FileNotFoundError("Could not find or build MLXHub.app")
+    raise FileNotFoundError("Could not find or build MLXtra.app")
 
 
 APP_BUNDLE = resolve_app_bundle()
@@ -74,10 +74,10 @@ MAIN_PYTHON = RUNTIME / "venv/bin/python"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
 PYTHON_BRIDGE = RESOURCES / "python_bridge.py"
 GENERATED_MUSIC_DIR = (
-    Path.home() / "Library/Application Support/MLXHub/GeneratedMusic"
+    Path.home() / "Library/Application Support/MLXtra/GeneratedMusic"
 )
-ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXHub/checkpoints"
-REQUIRE_ALL_MODELS = os.environ.get("MLXHUB_REQUIRE_ALL_MODELS") == "1"
+ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXtra/checkpoints"
+REQUIRE_ALL_MODELS = os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
 
 
 def path_has_content(path: Path) -> bool:
@@ -131,7 +131,7 @@ class MusicGenerationIntegrationTest:
         if REQUIRE_ALL_MODELS:
             self.log(f"✗ FAILED: {message}", "ERROR")
             self.log(
-                "   Strict model policy is enabled by MLXHUB_REQUIRE_ALL_MODELS=1.",
+                "   Strict model policy is enabled by MLXTRA_REQUIRE_ALL_MODELS=1.",
                 "ERROR",
             )
             return False
@@ -139,7 +139,7 @@ class MusicGenerationIntegrationTest:
         self.skipped_tests.add(test_name)
         self.log(f"↷ SKIPPED: {message}")
         self.log(
-            "   Restore/download ACE-Step checkpoints locally, or set MLXHUB_REQUIRE_ALL_MODELS=1 to make this fail."
+            "   Restore/download ACE-Step checkpoints locally, or set MLXTRA_REQUIRE_ALL_MODELS=1 to make this fail."
         )
         return None
 
@@ -173,7 +173,7 @@ class MusicGenerationIntegrationTest:
         env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
         env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
         env["ACESTEP_CHECKPOINTS_DIR"] = str(
-            Path.home() / "Library/Application Support/MLXHub/checkpoints"
+            Path.home() / "Library/Application Support/MLXtra/checkpoints"
         )
         env["MTL_DEBUG_LAYER"] = "0"
         env["MTL_SHADER_VALIDATION"] = "0"

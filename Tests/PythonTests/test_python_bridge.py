@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MLXHub" / "Resources"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MLXtra" / "Resources"))
 import python_bridge
 
 
@@ -506,7 +506,7 @@ class TestBridgeProtocolSequences(unittest.TestCase):
         )
 
     def _make_launcher_script(self):
-        resources_dir = Path(__file__).resolve().parents[2] / "MLXHub" / "Resources"
+        resources_dir = Path(__file__).resolve().parents[2] / "MLXtra" / "Resources"
         launcher = Path(tempfile.mkdtemp()) / "bridge_launcher.py"
         launcher.write_text(
             f"""import json\nimport sys\nsys.path.insert(0, {str(resources_dir)!r})\nimport python_bridge\n\n"""

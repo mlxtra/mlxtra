@@ -1,4 +1,4 @@
-# MLXHub UI Ideas
+# MLXtra UI Ideas
 
 This note captures nice-to-have UI and interaction improvements to implement over time. It is intentionally a backlog, not a commitment to implement everything immediately.
 
@@ -17,7 +17,7 @@ This note captures nice-to-have UI and interaction improvements to implement ove
 
 Add an animated soft multicolor border/glow around the composer while the assistant is responding. Show a muted `Responding...` placeholder and a square stop button wired to `ChatViewModel.cancelGeneration()`.
 
-Likely implementation point: `ComposerView` in `MLXHub/Views/WelcomeView.swift`, because it is used by both the welcome screen and `ChatView`.
+Likely implementation point: `ComposerView` in `MLXtra/Views/WelcomeView.swift`, because it is used by both the welcome screen and `ChatView`.
 
 ### Streaming Message Polish
 

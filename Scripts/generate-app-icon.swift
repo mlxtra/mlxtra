@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
-let outputPath = arguments.first ?? "MLXHub/Resources/Assets.xcassets/AppIcon.appiconset"
-let sourcePath = arguments.dropFirst().first ?? "Scripts/IconSources/MLXHub-AppIcon-Source.png"
+let outputPath = arguments.first ?? "MLXtra/Resources/Assets.xcassets/AppIcon.appiconset"
+let sourcePath = arguments.dropFirst().first ?? "Scripts/IconSources/MLXtra-AppIcon-Source.png"
 
 let outputURL = URL(fileURLWithPath: outputPath)
 let sourceURL = URL(fileURLWithPath: sourcePath)

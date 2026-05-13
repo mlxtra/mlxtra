@@ -1,6 +1,6 @@
 # Catalog and Runtime Release Workflow
 
-MLXHub has two update lanes:
+MLXtra has two update lanes:
 
 - **Catalog-only update**: add or rerank curated models that the current runtime already supports.
 - **Runtime update**: ship executable Python/runtime code. This must be immutable, checksum-verified, and explicitly installed by the user.
@@ -9,14 +9,14 @@ The app must always keep working with the bundled catalog and bundled runtime if
 
 ## Release Files
 
-`MLXHub/Resources/model-catalog.json`
+`MLXtra/Resources/model-catalog.json`
 
 - Bundled fallback catalog.
 - Uses schema version `1`.
 - Contains curated model profiles, source metadata, runtime requirements, parameters, presets, and ranking.
 - Remote catalog assets should be uploaded unchanged to an immutable GitHub Release.
 
-`MLXHub/Resources/stable-channel.json`
+`MLXtra/Resources/stable-channel.json`
 
 - Stable pointer to the current catalog and runtime assets.
 - Contains version, URL, size, and SHA-256 for each asset.
@@ -49,7 +49,7 @@ The validator checks catalog schema, required model fields, source metadata, par
 Generate a release staging directory:
 
 ```bash
-Scripts/prepare-release-assets.sh --repo kimistudio/MLXHub
+Scripts/prepare-release-assets.sh --repo kimistudio/mlxtra
 ```
 
 This creates:
@@ -63,7 +63,7 @@ The script computes SHA-256 and size values, writes a channel candidate, and val
 To update the bundled channel file after generating a real runtime archive:
 
 ```bash
-Scripts/prepare-release-assets.sh --repo kimistudio/MLXHub --write-channel
+Scripts/prepare-release-assets.sh --repo kimistudio/mlxtra --write-channel
 ```
 
 If you only want to stage the catalog/channel shape without zipping the 3GB runtime:
@@ -74,7 +74,7 @@ Scripts/prepare-release-assets.sh --skip-runtime-archive
 
 ## Catalog-Only Update
 
-1. Edit `MLXHub/Resources/model-catalog.json`.
+1. Edit `MLXtra/Resources/model-catalog.json`.
 2. Keep the model set curated. Do not add a generic Hugging Face browser or arbitrary local paths in v1.
 3. Ensure each new model has:
    - source metadata
@@ -110,7 +110,7 @@ Scripts/validate-runtime-bundle.sh
 3. Stage the release assets and update local channel metadata:
 
 ```bash
-Scripts/prepare-release-assets.sh --repo kimistudio/MLXHub --write-channel
+Scripts/prepare-release-assets.sh --repo kimistudio/mlxtra --write-channel
 ```
 
 4. Upload `.build/release/runtime-macos-arm64-<version>.zip` to an immutable GitHub Release tag such as `runtime-0.1.0`.
@@ -121,10 +121,10 @@ Scripts/prepare-release-assets.sh --repo kimistudio/MLXHub --write-channel
 ```bash
 swift test
 cd Tests/PythonTests
-PYTHONPATH=../../../MLXHub/Resources python3 test_python_bridge.py -v
-PYTHONPATH=../../../MLXHub/Resources python3 test_acestep_bridge.py -v
+PYTHONPATH=../../../MLXtra/Resources python3 test_python_bridge.py -v
+PYTHONPATH=../../../MLXtra/Resources python3 test_acestep_bridge.py -v
 cd ../..
-xcodebuild -project MLXHub.xcodeproj -scheme MLXHub -configuration Debug build
+xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug build
 ```
 
 ## Rollback

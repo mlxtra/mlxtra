@@ -1,0 +1,790 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		8A0100010000000000000001 /* MLXtraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001001 /* MLXtraApp.swift */; };
+		8A0100010000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001002 /* ContentView.swift */; };
+		8A0100010000000000000003 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001003 /* SidebarView.swift */; };
+		8A0100010000000000000004 /* MainContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001004 /* MainContentView.swift */; };
+		8A0100010000000000000005 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001005 /* WelcomeView.swift */; };
+		8A0100010000000000000006 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001006 /* ChatView.swift */; };
+		8A0100010000000000000008 /* MessageBubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001008 /* MessageBubbleView.swift */; };
+		8A0100010000000000000009 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001009 /* ChatViewModel.swift */; };
+		8A010001000000000000000A /* Chat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100A /* Chat.swift */; };
+		8A010001000000000000000B /* Tool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100B /* Tool.swift */; };
+		8A010001000000000000000C /* AIModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100C /* AIModel.swift */; };
+		8A010001000000000000000D /* ModelExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100D /* ModelExecutor.swift */; };
+		8A010001000000000000000E /* VLMExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100E /* VLMExecutor.swift */; };
+		8A010001000000000000000F /* RuntimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100F /* RuntimeManager.swift */; };
+		8A0100010000000000000010 /* python_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001011 /* python_bridge.py */; };
+		8A0100010000000000000011 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
+		8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001015 /* MCPWebSearchService.swift */; };
+		8A0100010000000000000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001016 /* SettingsView.swift */; };
+		8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001017 /* ModelDownloadManager.swift */; };
+		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
+		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
+		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
+		8A0100010000000000000030 /* model-catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102D /* model-catalog.json */; };
+		8A0100010000000000000031 /* stable-channel.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102E /* stable-channel.json */; };
+		8A0300010000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8A0300010000000000001001 /* Assets.xcassets */; };
+		8A010001000000000000001B /* LocalEngineStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101B /* LocalEngineStatus.swift */; };
+		8A010001000000000000001C /* PromptConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101C /* PromptConfiguration.swift */; };
+		8A010001000000000000001D /* ChatComposerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101D /* ChatComposerModels.swift */; };
+		8A010001000000000000001E /* ChatServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101E /* ChatServices.swift */; };
+		8A010001000000000000001F /* ChatViewModel+Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101F /* ChatViewModel+Composer.swift */; };
+		8A0100010000000000000020 /* ChatViewModel+Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001020 /* ChatViewModel+Models.swift */; };
+		8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001021 /* ChatViewModel+Messages.swift */; };
+		8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001022 /* ChatViewModel+Tooling.swift */; };
+		8A0100010000000000000023 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001023 /* UITestSupport.swift */; };
+		8A0100010000000000000024 /* ImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001024 /* ImageCache.swift */; };
+		8A0100010000000000000025 /* AudioPlayerCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001025 /* AudioPlayerCache.swift */; };
+		8A0100010000000000000026 /* StreamingMarkdownInstrumentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */; };
+		8A0100010000000000000027 /* StreamingMarkdownSplitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */; };
+		8A0100010000000000000028 /* MarkdownCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001028 /* MarkdownCache.swift */; };
+		8A0100010000000000000029 /* MarkdownBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001029 /* MarkdownBlock.swift */; };
+		8A010001000000000000002A /* MarkdownBlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102A /* MarkdownBlockRenderer.swift */; };
+		8A010001000000000000002B /* MarkdownAttributedRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102B /* MarkdownAttributedRenderer.swift */; };
+		8A010001000000000000002C /* ReasoningContentFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102C /* ReasoningContentFilter.swift */; };
+		8A010001000000000000002D /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = 8A0100010000000000009002 /* Markdown */; };
+		8A0100010000000000000032 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102F /* DesignSystem.swift */; };
+		8A0200010000000000000001 /* MLXtraGenerateRoutesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001001 /* MLXtraGenerateRoutesUITests.swift */; };
+		8A0200010000000000000002 /* MLXtraDownloadStatesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001002 /* MLXtraDownloadStatesUITests.swift */; };
+		8A0200010000000000000003 /* MLXtraChatLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0200010000000000001003 /* MLXtraChatLayoutUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		8A0200010000000000008001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8A0100010000000000005001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8A0100010000000000004001;
+			remoteInfo = MLXtra;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		8A0100010000000000001001 /* MLXtraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraApp.swift; sourceTree = "<group>"; };
+		8A0100010000000000001002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		8A0100010000000000001003 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		8A0100010000000000001004 /* MainContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainContentView.swift; sourceTree = "<group>"; };
+		8A0100010000000000001005 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		8A0100010000000000001006 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		8A0100010000000000001008 /* MessageBubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleView.swift; sourceTree = "<group>"; };
+		8A0100010000000000001009 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		8A010001000000000000100A /* Chat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Chat.swift; sourceTree = "<group>"; };
+		8A010001000000000000100B /* Tool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tool.swift; sourceTree = "<group>"; };
+		8A010001000000000000100C /* AIModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModel.swift; sourceTree = "<group>"; };
+		8A010001000000000000100D /* ModelExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelExecutor.swift; sourceTree = "<group>"; };
+		8A010001000000000000100E /* VLMExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMExecutor.swift; sourceTree = "<group>"; };
+		8A010001000000000000100F /* RuntimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeManager.swift; sourceTree = "<group>"; };
+		8A0100010000000000001010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		8A0100010000000000001011 /* python_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = python_bridge.py; sourceTree = "<group>"; };
+		8A0100010000000000001012 /* runtime */ = {isa = PBXFileReference; lastKnownFileType = folder; path = runtime; sourceTree = "<group>"; };
+		8A0100010000000000001013 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = text; path = Package.swift; sourceTree = "<group>"; };
+		8A0100010000000000001014 /* MLXtra.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MLXtra.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A0100010000000000001015 /* MCPWebSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPWebSearchService.swift; sourceTree = "<group>"; };
+		8A0100010000000000001016 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		8A0100010000000000001017 /* ModelDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadManager.swift; sourceTree = "<group>"; };
+		8A0100010000000000001018 /* acestep_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = acestep_bridge.py; sourceTree = "<group>"; };
+		8A0100010000000000001019 /* ComposerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerView.swift; sourceTree = "<group>"; };
+		8A010001000000000000101A /* bridge_utils.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = bridge_utils.py; sourceTree = "<group>"; };
+		8A010001000000000000101B /* LocalEngineStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalEngineStatus.swift; sourceTree = "<group>"; };
+		8A010001000000000000101C /* PromptConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptConfiguration.swift; sourceTree = "<group>"; };
+		8A010001000000000000101D /* ChatComposerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposerModels.swift; sourceTree = "<group>"; };
+		8A010001000000000000101E /* ChatServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatServices.swift; sourceTree = "<group>"; };
+		8A010001000000000000101F /* ChatViewModel+Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Composer.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001020 /* ChatViewModel+Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Models.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001021 /* ChatViewModel+Messages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Messages.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001022 /* ChatViewModel+Tooling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Tooling.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001023 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
+		8A0100010000000000001024 /* ImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCache.swift; sourceTree = "<group>"; };
+		8A0100010000000000001025 /* AudioPlayerCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerCache.swift; sourceTree = "<group>"; };
+		8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingMarkdownInstrumentation.swift; sourceTree = "<group>"; };
+		8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingMarkdownSplitter.swift; sourceTree = "<group>"; };
+		8A0100010000000000001028 /* MarkdownCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownCache.swift; sourceTree = "<group>"; };
+		8A0100010000000000001029 /* MarkdownBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlock.swift; sourceTree = "<group>"; };
+		8A010001000000000000102A /* MarkdownBlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockRenderer.swift; sourceTree = "<group>"; };
+		8A010001000000000000102B /* MarkdownAttributedRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownAttributedRenderer.swift; sourceTree = "<group>"; };
+		8A010001000000000000102C /* ReasoningContentFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningContentFilter.swift; sourceTree = "<group>"; };
+		8A010001000000000000102D /* model-catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "model-catalog.json"; sourceTree = "<group>"; };
+		8A010001000000000000102E /* stable-channel.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "stable-channel.json"; sourceTree = "<group>"; };
+		8A010001000000000000102F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		8A0300010000000000001001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8A0200010000000000001001 /* MLXtraGenerateRoutesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraGenerateRoutesUITests.swift; sourceTree = "<group>"; };
+		8A0200010000000000001002 /* MLXtraDownloadStatesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraDownloadStatesUITests.swift; sourceTree = "<group>"; };
+		8A0200010000000000001003 /* MLXtraChatLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraChatLayoutUITests.swift; sourceTree = "<group>"; };
+		8A0200010000000000001014 /* MLXtraUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MLXtraUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8A0100010000000000002001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8A010001000000000000002D /* Markdown in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8A0200010000000000002001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		8A0100010000000000003001 = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001013 /* Package.swift */,
+				8A0100010000000000003002 /* MLXtra */,
+				8A0200010000000000003001 /* MLXtraUITests */,
+				8A0100010000000000003009 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003002 /* MLXtra */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001001 /* MLXtraApp.swift */,
+				8A0100010000000000001023 /* UITestSupport.swift */,
+				8A0100010000000000003003 /* Views */,
+				8A0100010000000000003004 /* ViewModels */,
+				8A0100010000000000003005 /* Models */,
+				8A0100010000000000003006 /* Services */,
+				8A0100010000000000003014 /* Utilities */,
+				8A0100010000000000003008 /* Resources */,
+			);
+			path = MLXtra;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003003 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001002 /* ContentView.swift */,
+				8A010001000000000000102F /* DesignSystem.swift */,
+				8A0100010000000000001003 /* SidebarView.swift */,
+				8A0100010000000000001004 /* MainContentView.swift */,
+				8A0100010000000000001005 /* WelcomeView.swift */,
+				8A0100010000000000001006 /* ChatView.swift */,
+				8A0100010000000000001019 /* ComposerView.swift */,
+				8A0100010000000000001008 /* MessageBubbleView.swift */,
+				8A0100010000000000001016 /* SettingsView.swift */,
+				8A0100010000000000003015 /* Components */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003004 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001009 /* ChatViewModel.swift */,
+				8A010001000000000000101F /* ChatViewModel+Composer.swift */,
+				8A0100010000000000001020 /* ChatViewModel+Models.swift */,
+				8A0100010000000000001021 /* ChatViewModel+Messages.swift */,
+				8A0100010000000000001022 /* ChatViewModel+Tooling.swift */,
+				8A010001000000000000101D /* ChatComposerModels.swift */,
+				8A010001000000000000101E /* ChatServices.swift */,
+				8A010001000000000000101B /* LocalEngineStatus.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003005 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				8A010001000000000000100A /* Chat.swift */,
+				8A010001000000000000100B /* Tool.swift */,
+				8A010001000000000000100C /* AIModel.swift */,
+				8A010001000000000000101C /* PromptConfiguration.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003006 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000003007 /* Execution */,
+				8A0100010000000000003013 /* MCP */,
+				8A0100010000000000003012 /* Runtime */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003007 /* Execution */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000003010 /* Protocols */,
+				8A0100010000000000003011 /* VLM */,
+			);
+			path = Execution;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003008 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001010 /* Info.plist */,
+				8A0100010000000000001011 /* python_bridge.py */,
+				8A0100010000000000001018 /* acestep_bridge.py */,
+				8A010001000000000000101A /* bridge_utils.py */,
+				8A010001000000000000102D /* model-catalog.json */,
+				8A010001000000000000102E /* stable-channel.json */,
+				8A0300010000000000001001 /* Assets.xcassets */,
+				8A0100010000000000001012 /* runtime */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003009 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001014 /* MLXtra.app */,
+				8A0200010000000000001014 /* MLXtraUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003010 /* Protocols */ = {
+			isa = PBXGroup;
+			children = (
+				8A010001000000000000100D /* ModelExecutor.swift */,
+			);
+			path = Protocols;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003011 /* VLM */ = {
+			isa = PBXGroup;
+			children = (
+				8A010001000000000000100E /* VLMExecutor.swift */,
+			);
+			path = VLM;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003012 /* Runtime */ = {
+			isa = PBXGroup;
+			children = (
+				8A010001000000000000100F /* RuntimeManager.swift */,
+				8A0100010000000000001017 /* ModelDownloadManager.swift */,
+			);
+			path = Runtime;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003013 /* MCP */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001015 /* MCPWebSearchService.swift */,
+			);
+			path = MCP;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003014 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				8A0100010000000000001024 /* ImageCache.swift */,
+				8A0100010000000000001025 /* AudioPlayerCache.swift */,
+				8A0100010000000000001029 /* MarkdownBlock.swift */,
+				8A010001000000000000102A /* MarkdownBlockRenderer.swift */,
+				8A010001000000000000102B /* MarkdownAttributedRenderer.swift */,
+				8A0100010000000000001028 /* MarkdownCache.swift */,
+				8A0100010000000000001026 /* StreamingMarkdownInstrumentation.swift */,
+				8A0100010000000000001027 /* StreamingMarkdownSplitter.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		8A0100010000000000003015 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				8A010001000000000000102C /* ReasoningContentFilter.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		8A0200010000000000003001 /* MLXtraUITests */ = {
+			isa = PBXGroup;
+				children = (
+					8A0200010000000000001001 /* MLXtraGenerateRoutesUITests.swift */,
+					8A0200010000000000001002 /* MLXtraDownloadStatesUITests.swift */,
+					8A0200010000000000001003 /* MLXtraChatLayoutUITests.swift */,
+				);
+			path = MLXtraUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		8A0100010000000000004001 /* MLXtra */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8A0100010000000000007003 /* Build configuration list for PBXNativeTarget "MLXtra" */;
+			buildPhases = (
+				8A0100010000000000002004 /* Validate Runtime Bundle */,
+				8A0100010000000000002003 /* Sources */,
+				8A0100010000000000002001 /* Frameworks */,
+				8A0100010000000000002002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			packageProductDependencies = (
+				8A0100010000000000009002 /* Markdown */,
+			);
+			name = MLXtra;
+			productName = MLXtra;
+			productReference = 8A0100010000000000001014 /* MLXtra.app */;
+			productType = "com.apple.product-type.application";
+		};
+		8A0200010000000000004001 /* MLXtraUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8A0200010000000000007003 /* Build configuration list for PBXNativeTarget "MLXtraUITests" */;
+			buildPhases = (
+				8A0200010000000000002003 /* Sources */,
+				8A0200010000000000002001 /* Frameworks */,
+				8A0200010000000000002002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8A0200010000000000008002 /* PBXTargetDependency */,
+			);
+			name = MLXtraUITests;
+			productName = MLXtraUITests;
+			productReference = 8A0200010000000000001014 /* MLXtraUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8A0100010000000000005001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					8A0100010000000000004001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					8A0200010000000000004001 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = 8A0100010000000000004001;
+					};
+				};
+			};
+			buildConfigurationList = 8A0100010000000000007001 /* Build configuration list for PBXProject "MLXtra" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 8A0100010000000000003001;
+			productRefGroup = 8A0100010000000000003009 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8A0100010000000000004001 /* MLXtra */,
+				8A0200010000000000004001 /* MLXtraUITests */,
+			);
+			packageReferences = (
+				8A0100010000000000009001 /* XCRemoteSwiftPackageReference "swift-markdown" */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8A0100010000000000002002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8A0100010000000000000010 /* python_bridge.py in Resources */,
+				8A0100010000000000000018 /* acestep_bridge.py in Resources */,
+				8A010001000000000000001A /* bridge_utils.py in Resources */,
+				8A0100010000000000000030 /* model-catalog.json in Resources */,
+				8A0100010000000000000031 /* stable-channel.json in Resources */,
+				8A0300010000000000000001 /* Assets.xcassets in Resources */,
+				8A0100010000000000000011 /* runtime in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8A0200010000000000002002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		8A0100010000000000002004 /* Validate Runtime Bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Scripts/validate-runtime-bundle.sh",
+				"$(SRCROOT)/Scripts/runtime-dependencies.sh",
+				"$(SRCROOT)/MLXtra/Resources/python_bridge.py",
+				"$(SRCROOT)/MLXtra/Resources/acestep_bridge.py",
+				"$(SRCROOT)/MLXtra/Resources/bridge_utils.py",
+				"$(SRCROOT)/MLXtra/Resources/runtime/macos-arm64",
+				"$(SRCROOT)/MLXtra/Resources/runtime/macos-arm64/runtime-manifest.json",
+			);
+			name = "Validate Runtime Bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/MLXtraRuntimeValidation.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$SRCROOT/Scripts/validate-runtime-bundle.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8A0100010000000000002003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8A0100010000000000000001 /* MLXtraApp.swift in Sources */,
+				8A0100010000000000000002 /* ContentView.swift in Sources */,
+				8A0100010000000000000032 /* DesignSystem.swift in Sources */,
+				8A0100010000000000000003 /* SidebarView.swift in Sources */,
+				8A0100010000000000000004 /* MainContentView.swift in Sources */,
+				8A0100010000000000000005 /* WelcomeView.swift in Sources */,
+				8A0100010000000000000006 /* ChatView.swift in Sources */,
+				8A0100010000000000000019 /* ComposerView.swift in Sources */,
+				8A0100010000000000000008 /* MessageBubbleView.swift in Sources */,
+				8A0100010000000000000009 /* ChatViewModel.swift in Sources */,
+				8A010001000000000000001F /* ChatViewModel+Composer.swift in Sources */,
+				8A0100010000000000000020 /* ChatViewModel+Models.swift in Sources */,
+				8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */,
+				8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */,
+				8A0100010000000000000023 /* UITestSupport.swift in Sources */,
+				8A010001000000000000001D /* ChatComposerModels.swift in Sources */,
+				8A010001000000000000001E /* ChatServices.swift in Sources */,
+				8A010001000000000000001B /* LocalEngineStatus.swift in Sources */,
+				8A0100010000000000000013 /* SettingsView.swift in Sources */,
+				8A010001000000000000000A /* Chat.swift in Sources */,
+				8A010001000000000000000B /* Tool.swift in Sources */,
+				8A010001000000000000000C /* AIModel.swift in Sources */,
+				8A010001000000000000001C /* PromptConfiguration.swift in Sources */,
+				8A010001000000000000000D /* ModelExecutor.swift in Sources */,
+				8A010001000000000000000E /* VLMExecutor.swift in Sources */,
+				8A010001000000000000000F /* RuntimeManager.swift in Sources */,
+				8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */,
+				8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */,
+				8A0100010000000000000024 /* ImageCache.swift in Sources */,
+				8A0100010000000000000025 /* AudioPlayerCache.swift in Sources */,
+				8A0100010000000000000029 /* MarkdownBlock.swift in Sources */,
+				8A010001000000000000002A /* MarkdownBlockRenderer.swift in Sources */,
+				8A010001000000000000002B /* MarkdownAttributedRenderer.swift in Sources */,
+				8A0100010000000000000028 /* MarkdownCache.swift in Sources */,
+				8A0100010000000000000026 /* StreamingMarkdownInstrumentation.swift in Sources */,
+				8A0100010000000000000027 /* StreamingMarkdownSplitter.swift in Sources */,
+				8A010001000000000000002C /* ReasoningContentFilter.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8A0200010000000000002003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+				files = (
+					8A0200010000000000000001 /* MLXtraGenerateRoutesUITests.swift in Sources */,
+					8A0200010000000000000002 /* MLXtraDownloadStatesUITests.swift in Sources */,
+					8A0200010000000000000003 /* MLXtraChatLayoutUITests.swift in Sources */,
+				);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8A0200010000000000008002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8A0100010000000000004001 /* MLXtra */;
+			targetProxy = 8A0200010000000000008001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8A0100010000000000009001 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.7.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8A0100010000000000009002 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8A0100010000000000009001 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+/* Begin XCBuildConfiguration section */
+		8A0100010000000000006001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		8A0100010000000000006002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		8A0100010000000000006003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MLXtra;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		8A0100010000000000006004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = MLXtra;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		8A0200010000000000006001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = MLXtra;
+			};
+			name = Debug;
+		};
+		8A0200010000000000006002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = MLXtra;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8A0100010000000000007001 /* Build configuration list for PBXProject "MLXtra" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8A0100010000000000006001 /* Debug */,
+				8A0100010000000000006002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8A0100010000000000007003 /* Build configuration list for PBXNativeTarget "MLXtra" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8A0100010000000000006003 /* Debug */,
+				8A0100010000000000006004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8A0200010000000000007003 /* Build configuration list for PBXNativeTarget "MLXtraUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8A0200010000000000006001 /* Debug */,
+				8A0200010000000000006002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 8A0100010000000000005001 /* Project object */;
+}

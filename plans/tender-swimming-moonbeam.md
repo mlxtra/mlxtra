@@ -27,7 +27,7 @@ Deep inspection of the Python bridge system (Python subprocess + Swift Process/P
 
 ### Group 1 — VLMExecutor.swift (H1, L4, L7)
 
-**File:** `MLXHub/Services/Execution/VLM/VLMExecutor.swift`
+**File:** `MLXtra/Services/Execution/VLM/VLMExecutor.swift`
 
 #### H1: Add `deinit` (after line 51, `init()` closing brace)
 Prevents orphaned Python subprocess on unexpected deallocation. Since `deinit` cannot be `async`, uses a best-effort fire-and-forget terminate + 3-second delayed SIGKILL via `DispatchQueue.asyncAfter`.
@@ -40,7 +40,7 @@ Add `guard !data.isEmpty else { return }` before string decoding, matching the s
 
 ### Group 2 — ModelDownloadManager.swift (H2, M4)
 
-**File:** `MLXHub/Services/Runtime/ModelDownloadManager.swift`
+**File:** `MLXtra/Services/Runtime/ModelDownloadManager.swift`
 
 #### H2: Add SIGKILL fallback + processes dict cleanup in `stop()` (line ~394)
 After `process.terminate()`, schedule a 3-second delayed `SIGKILL`. Add cleanup path for `!process.isRunning` case to prevent `processes[modelId]` dictionary leak.
@@ -50,7 +50,7 @@ Match the `[weak self]` pattern already used in stdout handlers.
 
 ### Group 3 — RuntimeManager.swift (M1, L6)
 
-**File:** `MLXHub/Services/Runtime/RuntimeManager.swift`
+**File:** `MLXtra/Services/Runtime/RuntimeManager.swift`
 
 #### M1: Reorder `validatePythonImports()` — read pipes before `waitUntilExit()`
 Move `readDataToEndOfFile()` on both pipes to before `process.waitUntilExit()`. Prevents pipe-buffer deadlock and minimizes blocking time on @MainActor.
@@ -60,7 +60,7 @@ Change `.first!` to `?? FileManager.default.homeDirectoryForCurrentUser`, matchi
 
 ### Group 4 — ChatViewModel.swift (L1, L2)
 
-**File:** `MLXHub/ViewModels/ChatViewModel.swift`
+**File:** `MLXtra/ViewModels/ChatViewModel.swift`
 
 #### L1: Store termination task in `cancelGeneration()` (line 502)
 Change `Task { await vlmExecutor.terminate() }` to `generationTask = Task { await vlmExecutor.terminate() }` so the task is observable and gets cancelled when a new generation starts.
@@ -70,21 +70,21 @@ Create a timeout `Task` that sleeps for 300 seconds, then calls `vlmExecutor.ter
 
 ### Group 5 — ChatServices.swift (M3)
 
-**File:** `MLXHub/ViewModels/ChatServices.swift`
+**File:** `MLXtra/ViewModels/ChatServices.swift`
 
 #### M3: Replace `writeQueue.sync {}` with `writeQueue.async {}` in deinit (line 118)
 Prevents deadlock if deinit is called from within the write queue (e.g. from a save completion closure).
 
 ### Group 6 — ChatViewModel+Messages.swift (L3)
 
-**File:** `MLXHub/ViewModels/ChatViewModel+Messages.swift`
+**File:** `MLXtra/ViewModels/ChatViewModel+Messages.swift`
 
 #### L3: Remove fragile string-based CancellationError check (line 228)
 Replace `error is CancellationError || errorDesc.contains("CancellationError") || (error as NSError).code == NSUserCancelledError` with just `error is CancellationError`. All callers already check `Task.isCancelled` before reaching this function.
 
 ### Group 7 — python_bridge.py (M2, L5)
 
-**File:** `MLXHub/Resources/python_bridge.py`
+**File:** `MLXtra/Resources/python_bridge.py`
 
 #### M2: Add `finally: _cleanup()` to `main()` (line 1277)
 Wrap the main `for line in sys.stdin` loop in `try/finally` block. `_cleanup()` terminates `_music_process` via `_terminate_child()`.
@@ -94,7 +94,7 @@ At lines 953, 960, 1009. Ensures checks work regardless of `python -O` flag.
 
 ### Group 8 — BridgeProtocolSequenceTests.swift (L8)
 
-**File:** `Tests/MLXHubTests/BridgeProtocolSequenceTests.swift`
+**File:** `Tests/MLXtraTests/BridgeProtocolSequenceTests.swift`
 
 #### L8: Add proper kill/wait + pipe cleanup to `PersistentBridgeSession.terminate()` (line ~285)
 Add 2-second wait after `terminate()`, followed by `SIGKILL` if still running. Close stdout/stderr read handles.

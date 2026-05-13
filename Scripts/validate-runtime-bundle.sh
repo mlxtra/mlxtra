@@ -1,15 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "${MLXHUB_SKIP_RUNTIME_VALIDATION:-0}" = "1" ]; then
-    echo "Skipping MLXHub runtime validation because MLXHUB_SKIP_RUNTIME_VALIDATION=1"
+if [ "${MLXTRA_SKIP_RUNTIME_VALIDATION:-0}" = "1" ]; then
+    echo "Skipping MLXtra runtime validation because MLXTRA_SKIP_RUNTIME_VALIDATION=1"
     exit 0
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 source "${SCRIPT_DIR}/runtime-dependencies.sh"
-RUNTIME_DIR="${PROJECT_DIR}/MLXHub/Resources/runtime/macos-arm64"
+RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
 PYTHON_HOME="${RUNTIME_DIR}/python/Frameworks/Versions/3.12"
 MAIN_PYTHON="${RUNTIME_DIR}/venv/bin/python"
 ACE_PYTHON="${RUNTIME_DIR}/acestep-venv/bin/python"
@@ -17,7 +17,7 @@ MAIN_SITE_PACKAGES="${RUNTIME_DIR}/venv/lib/python3.12/site-packages"
 ACE_SITE_PACKAGES="${RUNTIME_DIR}/acestep-venv/lib/python3.12/site-packages"
 MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
 BUILD_RUNTIME_SCRIPT="${SCRIPT_DIR}/build-runtime-bundle.sh"
-BOOTSTRAP_RUNTIME_ON_BUILD="${MLXHUB_BOOTSTRAP_RUNTIME_ON_BUILD:-1}"
+BOOTSTRAP_RUNTIME_ON_BUILD="${MLXTRA_BOOTSTRAP_RUNTIME_ON_BUILD:-1}"
 
 fail() {
     echo "error: $*" >&2
@@ -58,9 +58,9 @@ runtime_bootstrap_required() {
     [ -x "${MAIN_PYTHON}" ] || return 0
     [ -x "${ACE_PYTHON}" ] || return 0
     [ -f "${MANIFEST}" ] || return 0
-    [ -f "${PROJECT_DIR}/MLXHub/Resources/python_bridge.py" ] || return 0
-    [ -f "${PROJECT_DIR}/MLXHub/Resources/acestep_bridge.py" ] || return 0
-    [ -f "${PROJECT_DIR}/MLXHub/Resources/bridge_utils.py" ] || return 0
+    [ -f "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" ] || return 0
+    [ -f "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" ] || return 0
+    [ -f "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" ] || return 0
     [ -f "${RUNTIME_DIR}/hf_download_helper.py" ] || return 0
     [ -f "${RUNTIME_DIR}/acestep_download_helper.py" ] || return 0
     return 1
@@ -75,10 +75,10 @@ bootstrap_runtime_if_needed() {
 
     [ -x "${BUILD_RUNTIME_SCRIPT}" ] || fail "Runtime bootstrap script is missing or not executable at ${BUILD_RUNTIME_SCRIPT}."
 
-    echo "warning: MLXHub first build is downloading and creating the local Python runtime. This can take several minutes and requires network access."
+    echo "warning: MLXtra first build is downloading and creating the local Python runtime. This can take several minutes and requires network access."
     echo "warning: Keep Xcode open. Later builds reuse the generated runtime and skip this step."
     "${BUILD_RUNTIME_SCRIPT}"
-    echo "MLXHub runtime bootstrap completed."
+    echo "MLXtra runtime bootstrap completed."
 }
 
 bootstrap_runtime_if_needed
@@ -88,9 +88,9 @@ require_directory "${PYTHON_HOME}" "Bundled Python home"
 require_executable "${MAIN_PYTHON}" "Main runtime Python"
 require_executable "${ACE_PYTHON}" "ACE-Step runtime Python"
 require_file "${MANIFEST}" "Runtime manifest"
-require_file "${PROJECT_DIR}/MLXHub/Resources/python_bridge.py" "Python bridge"
-require_file "${PROJECT_DIR}/MLXHub/Resources/acestep_bridge.py" "ACE-Step bridge"
-require_file "${PROJECT_DIR}/MLXHub/Resources/bridge_utils.py" "Bridge utilities"
+require_file "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" "Python bridge"
+require_file "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" "ACE-Step bridge"
+require_file "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" "Bridge utilities"
 require_file "${RUNTIME_DIR}/hf_download_helper.py" "Hugging Face download helper"
 require_file "${RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
 
@@ -193,7 +193,7 @@ validate_manifest
 if [ -n "${SCRIPT_INPUT_FILE_COUNT:-}" ]; then
     validate_download_helper_structure
     write_validation_stamp
-    echo "MLXHub runtime bundle structural and download-helper package validation passed"
+    echo "MLXtra runtime bundle structural and download-helper package validation passed"
     exit 0
 fi
 
@@ -202,4 +202,4 @@ validate_download_helpers
 validate_runtime_python
 write_validation_stamp
 
-echo "MLXHub runtime bundle validation passed"
+echo "MLXtra runtime bundle validation passed"

@@ -35,9 +35,9 @@ Package.resolved
 .LSOverride
 
 ## Python runtime (bundled)
-MLXHub/Resources/runtime/macos-arm64/python/
-MLXHub/Resources/runtime/macos-arm64/venv/
-MLXHub/Resources/runtime/macos-arm64/acestep-venv/
+MLXtra/Resources/runtime/macos-arm64/python/
+MLXtra/Resources/runtime/macos-arm64/venv/
+MLXtra/Resources/runtime/macos-arm64/acestep-venv/
 
 ## Python
 **/__pycache__/
@@ -49,4 +49,4 @@ MLXHub/Resources/runtime/macos-arm64/acestep-venv/
 
 ## Cached models
 .cache/
-MLXHub/Resources/__pycache__/
+MLXtra/Resources/__pycache__/

@@ -11,8 +11,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "Scripts"
-RUNTIME_MANIFEST = REPO_ROOT / "MLXHub/Resources/runtime/macos-arm64/runtime-manifest.json"
-MODEL_CATALOG = REPO_ROOT / "MLXHub/Resources/model-catalog.json"
+RUNTIME_MANIFEST = REPO_ROOT / "MLXtra/Resources/runtime/macos-arm64/runtime-manifest.json"
+MODEL_CATALOG = REPO_ROOT / "MLXtra/Resources/model-catalog.json"
 
 
 def bash_array(name: str) -> list[str]:

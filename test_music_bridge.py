@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Paths
 APP_BUNDLE = Path(
-    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXHub-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXHub.app"
+    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXtra-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXtra.app"
 )
 RESOURCES = APP_BUNDLE / "Contents/Resources"
 RUNTIME = RESOURCES / "runtime/macos-arm64"
@@ -41,7 +41,7 @@ def get_env():
     env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
     env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
     env["ACESTEP_CHECKPOINTS_DIR"] = str(
-        Path.home() / "Library/Application Support/MLXHub/checkpoints"
+        Path.home() / "Library/Application Support/MLXtra/checkpoints"
     )
 
     return env
@@ -99,7 +99,7 @@ class BridgeTest:
         print(f"\nPython interpreter: {VENV_PYTHON}")
         print(f"Bridge script: {BRIDGE_SCRIPT}")
         print(
-            f"ACESTEP_CHECKPOINTS_DIR: {Path.home() / 'Library/Application Support/MLXHub/checkpoints'}"
+            f"ACESTEP_CHECKPOINTS_DIR: {Path.home() / 'Library/Application Support/MLXtra/checkpoints'}"
         )
 
         if not VENV_PYTHON.exists():

@@ -1,22 +1,24 @@
 #!/bin/bash
-# MLXHub Launch Script
+# MLXtra Launch Script
 
-cd /Users/omercelik/Documents/codex/kimistudio/MLXHub
+set -euo pipefail
 
-# Build release version
-echo "Building release version..."
-swift build -c release
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${PROJECT_DIR}"
 
-# Copy to app bundle
-echo "Copying to app bundle..."
-cp .build/release/MLXHub MLXHub.app/Contents/MacOS/MLXHub
+echo "Building Debug app bundle..."
+xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug build
 
-# Kill existing instance
-pkill -9 MLXHub 2>/dev/null || true
+APP_BUNDLE="$(find "${HOME}/Library/Developer/Xcode/DerivedData" -path '*/Build/Products/Debug/MLXtra.app' -type d -print -quit)"
+if [ -z "${APP_BUNDLE}" ]; then
+    echo "Could not find built MLXtra.app in DerivedData"
+    exit 1
+fi
+
+pkill -9 MLXtra 2>/dev/null || true
 sleep 1
 
-# Launch app
-echo "Launching MLXHub..."
-open MLXHub.app
+echo "Launching MLXtra..."
+open "${APP_BUNDLE}"
 
 echo "Done!"

@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/runtime-dependencies.sh"
 
 BUILD_DIR="${PROJECT_DIR}/.build/runtime"
 CACHE_DIR="${PROJECT_DIR}/.build/runtime-cache"
-OUTPUT_DIR="${PROJECT_DIR}/MLXHub/Resources/runtime/macos-arm64"
+OUTPUT_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
 FRESH_CACHE=0
 SKIP_VERIFY=0
 
@@ -456,6 +456,6 @@ echo "Runtime bundle created at: ${OUTPUT_DIR}"
 echo "Size: $(du -sh "${OUTPUT_DIR}" | cut -f1)"
 echo ""
 echo "To use:"
-echo "  1. The bundle is embedded in the app at MLXHub/Resources/runtime/macos-arm64"
+echo "  1. The bundle is embedded in the app at MLXtra/Resources/runtime/macos-arm64"
 echo "  2. Python executable: ${OUTPUT_DIR}/venv/bin/python3"
 echo "  3. Test: PYTHONHOME=${OUTPUT_DIR}/python/Frameworks/Versions/3.12 ${OUTPUT_DIR}/venv/bin/python3 -c 'import csv; print(\"OK\")'"

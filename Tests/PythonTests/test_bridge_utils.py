@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MLXHub" / "Resources"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MLXtra" / "Resources"))
 from bridge_utils import (
     coerce_bool,
     coerce_float,

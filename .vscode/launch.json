@@ -4,21 +4,21 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:MLXHub}",
-            "name": "Debug MLXHub",
-            "target": "MLXHub",
+            "cwd": "${workspaceFolder:MLXtra}",
+            "name": "Debug MLXtra",
+            "target": "MLXtra",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug MLXHub"
+            "preLaunchTask": "swift: Build Debug MLXtra"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:MLXHub}",
-            "name": "Release MLXHub",
-            "target": "MLXHub",
+            "cwd": "${workspaceFolder:MLXtra}",
+            "name": "Release MLXtra",
+            "target": "MLXtra",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release MLXHub"
+            "preLaunchTask": "swift: Build Release MLXtra"
         }
     ]
 }

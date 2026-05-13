@@ -1,4 +1,4 @@
-# MLXHub
+# MLXtra
 
 A macOS-native GUI application for running and interacting with MLX (Machine Learning eXchange) models on Apple Silicon. Built with SwiftUI and Python bridges for seamless local AI model execution.
 
@@ -51,16 +51,16 @@ A macOS-native GUI application for running and interacting with MLX (Machine Lea
 
 1. Clone the repository:
 ```bash
-git clone git@github.com:omercelik/MLXHub.git
-cd MLXHub
+git clone git@github.com:omercelik/mlxtra.git
+cd mlxtra
 ```
 
 2. Open the Xcode project:
 ```bash
-open MLXHub.xcodeproj
+open MLXtra.xcodeproj
 ```
 
-3. Build and run the `MLXHub` scheme on `My Mac` (⌘+R).
+3. Build and run the `MLXtra` scheme on `My Mac` (⌘+R).
 
 The first Xcode build from a clean checkout bootstraps the local Python runtime
 automatically. This can take several minutes and requires network access. After
@@ -78,17 +78,17 @@ automatically when the runtime is missing. To prepare it manually, run:
 This will:
 - Create Python virtual environments
 - Install required packages (mlx-vlm, mlx-lm, mflux, acestep, etc.)
-- Set up the runtime in `MLXHub/Resources/runtime/`
+- Set up the runtime in `MLXtra/Resources/runtime/`
 
 The bundled runtime is the baseline version shipped inside the app. Runtime
 updates can then be published separately through GitHub releases and referenced
-from `MLXHub/Resources/stable-channel.json`.
+from `MLXtra/Resources/stable-channel.json`.
 
 ## Architecture
 
 ```
-MLXHub/
-├── MLXHub/                 # Main Swift source code
+MLXtra/
+├── MLXtra/                 # Main Swift source code
 │   ├── Views/             # SwiftUI views
 │   ├── ViewModels/        # Business logic
 │   ├── Models/            # Data models
@@ -159,14 +159,14 @@ MLXHub/
 
 ## Configuration
 
-Settings are accessible via `MLXHub → Settings`:
+Settings are accessible via `MLXtra → Settings`:
 - Default model selection
 - Advanced generation parameters
 
 Generated files are saved to the app library:
-- Images: `~/Library/Application Support/MLXHub/GeneratedImages`
-- Speech: `~/Library/Application Support/MLXHub/GeneratedSpeech`
-- Music: `~/Library/Application Support/MLXHub/GeneratedMusic`
+- Images: `~/Library/Application Support/MLXtra/GeneratedImages`
+- Speech: `~/Library/Application Support/MLXtra/GeneratedSpeech`
+- Music: `~/Library/Application Support/MLXtra/GeneratedMusic`
 
 ## Dependencies
 

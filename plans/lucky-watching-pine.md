@@ -18,7 +18,7 @@ After streaming completes, `finalizeMessage` re-renders the full text from scrat
 
 ## Fix
 
-**File:** `MLXHub/Views/MessageBubbleView.swift`
+**File:** `MLXtra/Views/MessageBubbleView.swift`
 **Method:** `applySplitterBasedUpdate` (line ~1338)
 **Location around line 1358**
 

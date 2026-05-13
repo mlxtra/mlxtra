@@ -11,7 +11,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "MLXHub" / "Resources"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "MLXtra" / "Resources"))
 
 import acestep_bridge
 

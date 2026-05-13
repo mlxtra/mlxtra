@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Add the runtime venv path
 RUNTIME_DIR = Path(
-    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXHub-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXHub.app/Contents/Resources/runtime/macos-arm64"
+    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXtra-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXtra.app/Contents/Resources/runtime/macos-arm64"
 )
 VENV_SITE_PACKAGES = RUNTIME_DIR / "acestep-venv/lib/python3.12/site-packages"
 
@@ -116,10 +116,10 @@ def test_bridge():
     print("TEST 3: Testing acestep_bridge")
     print("=" * 60)
 
-    bridge_path = Path(__file__).parent / "MLXHub/Resources/acestep_bridge.py"
+    bridge_path = Path(__file__).parent / "MLXtra/Resources/acestep_bridge.py"
     if not bridge_path.exists():
         bridge_path = (
-            Path(__file__).parent / "MLXHub/MLXHub/Resources/acestep_bridge.py"
+            Path(__file__).parent / "MLXtra/MLXtra/Resources/acestep_bridge.py"
         )
 
     print(f"Bridge script: {bridge_path}")
