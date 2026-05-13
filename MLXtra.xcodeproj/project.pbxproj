@@ -32,6 +32,9 @@
 		8A0100010000000000000030 /* model-catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102D /* model-catalog.json */; };
 		8A0100010000000000000031 /* stable-channel.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102E /* stable-channel.json */; };
 		8A0300010000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8A0300010000000000001001 /* Assets.xcassets */; };
+		8A0400010000000000000001 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 8A0400010000000000001001 /* LICENSE */; };
+		8A0400010000000000000002 /* NOTICE in Resources */ = {isa = PBXBuildFile; fileRef = 8A0400010000000000001002 /* NOTICE */; };
+		8A0400010000000000000003 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 8A0400010000000000001003 /* THIRD_PARTY_NOTICES.md */; };
 		8A010001000000000000001B /* LocalEngineStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101B /* LocalEngineStatus.swift */; };
 		8A010001000000000000001C /* PromptConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101C /* PromptConfiguration.swift */; };
 		8A010001000000000000001D /* ChatComposerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101D /* ChatComposerModels.swift */; };
@@ -115,6 +118,9 @@
 		8A010001000000000000102E /* stable-channel.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "stable-channel.json"; sourceTree = "<group>"; };
 		8A010001000000000000102F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		8A0300010000000000001001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8A0400010000000000001001 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
+		8A0400010000000000001002 /* NOTICE */ = {isa = PBXFileReference; lastKnownFileType = text; path = NOTICE; sourceTree = SOURCE_ROOT; };
+		8A0400010000000000001003 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
 		8A0200010000000000001001 /* MLXtraGenerateRoutesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraGenerateRoutesUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001002 /* MLXtraDownloadStatesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraDownloadStatesUITests.swift; sourceTree = "<group>"; };
 		8A0200010000000000001003 /* MLXtraChatLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXtraChatLayoutUITests.swift; sourceTree = "<group>"; };
@@ -144,6 +150,9 @@
 			isa = PBXGroup;
 			children = (
 				8A0100010000000000001013 /* Package.swift */,
+				8A0400010000000000001001 /* LICENSE */,
+				8A0400010000000000001002 /* NOTICE */,
+				8A0400010000000000001003 /* THIRD_PARTY_NOTICES.md */,
 				8A0100010000000000003002 /* MLXtra */,
 				8A0200010000000000003001 /* MLXtraUITests */,
 				8A0100010000000000003009 /* Products */,
@@ -405,6 +414,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8A0400010000000000000001 /* LICENSE in Resources */,
+				8A0400010000000000000002 /* NOTICE in Resources */,
+				8A0400010000000000000003 /* THIRD_PARTY_NOTICES.md in Resources */,
 				8A0100010000000000000010 /* python_bridge.py in Resources */,
 				8A0100010000000000000018 /* acestep_bridge.py in Resources */,
 				8A010001000000000000001A /* bridge_utils.py in Resources */,
@@ -663,7 +675,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = MLXtra;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Omer Celik";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -691,7 +703,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = MLXtra;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026 Omer Celik";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

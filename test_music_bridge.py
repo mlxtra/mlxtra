@@ -11,11 +11,62 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 # Paths
-APP_BUNDLE = Path(
-    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXtra-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXtra.app"
-)
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _derived_data_app_candidates() -> list[Path]:
+    derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
+    return list(derived_data.glob("MLXtra-*/Build/Products/Debug/MLXtra.app"))
+
+
+def _newest_existing_app() -> Optional[Path]:
+    candidates = [path for path in _derived_data_app_candidates() if path.exists()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _build_app() -> None:
+    subprocess.run(
+        [
+            "xcodebuild",
+            "-project",
+            "MLXtra.xcodeproj",
+            "-scheme",
+            "MLXtra",
+            "-configuration",
+            "Debug",
+            "build",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+
+
+def resolve_app_bundle() -> Path:
+    override = os.environ.get("MLXTRA_APP_BUNDLE")
+    if override:
+        return Path(override)
+
+    if os.environ.get("MLXTRA_BUILD_APP") == "1":
+        _build_app()
+
+    app_bundle = _newest_existing_app()
+    if app_bundle:
+        return app_bundle
+
+    _build_app()
+    app_bundle = _newest_existing_app()
+    if app_bundle:
+        return app_bundle
+
+    raise FileNotFoundError("Could not find or build MLXtra.app")
+
+
+APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
 RUNTIME = RESOURCES / "runtime/macos-arm64"
 VENV_PYTHON = RUNTIME / "acestep-venv/bin/python"

@@ -51,7 +51,7 @@ A macOS-native GUI application for running and interacting with MLX (Machine Lea
 
 1. Clone the repository:
 ```bash
-git clone git@github.com:omercelik/mlxtra.git
+git clone https://github.com/mlxtra/mlxtra.git
 cd mlxtra
 ```
 
@@ -197,19 +197,24 @@ Reduce model quantization or use smaller models. MLX automatically manages memor
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, test commands, and
+pull request expectations.
+
+## Security
+
+Please report vulnerabilities privately. See [SECURITY.md](SECURITY.md).
 
 ## License
 
-[Add your license here]
+MLXtra is released under the Apache License 2.0. See [LICENSE](LICENSE).
+
+Third-party libraries, runtime packages, and model artifacts are licensed
+separately by their respective owners. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Acknowledgments
 
 - [MLX](https://github.com/ml-explore/mlx) by Apple
 - [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) by Prince Canuma
-- [mflux](https://github.com/argmaxinc/mflux) by Argmax
-- [ACE-Step](https://github.com/ace-step/acestep) for music generation
+- [mflux](https://github.com/filipstrand/mflux) by Filip Strand
+- [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) for music generation

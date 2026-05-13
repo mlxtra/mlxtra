@@ -5,11 +5,52 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 # Add the runtime venv path
-RUNTIME_DIR = Path(
-    "/Users/omercelik/Library/Developer/Xcode/DerivedData/MLXtra-ayxjdxuxnnlpflbgqijatrzqclph/Build/Products/Debug/MLXtra.app/Contents/Resources/runtime/macos-arm64"
-)
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _derived_data_runtime_candidates() -> list[Path]:
+    derived_data = Path.home() / "Library/Developer/Xcode/DerivedData"
+    return list(
+        derived_data.glob(
+            "MLXtra-*/Build/Products/Debug/MLXtra.app/Contents/Resources/runtime/macos-arm64"
+        )
+    )
+
+
+def _newest_existing_runtime() -> Optional[Path]:
+    candidates = [path for path in _derived_data_runtime_candidates() if path.exists()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def resolve_runtime_dir() -> Path:
+    override = os.environ.get("MLXTRA_RUNTIME_DIR")
+    if override:
+        return Path(override)
+
+    app_override = os.environ.get("MLXTRA_APP_BUNDLE")
+    if app_override:
+        return Path(app_override) / "Contents/Resources/runtime/macos-arm64"
+
+    runtime_dir = _newest_existing_runtime()
+    if runtime_dir:
+        return runtime_dir
+
+    repo_runtime = REPO_ROOT / "MLXtra/Resources/runtime/macos-arm64"
+    if repo_runtime.exists():
+        return repo_runtime
+
+    raise FileNotFoundError(
+        "Could not find MLXtra runtime. Build the app with xcodebuild, set "
+        "MLXTRA_APP_BUNDLE, or set MLXTRA_RUNTIME_DIR."
+    )
+
+
+RUNTIME_DIR = resolve_runtime_dir()
 VENV_SITE_PACKAGES = RUNTIME_DIR / "acestep-venv/lib/python3.12/site-packages"
 
 if str(VENV_SITE_PACKAGES) not in sys.path:

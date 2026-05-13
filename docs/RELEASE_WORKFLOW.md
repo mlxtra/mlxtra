@@ -49,7 +49,7 @@ The validator checks catalog schema, required model fields, source metadata, par
 Generate a release staging directory:
 
 ```bash
-Scripts/prepare-release-assets.sh --repo kimistudio/mlxtra
+Scripts/prepare-release-assets.sh --repo mlxtra/mlxtra
 ```
 
 This creates:
@@ -57,13 +57,16 @@ This creates:
 - `.build/release/model-catalog.json`
 - `.build/release/runtime-macos-arm64-<version>.zip`
 - `.build/release/stable-channel.json`
+- `.build/release/LICENSE`
+- `.build/release/NOTICE`
+- `.build/release/THIRD_PARTY_NOTICES.md`
 
 The script computes SHA-256 and size values, writes a channel candidate, and validates the generated metadata.
 
 To update the bundled channel file after generating a real runtime archive:
 
 ```bash
-Scripts/prepare-release-assets.sh --repo kimistudio/mlxtra --write-channel
+Scripts/prepare-release-assets.sh --repo mlxtra/mlxtra --write-channel
 ```
 
 If you only want to stage the catalog/channel shape without zipping the 3GB runtime:
@@ -110,13 +113,14 @@ Scripts/validate-runtime-bundle.sh
 3. Stage the release assets and update local channel metadata:
 
 ```bash
-Scripts/prepare-release-assets.sh --repo kimistudio/mlxtra --write-channel
+Scripts/prepare-release-assets.sh --repo mlxtra/mlxtra --write-channel
 ```
 
 4. Upload `.build/release/runtime-macos-arm64-<version>.zip` to an immutable GitHub Release tag such as `runtime-0.1.0`.
-5. Upload `.build/release/model-catalog.json` to the catalog release tag if the catalog changed.
-6. Publish `.build/release/stable-channel.json` as the stable channel pointer.
-7. Run one smoke test per backend before announcing the release:
+5. Upload `.build/release/LICENSE`, `.build/release/NOTICE`, and `.build/release/THIRD_PARTY_NOTICES.md` with binary app/runtime release assets.
+6. Upload `.build/release/model-catalog.json` to the catalog release tag if the catalog changed.
+7. Publish `.build/release/stable-channel.json` as the stable channel pointer.
+8. Run one smoke test per backend before announcing the release:
 
 ```bash
 swift test

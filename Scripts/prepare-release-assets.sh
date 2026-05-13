@@ -4,13 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 
-REPOSITORY="kimistudio/mlxtra"
+REPOSITORY="mlxtra/mlxtra"
 CHANNEL="stable"
 OUTPUT_DIR="${PROJECT_DIR}/.build/release"
 CATALOG_PATH="${PROJECT_DIR}/MLXtra/Resources/model-catalog.json"
 CHANNEL_PATH="${PROJECT_DIR}/MLXtra/Resources/stable-channel.json"
 RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
 RUNTIME_MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
+LEGAL_ASSETS=("LICENSE" "NOTICE" "THIRD_PARTY_NOTICES.md")
 SKIP_RUNTIME_ARCHIVE=0
 WRITE_CHANNEL=0
 CATALOG_VERSION=""
@@ -23,7 +24,7 @@ Usage: Scripts/prepare-release-assets.sh [options]
 Build local release assets and generate a stable-channel.json candidate.
 
 Options:
-  --repo owner/name              GitHub repository for release URLs. Default: kimistudio/mlxtra
+  --repo owner/name              GitHub repository for release URLs. Default: mlxtra/mlxtra
   --channel name                 Release channel name. Default: stable
   --output-dir path              Directory for generated assets. Default: .build/release
   --catalog-version version      Override catalog version. Default: model-catalog.json catalogVersion
@@ -130,6 +131,13 @@ if [ ! -f "${RUNTIME_MANIFEST}" ]; then
     exit 1
 fi
 
+for legal_asset in "${LEGAL_ASSETS[@]}"; do
+    if [ ! -f "${PROJECT_DIR}/${legal_asset}" ]; then
+        echo "Missing legal asset at ${PROJECT_DIR}/${legal_asset}" >&2
+        exit 1
+    fi
+done
+
 if [ -z "${CATALOG_VERSION}" ]; then
     CATALOG_VERSION="$(json_value "${CATALOG_PATH}" "catalogVersion")"
 fi
@@ -146,6 +154,9 @@ RUNTIME_ARCHIVE="${OUTPUT_DIR}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
 
 mkdir -p "${OUTPUT_DIR}"
 cp "${CATALOG_PATH}" "${CATALOG_ASSET}"
+for legal_asset in "${LEGAL_ASSETS[@]}"; do
+    cp "${PROJECT_DIR}/${legal_asset}" "${OUTPUT_DIR}/${legal_asset}"
+done
 
 CATALOG_SHA="$(sha256_file "${CATALOG_ASSET}")"
 CATALOG_SIZE="$(file_size "${CATALOG_ASSET}")"
@@ -239,6 +250,7 @@ echo ""
 echo "Release assets prepared in ${OUTPUT_DIR}"
 echo "Catalog asset: ${CATALOG_ASSET}"
 echo "Catalog SHA-256: ${CATALOG_SHA}"
+echo "Legal assets: ${OUTPUT_DIR}/LICENSE, ${OUTPUT_DIR}/NOTICE, ${OUTPUT_DIR}/THIRD_PARTY_NOTICES.md"
 if [ "${SKIP_RUNTIME_ARCHIVE}" = "0" ]; then
     echo "Runtime asset: ${RUNTIME_ARCHIVE}"
     echo "Runtime SHA-256: ${RUNTIME_SHA}"
