@@ -1,9 +1,9 @@
 #!/bin/bash
-# MLXtra Launch Script
 
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_DIR}"
 
 echo "Building Debug app bundle..."

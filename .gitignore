@@ -18,6 +18,7 @@ build/
 
 ## Build directories
 .build/
+DerivedData/
 *.xccheckout
 *.moved-aside
 *.hmap
@@ -32,6 +33,13 @@ build/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+## Editor settings
+.vscode/
+
+## Local agent/tool caches
+.claude/
+.ruff_cache/
 
 ## Python runtime (bundled)
 MLXtra/Resources/runtime/macos-arm64/python/

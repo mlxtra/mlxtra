@@ -21,22 +21,22 @@ A macOS-native GUI application for running and interacting with [MLX](https://gi
 ## Screenshots
 
 ### Welcome Screen
-![Welcome Screen](welcome.png)
+![Welcome Screen](docs/assets/screenshots/welcome.png)
 
 ### Chat Interface with Image Generation
-![Image Generation](image.png)
+![Image Generation](docs/assets/screenshots/image.png)
 
 ### Speech Generation
-![Speech Generation](speech.png)
+![Speech Generation](docs/assets/screenshots/speech.png)
 
 ### Music Generation
-![Music Generation](music.png)
+![Music Generation](docs/assets/screenshots/music.png)
 
 ### Tool Selector
-![Tool Selector](web.png)
+![Tool Selector](docs/assets/screenshots/web.png)
 
 ### Model Management
-![Models](models.png)
+![Models](docs/assets/screenshots/models.png)
 
 ## Requirements
 
@@ -65,6 +65,12 @@ open MLXtra.xcodeproj
 The first Xcode build from a clean checkout bootstraps the local Python runtime
 automatically. This can take several minutes and requires network access. After
 that, normal builds reuse the generated runtime.
+
+For a command-line build and launch, run:
+
+```bash
+Scripts/launch-debug-app.sh
+```
 
 ### Runtime Setup
 
