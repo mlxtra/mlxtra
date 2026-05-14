@@ -135,8 +135,8 @@ PYTHONPATH=../../../MLXtra/Resources python3 test_python_bridge.py -v
 PYTHONPATH=../../../MLXtra/Resources python3 test_acestep_bridge.py -v
 cd ../..
 xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug build
-MLXTRA_REQUIRE_ALL_MODELS=1 python3 test_music_integration.py
-MLXTRA_REQUIRE_ALL_MODELS=1 python3 test_all_models_integration.py
+MLXTRA_REQUIRE_ALL_MODELS=1 python3 Tests/IntegrationTests/test_music_integration.py
+MLXTRA_REQUIRE_ALL_MODELS=1 python3 Tests/IntegrationTests/test_all_models_integration.py
 ```
 
 The `MLXTRA_REQUIRE_ALL_MODELS=1` runs are the release gate. Without that

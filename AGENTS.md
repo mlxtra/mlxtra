@@ -19,7 +19,7 @@ open /Users/$USER/Library/Developer/Xcode/DerivedData/MLXtra-*/Build/Products/De
 
 ### Running Tests
 
-**Swift Tests (172 tests):**
+**Swift Tests (377 tests):**
 ```bash
 swift test
 ```
@@ -38,10 +38,10 @@ These tests exercise the bundled app runtime, Metal, local model files, and outp
 
 ```bash
 # Music generation only (fast - ~15s)
-python3 test_music_integration.py
+python3 Tests/IntegrationTests/test_music_integration.py
 
 # All model types (slow - ~5 min)
-python3 test_all_models_integration.py
+python3 Tests/IntegrationTests/test_all_models_integration.py
 ```
 
 ---
@@ -60,7 +60,7 @@ ls ~/Library/Application\ Support/MLXtra/checkpoints/
 Run this outside the Codex sandbox with escalation so ACE-Step can access Metal and write generated audio.
 
 ```bash
-python3 test_music_integration.py
+python3 Tests/IntegrationTests/test_music_integration.py
 ```
 
 **3. Check for Metal validation errors in console:**
@@ -200,7 +200,7 @@ cd ../..
 
 # Integration test for the feature
 # In Codex, run this outside the sandbox with escalation.
-python3 test_music_integration.py  # or test_all_models_integration.py
+python3 Tests/IntegrationTests/test_music_integration.py  # or Tests/IntegrationTests/test_all_models_integration.py
 ```
 
 ### Simplicity First
@@ -232,7 +232,7 @@ python3 test_music_integration.py  # or test_all_models_integration.py
 ### Goal-Driven Execution
 
 **Transform tasks into verifiable goals:**
-- "Fix music generation" → "Run test_music_integration.py, make it pass"
+- "Fix music generation" → "Run Tests/IntegrationTests/test_music_integration.py, make it pass"
 - "Add feature X" → "Test that X works via integration test"
 
 **For multi-step tasks, state a brief plan:**

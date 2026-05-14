@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _derived_data_app_candidates() -> list[Path]:

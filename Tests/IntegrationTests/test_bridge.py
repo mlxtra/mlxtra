@@ -6,8 +6,8 @@ import json
 import os
 from pathlib import Path
 
-bundle_dir = Path(__file__).parent
-venv_path = bundle_dir / "MLXtra" / "Resources" / "runtime" / "macos-arm64" / "venv"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+venv_path = REPO_ROOT / "MLXtra" / "Resources" / "runtime" / "macos-arm64" / "venv"
 
 if venv_path.exists():
     for py_version in ["python3.13", "python3.12", "python3.11"]:

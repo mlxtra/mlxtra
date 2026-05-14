@@ -30,6 +30,11 @@ jobs:
           MLXtra/Resources/runtime/macos-arm64/hf_download_helper.py
           MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py
           Scripts/validate-release-metadata.py
+          Tests/IntegrationTests/test_all_models_integration.py
+          Tests/IntegrationTests/test_bridge.py
+          Tests/IntegrationTests/test_music_bridge.py
+          Tests/IntegrationTests/test_music_generation.py
+          Tests/IntegrationTests/test_music_integration.py
 
       - name: Run Python bridge tests
         working-directory: Tests/PythonTests

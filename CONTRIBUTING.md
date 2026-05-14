@@ -28,7 +28,7 @@ Run the lightweight checks before opening a pull request:
 ```bash
 Scripts/validate-release-metadata.py --allow-runtime-placeholders
 Scripts/check-swift-coverage.sh
-python3 -m py_compile MLXtra/Resources/python_bridge.py MLXtra/Resources/acestep_bridge.py
+python3 -m py_compile MLXtra/Resources/python_bridge.py MLXtra/Resources/acestep_bridge.py Tests/IntegrationTests/*.py
 ```
 
 The Swift coverage script enforces 80% line coverage for deterministic core
@@ -50,7 +50,7 @@ To force a full local model gate and allow missing models to be downloaded first
 run:
 
 ```bash
-MLXTRA_ALLOW_MODEL_DOWNLOADS=1 MLXTRA_REQUIRE_ALL_MODELS=1 python3 test_all_models_integration.py
+MLXTRA_ALLOW_MODEL_DOWNLOADS=1 MLXTRA_REQUIRE_ALL_MODELS=1 python3 Tests/IntegrationTests/test_all_models_integration.py
 ```
 
 ## Pull Requests

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 RESOURCES_DIR = REPO_ROOT / "MLXtra/Resources"
 
 if str(RESOURCES_DIR) not in sys.path:
@@ -162,11 +162,7 @@ def test_bridge():
     print("TEST 3: Testing acestep_bridge")
     print("=" * 60)
 
-    bridge_path = Path(__file__).parent / "MLXtra/Resources/acestep_bridge.py"
-    if not bridge_path.exists():
-        bridge_path = (
-            Path(__file__).parent / "MLXtra/MLXtra/Resources/acestep_bridge.py"
-        )
+    bridge_path = REPO_ROOT / "MLXtra/Resources/acestep_bridge.py"
 
     print(f"Bridge script: {bridge_path}")
     print(f"Exists: {bridge_path.exists()}")
