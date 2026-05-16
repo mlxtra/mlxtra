@@ -454,25 +454,17 @@ final class ModelDownloadManager: ObservableObject {
             if process.isRunning {
                 tasks[model.id]?.cancel()
                 process.terminate()
-                // Schedule SIGKILL fallback after 3 seconds
                 let pid = process.processIdentifier
                 DispatchQueue.global().asyncAfter(deadline: .now() + Self.terminationKillFallbackDelay) { [weak process] in
                     guard let process, process.isRunning else { return }
                     var zombieCheck: Int32 = 0
                     if waitpid(pid, &zombieCheck, WNOHANG) == 0 {
                         kill(pid, SIGKILL)
+                        process.waitUntilExit()
                     }
                 }
-                Task { @MainActor [weak self, weak process] in
-                    try? await Task.sleep(nanoseconds: UInt64(Self.terminationCleanupDelay * 1_000_000_000))
-                    guard let self, let process, self.processes[model.id] === process, !process.isRunning else {
-                        return
-                    }
-                    self.processes[model.id] = nil
-                }
+                scheduleProcessTrackingCleanup(process, modelId: model.id)
             }
-            // Always clean up dictionary entries when process is not running,
-            // even if terminationHandler hasn't fired yet
             if !process.isRunning {
                 tasks[model.id]?.cancel()
                 tasks[model.id] = nil
@@ -483,6 +475,23 @@ final class ModelDownloadManager: ObservableObject {
             tasks[model.id]?.cancel()
             tasks[model.id] = nil
             stopReasons[model.id] = nil
+        }
+    }
+
+    private func scheduleProcessTrackingCleanup(_ process: Process, modelId: String) {
+        Task { @MainActor [weak self, weak process] in
+            let timeout = Self.terminationKillFallbackDelay + Self.terminationCleanupDelay + 2.0
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                guard let self, let process, self.processes[modelId] === process else {
+                    return
+                }
+                if !process.isRunning {
+                    self.processes[modelId] = nil
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
         }
     }
 
