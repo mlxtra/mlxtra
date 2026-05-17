@@ -11,6 +11,7 @@ SKIP_RUNTIME_ARCHIVE=0
 WRITE_CHANNEL=0
 FORCE_IMMUTABLE=0
 DRY_RUN=0
+ALLOW_PRIVATE=0
 
 usage() {
     cat <<'USAGE'
@@ -32,11 +33,13 @@ Options:
   --write-channel            Also update MLXtra/Resources/stable-channel.json locally
   --force-immutable          Replace assets on catalog/runtime releases if they already exist
   --dry-run                  Print publishing commands without running GitHub write operations
+  --allow-private            Permit publishing to a private repo for internal testing
   -h, --help                 Show this help.
 
 Prerequisites:
   - gh CLI installed and authenticated with release write access
   - runtime bundle already built when publishing a new runtime archive
+  - public GitHub repo for app-visible updates; private release assets return 404
 USAGE
 }
 
@@ -82,6 +85,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --dry-run)
             DRY_RUN=1
+            shift
+            ;;
+        --allow-private)
+            ALLOW_PRIVATE=1
             shift
             ;;
         -h|--help)
@@ -250,8 +257,25 @@ verify_remote_asset_exists() {
     fi
 }
 
+validate_repo_visibility() {
+    local visibility
+    visibility="$(gh repo view "${REPOSITORY}" --json visibility -q '.visibility')"
+    if [ "${visibility}" != "PUBLIC" ]; then
+        if [ "${ALLOW_PRIVATE}" = "1" ]; then
+            echo "warning: ${REPOSITORY} visibility is ${visibility}; app URLSession downloads will return 404 without authentication." >&2
+            return
+        fi
+
+        echo "${REPOSITORY} visibility is ${visibility}." >&2
+        echo "MLXtra downloads release metadata with unauthenticated URLSession requests, so the release assets must be public." >&2
+        echo "Make the repository public, or rerun with --allow-private for internal publishing tests only." >&2
+        exit 1
+    fi
+}
+
 require_command gh
 require_command /usr/bin/python3
+validate_repo_visibility
 
 PREPARE_ARGS=(
     "${SCRIPT_DIR}/prepare-release-assets.sh"

@@ -61,6 +61,21 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testFileSHA256MatchesDataSHA256() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let bytes = (0..<(2 * 1024 * 1024 + 37)).map { UInt8($0 % 251) }
+        let data = Data(bytes)
+        let fileURL = directory.appendingPathComponent("archive.zip")
+        try data.write(to: fileURL)
+
+        XCTAssertEqual(
+            try SHA256Checksum.hexDigest(for: fileURL),
+            SHA256Checksum.hexDigest(for: data)
+        )
+    }
+
 
     func testEstimatedModelSizeLogic() {
         let modelSizes: [String: Double] = [
@@ -343,6 +358,23 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(selected, bundled)
     }
 
+    func testPreferredRuntimeFallsBackWhenInstalledRuntimeIsMissingAceStepPython() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let installed = root.appendingPathComponent("installed")
+        let bundled = root.appendingPathComponent("bundled")
+        try makeRuntimeBundle(at: installed, version: "0.2.0")
+        try makeRuntimeBundle(at: bundled, version: "0.1.0")
+        try FileManager.default.removeItem(at: installed.appendingPathComponent("acestep-venv/bin/python"))
+
+        let selected = RuntimeManager.preferredRuntimeBundleURL(
+            installed: installed,
+            bundledCandidates: [bundled]
+        )
+
+        XCTAssertEqual(selected, bundled)
+    }
+
     func testRuntimeManifestSupportsBackendsAndProfiles() throws {
         let manifest = RuntimeManifest(
             runtimeVersion: "0.2.0",
@@ -401,6 +433,134 @@ final class RuntimeManagerTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testRuntimeUpdateRefreshFindsNewestCompatibleRuntime() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.0"),
+                makeRuntimeAsset(version: "0.0.9"),
+                makeRuntimeAsset(version: "0.1.5", arch: "x86_64"),
+                makeRuntimeAsset(version: "0.1.6", platform: "linux"),
+                makeRuntimeAsset(version: "0.1.7", compatibilityApi: 2),
+                makeRuntimeAsset(version: "0.1.1"),
+                makeRuntimeAsset(version: "0.1.2"),
+            ]
+        )
+
+        let currentManifest = makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1)
+        let manager = RuntimeUpdateManager(currentManifestProvider: { currentManifest })
+        await manager.refreshStableChannel(channelURL: channelURL)
+
+        guard case .available(let asset) = manager.state else {
+            XCTFail("Expected compatible newer runtime to be available")
+            return
+        }
+        XCTAssertEqual(asset.version, "0.1.2")
+        XCTAssertEqual(asset.id, "macos-arm64-0.1.2")
+        XCTAssertEqual(manager.availableRuntime, asset)
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshIgnoresChannelsWithoutCompatibleRuntime() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.0"),
+                makeRuntimeAsset(version: "0.0.9"),
+                makeRuntimeAsset(version: "0.1.5", arch: "x86_64"),
+                makeRuntimeAsset(version: "0.1.6", platform: "linux"),
+                makeRuntimeAsset(version: "0.1.7", compatibilityApi: 2),
+            ]
+        )
+
+        let currentManifest = makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1)
+        let manager = RuntimeUpdateManager(currentManifestProvider: { currentManifest })
+        await manager.refreshStableChannel(channelURL: channelURL)
+
+        XCTAssertEqual(manager.state, .idle)
+        XCTAssertNil(manager.availableRuntime)
+    }
+
+    @MainActor
+    func testRuntimeInstallVerifiesChecksumExtractsArchiveAndActivatesRuntime() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("runtime-macos-arm64")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveURL = directory.appendingPathComponent("runtime-macos-arm64-0.1.1.zip")
+        try makeZipArchive(from: runtimeRoot, at: archiveURL)
+
+        let installRoot = directory.appendingPathComponent("installed-runtimes")
+        let checksum = try SHA256Checksum.hexDigest(for: archiveURL)
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: archiveURL,
+            sha256: checksum,
+            sizeBytes: try archiveSizeBytes(archiveURL),
+            compatibilityApi: 1
+        )
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { self.makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1) },
+            runtimeArchiveInstaller: { archive in
+                try RuntimeManager.installRuntimeArchive(archive, installRoot: installRoot)
+            }
+        )
+
+        await manager.installRuntime(asset)
+
+        XCTAssertEqual(manager.state, .installed("0.1.1"))
+        let currentURL = installRoot.appendingPathComponent("current")
+        XCTAssertEqual(RuntimeManager.runtimeManifest(at: currentURL)?.runtimeVersion, "0.1.1")
+        XCTAssertTrue(RuntimeManager.isRuntimeBundleStructurallyValid(currentURL))
+        XCTAssertTrue(
+            FileManager.default.isExecutableFile(
+                atPath: currentURL.appendingPathComponent("acestep-venv/bin/python").path
+            )
+        )
+    }
+
+    @MainActor
+    func testRuntimeInstallRejectsChecksumMismatchBeforeInstalling() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let archiveURL = directory.appendingPathComponent("runtime-macos-arm64-0.1.1.zip")
+        try Data("not a runtime archive".utf8).write(to: archiveURL)
+        let recorder = InstallerCallRecorder()
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: archiveURL,
+            sha256: String(repeating: "0", count: 64),
+            sizeBytes: try archiveSizeBytes(archiveURL),
+            compatibilityApi: 1
+        )
+        let manager = RuntimeUpdateManager(
+            runtimeArchiveInstaller: { _ in
+                recorder.wasCalled = true
+                return directory
+            }
+        )
+
+        await manager.installRuntime(asset)
+
+        XCTAssertFalse(recorder.wasCalled)
+        XCTAssertEqual(manager.state, .failed(RuntimeUpdateError.checksumMismatch.localizedDescription))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("MLXtraTests")
@@ -411,26 +571,91 @@ final class RuntimeManagerTests: XCTestCase {
 
     private func makeRuntimeBundle(at url: URL, version: String) throws {
         try FileManager.default.createDirectory(at: url.appendingPathComponent("venv/bin"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("acestep-venv/bin"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(
             at: url.appendingPathComponent("python/Frameworks/Versions/3.12"),
             withIntermediateDirectories: true
         )
-        FileManager.default.createFile(atPath: url.appendingPathComponent("venv/bin/python").path, contents: Data())
+        try writeExecutableFile(at: url.appendingPathComponent("venv/bin/python"))
+        try writeExecutableFile(at: url.appendingPathComponent("acestep-venv/bin/python"))
         FileManager.default.createFile(atPath: url.appendingPathComponent("hf_download_helper.py").path, contents: Data())
         FileManager.default.createFile(atPath: url.appendingPathComponent("acestep_download_helper.py").path, contents: Data())
-        try Data("""
-        {
-          "runtimeVersion": "\(version)",
-          "compatibilityApi": 1,
-          "platform": "macos",
-          "arch": "arm64",
-          "packages": [],
-          "isolatedPackages": [],
-          "supportedBackends": ["vlm", "image"],
-          "capabilities": ["chat", "vision", "image-generation"]
-        }
-        """.utf8).write(to: url.appendingPathComponent("runtime-manifest.json"))
+        let manifest = makeRuntimeManifest(version: version, compatibilityApi: 1)
+        let data = try JSONEncoder().encode(manifest)
+        try data.write(to: url.appendingPathComponent("runtime-manifest.json"))
     }
+
+    private func makeRuntimeManifest(version: String, compatibilityApi: Int) -> RuntimeManifest {
+        RuntimeManifest(
+            runtimeVersion: version,
+            compatibilityApi: compatibilityApi,
+            supportedBackends: RuntimeBackend.allCases
+        )
+    }
+
+    private func writeExecutableFile(at url: URL) throws {
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o755)],
+            ofItemAtPath: url.path
+        )
+    }
+
+    private func writeRuntimeChannel(to url: URL, runtimes: [[String: Any]]) throws {
+        let payload: [String: Any] = [
+            "schemaVersion": 1,
+            "channel": "stable",
+            "catalog": [
+                "version": "2026.05.09",
+                "url": "https://example.com/model-catalog.json",
+                "sha256": String(repeating: "1", count: 64),
+                "sizeBytes": 1024,
+            ],
+            "runtimes": runtimes,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url)
+    }
+
+    private func makeRuntimeAsset(
+        version: String,
+        platform: String = "macos",
+        arch: String = "arm64",
+        url: URL? = nil,
+        sha256: String = String(repeating: "2", count: 64),
+        sizeBytes: Int64 = 2048,
+        compatibilityApi: Int = 1
+    ) -> [String: Any] {
+        [
+            "version": version,
+            "platform": platform,
+            "arch": arch,
+            "url": (url ?? URL(string: "https://example.com/runtime-\(version).zip")!).absoluteString,
+            "sha256": sha256,
+            "sizeBytes": sizeBytes,
+            "compatibilityApi": compatibilityApi,
+        ]
+    }
+
+    private func makeZipArchive(from sourceURL: URL, at archiveURL: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", "--keepParent", sourceURL.path, archiveURL.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw RuntimeUpdateError.unsupportedArchive
+        }
+    }
+
+    private func archiveSizeBytes(_ url: URL) throws -> Int64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.size] as? NSNumber)?.int64Value ?? 0
+    }
+}
+
+private final class InstallerCallRecorder {
+    var wasCalled = false
 }
 
 

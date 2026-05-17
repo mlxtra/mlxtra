@@ -29,7 +29,7 @@ Runtime archive
 
 - Filename: `runtime-macos-arm64-<version>.zip`.
 - Root can be the runtime directory itself or a single containing directory; the app normalizes both during install.
-- Must contain `runtime-manifest.json`, `venv/bin/python`, bundled Python, and download helpers.
+- Must contain `runtime-manifest.json`, `venv/bin/python`, `acestep-venv/bin/python`, bundled Python, and download helpers.
 
 ## Validate Metadata
 
@@ -90,6 +90,12 @@ Use the publishing wrapper after local validation has passed:
 ```bash
 Scripts/publish-release-assets.sh --repo mlxtra/mlxtra
 ```
+
+The repository must be public before running the normal publish command.
+MLXtra fetches release metadata and runtime archives with unauthenticated
+`URLSession` requests, so private GitHub release asset URLs return 404 in the
+app. For internal publishing tests against a private repository, pass
+`--allow-private`; do not use that for app-visible releases.
 
 This runs `Scripts/prepare-release-assets.sh`, then publishes:
 

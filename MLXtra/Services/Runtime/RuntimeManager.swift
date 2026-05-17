@@ -155,8 +155,18 @@ enum SHA256Checksum {
     }
 
     static func hexDigest(for url: URL) throws -> String {
-        let data = try Data(contentsOf: url)
-        return hexDigest(for: data)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        while true {
+            let chunk = try handle.read(upToCount: 1024 * 1024) ?? Data()
+            if chunk.isEmpty {
+                break
+            }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -175,6 +185,17 @@ final class RuntimeUpdateManager: ObservableObject {
 
     @Published private(set) var state: InstallState = .idle
     @Published private(set) var channel: ReleaseChannelManifest?
+
+    private let currentManifestProvider: () -> RuntimeManifest?
+    private let runtimeArchiveInstaller: @Sendable (URL) throws -> URL
+
+    init(
+        currentManifestProvider: @escaping () -> RuntimeManifest? = { RuntimeManager.activeRuntimeManifest() },
+        runtimeArchiveInstaller: @escaping @Sendable (URL) throws -> URL = { try RuntimeManager.installRuntimeArchive($0) }
+    ) {
+        self.currentManifestProvider = currentManifestProvider
+        self.runtimeArchiveInstaller = runtimeArchiveInstaller
+    }
 
     var availableRuntime: RuntimeReleaseAsset? {
         if case .available(let asset) = state {
@@ -212,23 +233,40 @@ final class RuntimeUpdateManager: ObservableObject {
         state = .installing(nil)
         do {
             let archiveURL = try await fetchRuntimeArchive(asset)
-            let actualChecksum = try SHA256Checksum.hexDigest(for: archiveURL)
-            guard actualChecksum.caseInsensitiveCompare(asset.sha256) == .orderedSame else {
-                throw RuntimeUpdateError.checksumMismatch
-            }
-
-            let installedURL = try RuntimeManager.installRuntimeArchive(archiveURL)
-            guard let manifest = RuntimeManager.runtimeManifest(at: installedURL) else {
-                throw RuntimeUpdateError.invalidRuntime
-            }
-            state = .installed(manifest.runtimeVersion)
+            let expectedSHA256 = asset.sha256
+            let installer = runtimeArchiveInstaller
+            let runtimeVersion = try await Task.detached(priority: .utility) {
+                try Self.validateAndInstallRuntimeArchive(
+                    archiveURL,
+                    expectedSHA256: expectedSHA256,
+                    installer: installer
+                )
+            }.value
+            state = .installed(runtimeVersion)
         } catch {
             state = .failed(error.localizedDescription)
         }
     }
 
+    private nonisolated static func validateAndInstallRuntimeArchive(
+        _ archiveURL: URL,
+        expectedSHA256: String,
+        installer: @Sendable (URL) throws -> URL
+    ) throws -> String {
+        let actualChecksum = try SHA256Checksum.hexDigest(for: archiveURL)
+        guard actualChecksum.caseInsensitiveCompare(expectedSHA256) == .orderedSame else {
+            throw RuntimeUpdateError.checksumMismatch
+        }
+
+        let installedURL = try installer(archiveURL)
+        guard let manifest = RuntimeManager.runtimeManifest(at: installedURL) else {
+            throw RuntimeUpdateError.invalidRuntime
+        }
+        return manifest.runtimeVersion
+    }
+
     private func bestRuntimeAsset(in manifest: ReleaseChannelManifest) -> RuntimeReleaseAsset? {
-        let current = RuntimeManager.activeRuntimeManifest()
+        let current = currentManifestProvider()
         return manifest.runtimes
             .filter { $0.platform == "macos" && $0.arch == "arm64" }
             .filter { asset in
@@ -386,13 +424,24 @@ class RuntimeManager: ObservableObject {
 
         let requiredFiles = [
             "venv/bin/python",
+            "acestep-venv/bin/python",
             "python/Frameworks/Versions/3.12",
             "hf_download_helper.py",
             "acestep_download_helper.py",
             "runtime-manifest.json",
         ]
-        return requiredFiles.allSatisfy { relativePath in
+        guard requiredFiles.allSatisfy({ relativePath in
             fileManager.fileExists(atPath: runtimeURL.appendingPathComponent(relativePath).path)
+        }) else {
+            return false
+        }
+
+        let requiredExecutables = [
+            "venv/bin/python",
+            "acestep-venv/bin/python",
+        ]
+        return requiredExecutables.allSatisfy { relativePath in
+            fileManager.isExecutableFile(atPath: runtimeURL.appendingPathComponent(relativePath).path)
         }
     }
 
@@ -401,6 +450,14 @@ class RuntimeManager: ObservableObject {
         fileManager: FileManager = .default
     ) throws -> URL {
         let installRoot = installedRuntimeURL(fileManager: fileManager).deletingLastPathComponent()
+        return try installRuntimeArchive(archiveURL, installRoot: installRoot, fileManager: fileManager)
+    }
+
+    nonisolated static func installRuntimeArchive(
+        _ archiveURL: URL,
+        installRoot: URL,
+        fileManager: FileManager = .default
+    ) throws -> URL {
         let stagingURL = installRoot.appendingPathComponent("staging-\(UUID().uuidString)")
         let extractedURL = stagingURL.appendingPathComponent("extract")
         try fileManager.createDirectory(at: extractedURL, withIntermediateDirectories: true)
@@ -420,7 +477,7 @@ class RuntimeManager: ObservableObject {
             throw RuntimeUpdateError.invalidRuntime
         }
 
-        let currentURL = installedRuntimeURL(fileManager: fileManager)
+        let currentURL = installRoot.appendingPathComponent("current")
         let nextURL = installRoot.appendingPathComponent("next-\(UUID().uuidString)")
         try fileManager.createDirectory(at: installRoot, withIntermediateDirectories: true)
         try fileManager.moveItem(at: runtimeRoot, to: nextURL)

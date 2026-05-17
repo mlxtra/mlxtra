@@ -145,9 +145,12 @@ struct ModelManagerRow: View {
             Button {
                 Task {
                     await runtimeUpdateManager.installRuntime(asset)
+                    if case .installed = runtimeUpdateManager.state {
+                        MLXtraApplicationRelauncher.restartFromCurrentBundle()
+                    }
                 }
             } label: {
-                Label("Install Runtime", systemImage: "arrow.down.circle")
+                Label("Install & Restart", systemImage: "arrow.clockwise.circle")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)

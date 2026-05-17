@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RuntimeUpdateSection: View {
@@ -15,16 +16,19 @@ struct RuntimeUpdateSection: View {
                 Button {
                     Task {
                         await manager.installRuntime(asset)
+                        if case .installed = manager.state {
+                            MLXtraApplicationRelauncher.restartFromCurrentBundle()
+                        }
                     }
                 } label: {
-                    Label("Install Runtime", systemImage: "arrow.down.circle.fill")
+                    Label("Install & Restart", systemImage: "arrow.clockwise.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
             }
         case .installing:
             updateCard(
                 title: "Installing runtime",
-                detail: "Verifying and activating the downloaded runtime.",
+                detail: "Downloading, verifying, and activating the runtime.",
                 icon: "gearshape.2.fill",
                 tint: .accentColor
             ) {
@@ -34,11 +38,16 @@ struct RuntimeUpdateSection: View {
         case .installed(let version):
             updateCard(
                 title: "Runtime installed",
-                detail: "Runtime \(version) is ready for compatible models.",
+                detail: "Restart MLXtra to use runtime \(version).",
                 icon: "checkmark.circle.fill",
                 tint: .secondary
             ) {
-                EmptyView()
+                Button {
+                    MLXtraApplicationRelauncher.restartFromCurrentBundle()
+                } label: {
+                    Label("Restart", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
             }
         case .failed(let message):
             updateCard(
@@ -97,6 +106,31 @@ struct RuntimeUpdateSection: View {
         formatter.allowedUnits = [.useGB, .useMB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+}
+
+enum MLXtraApplicationRelauncher {
+    @discardableResult
+    @MainActor
+    static func restartFromCurrentBundle() -> Bool {
+        let bundleURL = Bundle.main.bundleURL
+
+        guard bundleURL.pathExtension == "app" else {
+            return false
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-n", bundleURL.path]
+
+        do {
+            try process.run()
+            NSApplication.shared.terminate(nil)
+            return true
+        } catch {
+            return false
+        }
     }
 }
 
