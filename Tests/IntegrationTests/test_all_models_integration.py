@@ -225,6 +225,7 @@ class MLXtraIntegrationTest:
         self.results = []
         self.generated_files = []
         self.skipped_tests = set()
+        self.last_bridge_timings = []
 
     def log(self, message: str, level: str = "INFO"):
         """Log a message with timestamp."""
@@ -364,8 +365,48 @@ class MLXtraIntegrationTest:
         )
         env["MTL_DEBUG_LAYER"] = "0"
         env["MTL_SHADER_VALIDATION"] = "0"
+        env.setdefault("MLXTRA_BRIDGE_TIMING", "1")
 
         return env
+
+    def record_timing(
+        self,
+        timings: list[dict],
+        name: str,
+        started_at: float,
+        ended_at: Optional[float] = None,
+        **extra,
+    ) -> None:
+        ended_at = ended_at if ended_at is not None else time.perf_counter()
+        timing = {
+            "type": "trace.timing",
+            "name": name,
+            "duration_ms": round((ended_at - started_at) * 1000, 3),
+        }
+        timing.update({key: value for key, value in extra.items() if value is not None})
+        timings.append(timing)
+
+    def log_timing_summary(self, messages: list[dict]) -> None:
+        timings = [
+            *self.last_bridge_timings,
+            *(m for m in messages if m.get("type") == "trace.timing"),
+        ]
+        if not timings:
+            self.log("No timing events captured.", "WARNING")
+            return
+
+        self.log("\nTiming breakdown:")
+        for timing in timings:
+            name = timing.get("name", "unknown")
+            duration = timing.get("duration_ms")
+            detail = timing.get("detail")
+            if isinstance(duration, (int, float)):
+                line = f"  {name}: {duration:.1f} ms"
+            else:
+                line = f"  {name}: {duration}"
+            if detail:
+                line += f" ({detail})"
+            self.log(line)
 
     def send_request_to_bridge(
         self, request: dict, timeout: int = 120, use_acestep: bool = False
@@ -468,6 +509,9 @@ class MLXtraIntegrationTest:
             stderr_lines = []
             stdout_lines = queue.Queue()
             start_time = time.time()
+            process_started_at = time.perf_counter()
+            session_timings = []
+            self.last_bridge_timings = session_timings
 
             def drain_stdout():
                 if proc.stdout is None:
@@ -509,6 +553,7 @@ class MLXtraIntegrationTest:
                 # complete init. A late model.loaded must not finish a queued chat
                 # request before the assistant response arrives.
                 request_start = time.time()
+                request_started_at = time.perf_counter()
                 request_type = request.get("type")
                 if request_type == "init":
                     request_timeout = 420
@@ -517,6 +562,8 @@ class MLXtraIntegrationTest:
                 else:
                     request_timeout = 180
                 request_completed = False
+                saw_system_ready = False
+                saw_first_chunk = False
 
                 while time.time() - request_start < request_timeout:
                     try:
@@ -530,18 +577,46 @@ class MLXtraIntegrationTest:
                             all_messages.append(msg)
 
                             message_type = msg.get("type")
+                            if message_type == "system.ready" and not saw_system_ready:
+                                self.record_timing(
+                                    session_timings,
+                                    "e2e.process_to_system_ready",
+                                    process_started_at,
+                                )
+                                saw_system_ready = True
                             if message_type == "error":
                                 request_completed = True
                                 break
                             if request_type == "init" and message_type == "model.loaded":
+                                self.record_timing(
+                                    session_timings,
+                                    "e2e.init_request_to_model_loaded",
+                                    request_started_at,
+                                )
                                 request_completed = True
                                 break
-                            if request_type == "chat.completions" and message_type in (
-                                "assistant",
-                                "chat.completion.complete",
-                            ):
-                                request_completed = True
-                                break
+                            if request_type == "chat.completions":
+                                if (
+                                    message_type == "chat.completion.chunk"
+                                    and not saw_first_chunk
+                                ):
+                                    self.record_timing(
+                                        session_timings,
+                                        "e2e.chat_request_to_first_chunk",
+                                        request_started_at,
+                                    )
+                                    saw_first_chunk = True
+                                if message_type in (
+                                    "assistant",
+                                    "chat.completion.complete",
+                                ):
+                                    self.record_timing(
+                                        session_timings,
+                                        "e2e.chat_request_to_complete",
+                                        request_started_at,
+                                    )
+                                    request_completed = True
+                                    break
                         except json.JSONDecodeError:
                             pass
 
@@ -563,6 +638,7 @@ class MLXtraIntegrationTest:
                     for line in stderr_lines[-20:]:
                         self.log(f"  [stderr before timeout] {line[:150]}", "ERROR")
                     proc.terminate()
+                    self.last_bridge_timings = session_timings
                     return all_messages, False
 
             proc.terminate()
@@ -574,6 +650,7 @@ class MLXtraIntegrationTest:
             stderr_thread.join(timeout=1)
 
             success = not any(m.get("type") == "error" for m in all_messages)
+            self.last_bridge_timings = session_timings
             return all_messages, success
 
         except Exception as e:
@@ -820,6 +897,7 @@ class MLXtraIntegrationTest:
 
         self.log("Running bridge session (init + chat)...")
         messages, success = self.run_bridge_session(requests, timeout=600)
+        self.log_timing_summary(messages)
 
         if not success:
             errors = [m for m in messages if m.get("type") == "error"]

@@ -736,16 +736,20 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    func executeToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String, generation: ChatGenerationRequest) async {
+    @discardableResult
+    func executeToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], images: [URL], prompt: String, generation: ChatGenerationRequest) async -> ChatToolCallExecutionResult {
         switch canonicalToolName(toolCall.function.name) {
         case "web_search":
             await executeWebSearchToolCall(toolCall, messages: &messages, prompt: prompt)
+            return .nonTerminal
         case "generate_image":
             await executeImageGenerationToolCall(toolCall, messages: &messages, images: images, prompt: prompt, generation: generation)
+            return .terminalMedia
         case "create_speech":
             await executeSpeechGenerationToolCall(toolCall, messages: &messages, prompt: prompt, generation: generation)
+            return .terminalMedia
         case "generate_music", "create_music":
-            await executeMusicGenerationToolCall(toolCall, messages: &messages, prompt: prompt, generation: generation)
+            return await executeMusicGenerationToolCall(toolCall, messages: &messages, prompt: prompt, generation: generation)
         default:
             messages.append(ExecutionMessage(
                 role: .tool,
@@ -753,6 +757,7 @@ class ChatViewModel: ObservableObject {
                 toolCallId: toolCall.id,
                 name: toolCall.function.name
             ))
+            return .nonTerminal
         }
     }
 
@@ -852,7 +857,8 @@ class ChatViewModel: ObservableObject {
         )
     }
 
-    private func executeMusicGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String, generation: ChatGenerationRequest) async {
+    @discardableResult
+    private func executeMusicGenerationToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], prompt: String, generation: ChatGenerationRequest) async -> ChatToolCallExecutionResult {
         let musicProfile = generation.profile(for: .music)
         var parameters = defaultMusicParameters(
             caption: prompt,
@@ -898,7 +904,7 @@ class ChatViewModel: ObservableObject {
                 toolCallId: toolCall.id,
                 name: "generate_music"
             ))
-            return
+            return .blockedTerminalMedia
         }
 
         let model = musicProfile.downloadableModel
@@ -929,6 +935,7 @@ class ChatViewModel: ObservableObject {
                 attachmentKind: .audio
             )
         )
+        return .terminalMedia
     }
 
 }

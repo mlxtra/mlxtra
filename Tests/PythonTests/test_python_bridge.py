@@ -231,6 +231,125 @@ class TestChatCompletionPerformance(unittest.TestCase):
         assert complete["performance"]["generation_duration"] == 0.16
         assert complete["performance"]["peak_memory_gb"] == 1.25
 
+    def test_chat_completion_emits_timing_events_when_enabled(self):
+        def fake_load_model_if_needed(model_id, request=None):
+            return ("model", object(), {"model_type": "fake"})
+
+        def fake_apply_chat_template(processor, config, messages, num_images=0, **kwargs):
+            return "prompt"
+
+        def fake_stream_generate(*args, **kwargs):
+            yield types.SimpleNamespace(
+                text="A",
+                prompt_tokens=7,
+                generation_tokens=1,
+                prompt_tps=70.0,
+                generation_tps=10.0,
+                peak_memory=1.25,
+            )
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.stream_generate = fake_stream_generate
+        prompt_utils_module = types.ModuleType("mlx_vlm.prompt_utils")
+        prompt_utils_module.apply_chat_template = fake_apply_chat_template
+        mlx_module = types.ModuleType("mlx")
+        mlx_core_module = types.ModuleType("mlx.core")
+        mlx_core_module.clear_cache = lambda: None
+        mlx_module.core = mlx_core_module
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "request_id": "req-timing",
+        }
+
+        with patch.dict(
+            os.environ, {"MLXTRA_BRIDGE_TIMING": "1"}
+        ), patch.dict(
+            sys.modules,
+            {
+                "mlx": mlx_module,
+                "mlx.core": mlx_core_module,
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.prompt_utils": prompt_utils_module,
+            },
+        ), patch.object(
+            python_bridge, "load_model_if_needed", fake_load_model_if_needed
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        timing_names = {
+            message["name"]
+            for message in messages
+            if message.get("type") == "trace.timing"
+        }
+
+        assert "chat.imports" in timing_names
+        assert "chat.model_ready" in timing_names
+        assert "chat.prompt_template" in timing_names
+        assert "chat.first_token" in timing_names
+        assert "chat.generation" in timing_names
+        assert "chat.request_total" in timing_names
+        assert any(
+            message.get("type") == "chat.completion.complete" for message in messages
+        )
+
+
+class TestModelLoadTiming(unittest.TestCase):
+    def tearDown(self):
+        python_bridge.MODEL_REGISTRY.clear()
+
+    def test_load_model_if_needed_emits_weight_load_timing_when_enabled(self):
+        python_bridge.MODEL_REGISTRY.clear()
+
+        def fake_load(model_id):
+            return ("model", "processor")
+
+        def fake_load_config(model_id):
+            return {"model_type": "fake"}
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.load = fake_load
+        mlx_vlm_utils_module = types.ModuleType("mlx_vlm.utils")
+        mlx_vlm_utils_module.load_config = fake_load_config
+
+        request = {"request_id": "req-load"}
+
+        with patch.dict(
+            os.environ, {"MLXTRA_BRIDGE_TIMING": "1"}
+        ), patch.dict(
+            sys.modules,
+            {
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.utils": mlx_vlm_utils_module,
+            },
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.load_model_if_needed("fake-model", request=request)
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        timing_names = {
+            message["name"]
+            for message in messages
+            if message.get("type") == "trace.timing"
+        }
+
+        assert "model.mlx_imports" in timing_names
+        assert "model.weights" in timing_names
+        assert "model.config" in timing_names
+        assert "model.warmup" in timing_names
+        assert "model.load_total" in timing_names
+        assert any(message.get("type") == "model.loaded" for message in messages)
+
 
 class TestLastUserPrompt(unittest.TestCase):
     def test_returns_last_user_content(self):

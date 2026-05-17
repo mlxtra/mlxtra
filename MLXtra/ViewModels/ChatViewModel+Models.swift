@@ -84,9 +84,12 @@ extension ChatViewModel {
 
     func refreshLocalEngineDownloadStatus() {
         let currentPendingModel = pendingEngineDownloadModel
-        let selectionRequirement = downloadRequirementForCurrentSelection()
+        let currentTool = selectedTool
 
         Task {
+            _ = await selectDownloadedDefaultModelIfNeeded(for: modelModality(for: currentTool))
+            let selectionRequirement = downloadRequirement(for: currentTool)
+
             if let currentPendingModel,
                await isModelDownloadedOffMain(modelId: currentPendingModel.modelId),
                self.pendingEngineDownloadModel?.modelId == currentPendingModel.modelId {
@@ -95,6 +98,32 @@ extension ChatViewModel {
 
             await refreshSelectedDownloadRequirement(selectionRequirement)
         }
+    }
+
+    @discardableResult
+    func selectDownloadedDefaultModelIfNeeded(for modality: ModelModality) async -> Bool {
+        guard modelSelectionStore.storedProfile(for: modality) == nil else {
+            return false
+        }
+
+        let sortedProfiles = ModelCapabilityProfile.sortedProfiles(for: modality)
+        let compatibleProfiles = sortedProfiles.filter { $0.isRuntimeCompatible() }
+        let candidateProfiles = compatibleProfiles.isEmpty ? sortedProfiles : compatibleProfiles
+
+        for profile in candidateProfiles {
+            guard await isModelDownloadedOffMain(modelId: profile.modelId) else {
+                continue
+            }
+
+            modelSelectionStore.setSelectedModelId(profile.modelId, for: modality)
+            if modality == .vision, let aiModel = profile.aiModel {
+                selectedModel = aiModel
+            }
+            modelSelectionRevision += 1
+            return true
+        }
+
+        return false
     }
 
     private func refreshSelectedDownloadRequirement(_ requirement: DownloadableModel?) async {

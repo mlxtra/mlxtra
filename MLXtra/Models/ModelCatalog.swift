@@ -7,7 +7,7 @@ struct ReleaseChannelManifest: Codable, Equatable {
     let catalog: CatalogReleaseAsset
     let runtimes: [RuntimeReleaseAsset]
 
-    static let defaultChannelURL = URL(string: "https://github.com/mlxtra/mlxtra/releases/latest/download/stable-channel.json")!
+    static let defaultChannelURL = URL(string: "https://github.com/mlxtra/mlxtra/releases/download/stable/stable-channel.json")!
 }
 
 struct CatalogReleaseAsset: Codable, Equatable {

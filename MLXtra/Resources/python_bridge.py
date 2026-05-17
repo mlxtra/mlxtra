@@ -31,10 +31,20 @@ MODEL_REGISTRY: Dict[str, Any] = {}
 IMAGE_MODEL_REGISTRY: Dict[str, Any] = {}
 AUDIO_MODEL_REGISTRY: Dict[str, Any] = {}
 MUSIC_MODEL_REGISTRY: Dict[str, Any] = {}
+BRIDGE_PROCESS_STARTED = time.perf_counter()
 
 
 def bridge_debug_enabled() -> bool:
     return os.environ.get("MLXTRA_BRIDGE_DEBUG", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def bridge_timing_enabled() -> bool:
+    return os.environ.get("MLXTRA_BRIDGE_TIMING", "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -133,8 +143,35 @@ def send_model_loading(
     send_json(payload, request=request)
 
 
+def send_timing(
+    name: str,
+    started_at: float,
+    *,
+    request: Optional[dict] = None,
+    detail: Optional[str] = None,
+    **extra: Any,
+):
+    if not bridge_timing_enabled():
+        return
+
+    now = time.perf_counter()
+    payload: Dict[str, Any] = {
+        "type": "trace.timing",
+        "name": name,
+        "duration_ms": round((now - started_at) * 1000, 3),
+        "since_process_start_ms": round((now - BRIDGE_PROCESS_STARTED) * 1000, 3),
+    }
+    if detail:
+        payload["detail"] = detail
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
+    send_json(payload, request=request)
+
+
 def setup_environment():
     """Setup Python environment for bundled runtime"""
+    started_at = time.perf_counter()
     resources_dir = Path(__file__).resolve().parent
     venv_path = resources_dir / "runtime" / "macos-arm64" / "venv"
 
@@ -144,6 +181,7 @@ def setup_environment():
             if site_packages.exists():
                 sys.path.insert(0, str(site_packages))
                 break
+    send_timing("bridge.setup_environment", started_at)
 
 
 def _clear_accelerator_cache():
@@ -183,8 +221,11 @@ def load_model_if_needed(model_id: str, request: Optional[dict] = None):
         log_debug(f"[Python Bridge] Model {model_id} already loaded, using cache")
         return MODEL_REGISTRY[model_id]
 
+    total_started_at = time.perf_counter()
+    import_started_at = time.perf_counter()
     from mlx_vlm import load
     from mlx_vlm.utils import load_config
+    send_timing("model.mlx_imports", import_started_at, request=request, model=model_id)
 
     send_model_loading(
         model_id,
@@ -195,10 +236,18 @@ def load_model_if_needed(model_id: str, request: Optional[dict] = None):
     )
 
     try:
+        unload_started_at = time.perf_counter()
         unload_models()
+        send_timing("model.unload_existing", unload_started_at, request=request, model=model_id)
+
         log_debug(f"[Python Bridge] Loading model: {model_id}")
+        weights_started_at = time.perf_counter()
         model, processor = load(model_id)
+        send_timing("model.weights", weights_started_at, request=request, model=model_id)
+
+        config_started_at = time.perf_counter()
         config = load_config(model_id)
+        send_timing("model.config", config_started_at, request=request, model=model_id)
 
         MODEL_REGISTRY[model_id] = (model, processor, config)
 
@@ -209,6 +258,15 @@ def load_model_if_needed(model_id: str, request: Optional[dict] = None):
             request=request,
             detail="Warming model",
         )
+        warmup_started_at = time.perf_counter()
+        send_timing(
+            "model.warmup",
+            warmup_started_at,
+            request=request,
+            model=model_id,
+            detail="No explicit warmup work currently runs before model.loaded",
+        )
+        send_timing("model.load_total", total_started_at, request=request, model=model_id)
         send_json({"type": "model.loaded", "model": model_id}, request=request)
         log_debug(f"[Python Bridge] Model {model_id} loaded successfully")
 
@@ -571,9 +629,12 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
 
 def handle_chat_completion(request: dict) -> None:
     """Handle chat.completions request - transparent proxy to mlx-vlm"""
+    request_started_at = time.perf_counter()
+    imports_started_at = time.perf_counter()
     from mlx_vlm import stream_generate
     from mlx_vlm.prompt_utils import apply_chat_template
     import mlx.core as mx
+    send_timing("chat.imports", imports_started_at, request=request)
 
     _mono = time.monotonic
     _last_flush = _mono()
@@ -593,9 +654,19 @@ def handle_chat_completion(request: dict) -> None:
     chat_template_kwargs = request.get("chat_template_kwargs", {})
 
     try:
+        model_was_cached = model_id in MODEL_REGISTRY
+        model_ready_started_at = time.perf_counter()
         model, processor, config = load_model_if_needed(model_id, request=request)
+        send_timing(
+            "chat.model_ready",
+            model_ready_started_at,
+            request=request,
+            model=model_id,
+            cached=model_was_cached,
+        )
         normalized_messages = _normalize_messages(messages)
 
+        template_started_at = time.perf_counter()
         if tools:
             prompt = processor.apply_chat_template(
                 normalized_messages,
@@ -612,6 +683,7 @@ def handle_chat_completion(request: dict) -> None:
                 num_images=len(images),
                 **chat_template_kwargs,
             )
+        send_timing("chat.prompt_template", template_started_at, request=request, model=model_id)
 
         log_debug(f"[Python Bridge] Prompt: {prompt[:200]}...")
 
@@ -634,6 +706,8 @@ def handle_chat_completion(request: dict) -> None:
             )
             full_response = opening_tag
 
+        generation_started_at = time.perf_counter()
+        first_token_sent = False
         for chunk in stream_generate(
             model,
             processor,
@@ -659,6 +733,17 @@ def handle_chat_completion(request: dict) -> None:
             now = _mono()
             if len(token_buffer) >= TOKEN_BATCH_SIZE or (now - _last_flush) >= TOKEN_BATCH_FLUSH_S:
                 if token_buffer:
+                    if not first_token_sent:
+                        send_timing(
+                            "chat.first_token",
+                            generation_started_at,
+                            request=request,
+                            model=model_id,
+                            since_chat_request_ms=round(
+                                (time.perf_counter() - request_started_at) * 1000, 3
+                            ),
+                        )
+                        first_token_sent = True
                     send_json(
                         {"type": "chat.completion.chunk",
                          "choices": [{"delta": {"content": token_buffer}}]},
@@ -668,11 +753,29 @@ def handle_chat_completion(request: dict) -> None:
                     _last_flush = now
 
         if token_buffer:
+            if not first_token_sent:
+                send_timing(
+                    "chat.first_token",
+                    generation_started_at,
+                    request=request,
+                    model=model_id,
+                    since_chat_request_ms=round(
+                        (time.perf_counter() - request_started_at) * 1000, 3
+                    ),
+                )
+                first_token_sent = True
             send_json(
                 {"type": "chat.completion.chunk",
                  "choices": [{"delta": {"content": token_buffer}}]},
                 request=request,
             )
+        send_timing(
+            "chat.generation",
+            generation_started_at,
+            request=request,
+            model=model_id,
+            completion_tokens=completion_tokens,
+        )
 
         parsed_tool_calls = parse_tool_calls(full_response)
 
@@ -682,6 +785,7 @@ def handle_chat_completion(request: dict) -> None:
             peak_memory_gb=peak_memory_gb,
             completion_tokens=completion_tokens,
         )
+        send_timing("chat.request_total", request_started_at, request=request, model=model_id)
 
         if parsed_tool_calls:
             payload = {

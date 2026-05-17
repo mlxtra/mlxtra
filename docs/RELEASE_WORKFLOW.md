@@ -22,6 +22,8 @@ The app must always keep working with the bundled catalog and bundled runtime if
 - Contains version, URL, size, and SHA-256 for each asset.
 - This file is the only metadata that should move forward between immutable asset releases.
 - `runtimes` can be empty when no remote runtime update has been published yet; the app keeps using the bundled runtime.
+- Published at the moving GitHub release tag `stable` as
+  `https://github.com/mlxtra/mlxtra/releases/download/stable/stable-channel.json`.
 
 Runtime archive
 
@@ -81,6 +83,38 @@ catalog-only channel candidate with an empty `runtimes` array. When it does have
 one, the script reuses that whole runtime entry unchanged; do not combine this
 mode with `--runtime-version`.
 
+## Publish GitHub Release Assets
+
+Use the publishing wrapper after local validation has passed:
+
+```bash
+Scripts/publish-release-assets.sh --repo mlxtra/mlxtra
+```
+
+This runs `Scripts/prepare-release-assets.sh`, then publishes:
+
+- `model-catalog.json` to immutable release tag `catalog-<version>`
+- `runtime-macos-arm64-<version>.zip` plus legal files to immutable release tag `runtime-<version>`
+- `stable-channel.json` to moving release tag `stable`
+
+For a catalog-only channel update, or when reusing an already-published runtime
+entry from the checked-in channel file:
+
+```bash
+Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --skip-runtime-archive
+```
+
+By default, existing assets on `catalog-*` and `runtime-*` releases cause the
+script to fail, because those releases are treated as immutable. Use
+`--force-immutable` only to repair a mistaken unpublished/internal release.
+The `stable` release asset is intentionally replaced each time.
+
+To preview the GitHub write operations without uploading assets:
+
+```bash
+Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --dry-run
+```
+
 ## Catalog-Only Update
 
 1. Edit `MLXtra/Resources/model-catalog.json`.
@@ -98,9 +132,11 @@ Scripts/validate-release-metadata.py --allow-runtime-placeholders
 swift test --filter ModelCapabilityProfileTests
 ```
 
-5. Upload `model-catalog.json` to an immutable GitHub Release tag such as `catalog-2026.05.09`.
-6. Update `stable-channel.json` to point to the new catalog URL, size, and SHA-256.
-7. Publish the new `stable-channel.json`.
+5. Publish the generated release assets:
+
+```bash
+Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --skip-runtime-archive
+```
 
 ## Runtime Update
 
@@ -116,17 +152,13 @@ Scripts/build-runtime-bundle.sh
 Scripts/validate-runtime-bundle.sh
 ```
 
-3. Stage the release assets and update local channel metadata:
+3. Stage and publish the release assets:
 
 ```bash
-Scripts/prepare-release-assets.sh --repo mlxtra/mlxtra --write-channel
+Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --write-channel
 ```
 
-4. Upload `.build/release/runtime-macos-arm64-<version>.zip` to an immutable GitHub Release tag such as `runtime-0.1.0`.
-5. Upload `.build/release/LICENSE`, `.build/release/NOTICE`, and `.build/release/THIRD_PARTY_NOTICES.md` with binary app/runtime release assets.
-6. Upload `.build/release/model-catalog.json` to the catalog release tag if the catalog changed.
-7. Publish `.build/release/stable-channel.json` as the stable channel pointer.
-8. Run one smoke test per backend before announcing the release:
+4. Run one smoke test per backend before announcing the release:
 
 ```bash
 swift test

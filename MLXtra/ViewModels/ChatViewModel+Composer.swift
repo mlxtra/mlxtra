@@ -69,6 +69,27 @@ extension ChatViewModel {
         }
     }
 
+    @discardableResult
+    func submitQuickPrompt(_ prompt: String) -> Bool {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty, !isInputDisabled else { return false }
+
+        createNewChat()
+        selectedTool = .auto
+        selectedImagePaths = []
+        isToolMenuOpen = false
+        isModelMenuOpen = false
+        activeMusicGenerationDraft = nil
+        musicVocalMode = .auto
+        musicLyricsText = ""
+        musicLyricsApproved = false
+        isMusicLyricsEditorVisible = false
+        musicIntentState = .needsInstrumentalOrVocals
+        inputText = trimmedPrompt
+        sendMessage()
+        return true
+    }
+
     func performComposerSlotAction(_ action: ComposerDraftSlotAction) {
         switch action {
         case .attachReference:

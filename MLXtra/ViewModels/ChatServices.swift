@@ -74,6 +74,12 @@ enum ChatToolExecutionOutcome: Equatable {
     case downloadRequired(DownloadableModel)
 }
 
+enum ChatToolCallExecutionResult: Equatable {
+    case nonTerminal
+    case terminalMedia
+    case blockedTerminalMedia
+}
+
 enum PendingEngineDownloadReason {
     case generation
     case preflight

@@ -102,7 +102,7 @@ extension ChatViewModel {
 
             updateStreamingMessage(messageId, content: "")
             currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [plainTextToolCall]))
-            await executeToolCall(
+            let executionResult = await executeToolCall(
                 plainTextToolCall,
                 messages: &currentMessages,
                 images: request.images,
@@ -110,12 +110,17 @@ extension ChatViewModel {
                 generation: request
             )
 
-            if isTerminalMediaTool(plainTextToolCall.function.name) {
+            if executionResult == .terminalMedia {
                 finishTerminalMediaToolResult(
                     messages: currentMessages,
                     messageId: messageId,
                     isMusicGeneration: isMusicGeneration
                 )
+                return
+            }
+
+            if executionResult == .blockedTerminalMedia {
+                await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
                 return
             }
 
@@ -170,18 +175,32 @@ extension ChatViewModel {
             return true
         }
 
-        let hasTerminalMediaTool = executableToolCalls.contains { isTerminalMediaTool($0.function.name) }
+        var hasExecutedTerminalMediaTool = false
+        var hasBlockedTerminalMediaTool = false
         for toolCall in executableToolCalls {
             currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
-            await executeToolCall(toolCall, messages: &currentMessages, images: request.images, prompt: request.prompt, generation: request)
+            let executionResult = await executeToolCall(toolCall, messages: &currentMessages, images: request.images, prompt: request.prompt, generation: request)
+            switch executionResult {
+            case .terminalMedia:
+                hasExecutedTerminalMediaTool = true
+            case .blockedTerminalMedia:
+                hasBlockedTerminalMediaTool = true
+            case .nonTerminal:
+                break
+            }
         }
 
-        if hasTerminalMediaTool {
+        if hasExecutedTerminalMediaTool {
             finishTerminalMediaToolResult(
                 messages: currentMessages,
                 messageId: messageId,
                 isMusicGeneration: isMusicGeneration
             )
+            return true
+        }
+
+        if hasBlockedTerminalMediaTool {
+            await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
             return true
         }
 

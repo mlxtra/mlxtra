@@ -11,7 +11,7 @@ enum MusicIntentState: Equatable {
         case .needsInstrumentalOrVocals:
             return "Current music intent state: ask whether the user wants instrumental music or vocals with lyrics before calling generate_music."
         case .needsLyrics:
-            return "Current music intent state: the user wants vocals, but lyrics are missing. Generate lyrics or ask for lyrics, then wait for approval before calling generate_music."
+            return "Current music intent state: the user requested vocals, but lyrics are missing. Draft concise lyrics yourself, ask for explicit approval, and wait before calling generate_music."
         case .awaitingLyricsApproval:
             return "Current music intent state: lyrics are drafted but not approved. Ask for explicit approval before calling generate_music."
         case .readyToGenerate:
@@ -24,7 +24,7 @@ enum MusicIntentState: Equatable {
         case .needsInstrumentalOrVocals:
             return "Do not call generate_music yet. Ask the user whether they want instrumental music or vocals with lyrics."
         case .needsLyrics:
-            return "Do not call generate_music yet. The user wants vocals, but lyrics are missing. Generate lyrics or ask the user for lyrics, then wait for approval."
+            return "Do not call generate_music yet. Lyrics are missing for the requested vocal song. Draft concise lyrics yourself, ask the user to approve them, then wait."
         case .awaitingLyricsApproval:
             return "Do not call generate_music yet. You drafted lyrics, but the user has not explicitly approved them. Ask whether the lyrics look good or need changes."
         case .readyToGenerate:

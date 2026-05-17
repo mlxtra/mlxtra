@@ -96,7 +96,7 @@ struct MarkdownBlockRenderer {
     }
 
 
-    /// Extracts all inline text from a Markup node, joining children with spaces.
+    /// Extracts all inline text from a Markup node, preserving author-entered line breaks.
     private static func plainText(_ node: some Markup) -> String {
         node.children.compactMap { child in
             if let text = child as? Markdown.Text {
@@ -122,7 +122,7 @@ struct MarkdownBlockRenderer {
                 return "![\(alt)](\(src))"
             }
             if child is SoftBreak {
-                return " "
+                return "\n"
             }
             if child is LineBreak {
                 return "\n"

@@ -18,6 +18,45 @@ final class MarkdownRenderingTests: XCTestCase {
         XCTAssertFalse(AIContentRenderingPolicy.shouldUseFastPlainText(for: "Use *emphasis* here"))
     }
 
+    func testMarkdownBlocksPreserveSoftLineBreaksInsideParagraphs() {
+        let blocks = MarkdownBlockRenderer.blocks(from: """
+        **Title: "The Cow and the Quill"**
+
+        [Verse 1]
+        Morning mist on the Cherney flow
+        Where the river bends and the willows grow
+        """)
+
+        XCTAssertTrue(
+            blocks.contains {
+                if case .paragraph(content: "[Verse 1]\nMorning mist on the Cherney flow\nWhere the river bends and the willows grow") = $0 {
+                    return true
+                }
+                return false
+            },
+            "Lyrics should keep author-entered line breaks instead of collapsing them into spaces."
+        )
+    }
+
+    @MainActor
+    func testAttributedRenderPreservesLyricLineBreaksAfterMarkdownFormatting() {
+        let rendered = MarkdownAttributedRenderer.finalRender(
+            markdown: """
+            **Title:** Test
+
+            [Verse 1]
+            Morning mist on the Cherney flow
+            Where the river bends and the willows grow
+            """,
+            style: .default
+        )
+
+        XCTAssertTrue(
+            rendered.string.contains("[Verse 1]\nMorning mist on the Cherney flow\nWhere the river bends and the willows grow"),
+            "Final markdown render should keep lyric lines separated."
+        )
+    }
+
     func testWaveformBarHeightScalesRatiosToGeometry() {
         XCTAssertEqual(AudioWaveformScrubberMetrics.barHeight(ratio: 0.5, maxHeight: 40), 20)
         XCTAssertEqual(AudioWaveformScrubberMetrics.barHeight(ratio: 0.1, maxHeight: 40), 7)

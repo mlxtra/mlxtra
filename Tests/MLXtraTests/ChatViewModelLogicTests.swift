@@ -319,6 +319,120 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testDownloadedVisionModelBecomesDefaultWhenNoStoredSelection() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("", forKey: ModelSelectionStore.chatKey)
+        let downloadedProfile = try XCTUnwrap(testVisionProfiles.last)
+        let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [downloadedProfile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        let didSelectDownloadedModel = await viewModel.selectDownloadedDefaultModelIfNeeded(for: .vision)
+
+        XCTAssertTrue(didSelectDownloadedModel)
+        XCTAssertEqual(viewModel.activeModelProfile.modelId, downloadedProfile.modelId)
+        if let aiModel = downloadedProfile.aiModel {
+            XCTAssertEqual(viewModel.selectedModel, aiModel)
+        }
+        XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), downloadedProfile.modelId)
+    }
+
+    @MainActor
+    func testDownloadedDefaultDoesNotOverrideStoredVisionSelection() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storedProfile = try XCTUnwrap(testVisionProfiles.last)
+        let downloadedProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != storedProfile.modelId })
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(storedProfile.modelId, for: .vision)
+        XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), storedProfile.modelId)
+        let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [downloadedProfile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        let didSelectDownloadedModel = await viewModel.selectDownloadedDefaultModelIfNeeded(for: .vision)
+
+        XCTAssertFalse(didSelectDownloadedModel)
+        XCTAssertEqual(viewModel.activeModelProfile.modelId, storedProfile.modelId)
+        XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), storedProfile.modelId)
+    }
+
+    @MainActor
+    func testSubmitQuickPromptIgnoresEmptyPrompt() {
+        let viewModel = makeQuickPromptViewModel()
+        let selectedChatId = viewModel.selectedChatId
+
+        let didSubmit = viewModel.submitQuickPrompt(" \n\t ")
+
+        XCTAssertFalse(didSubmit)
+        XCTAssertEqual(viewModel.chats.count, 1)
+        XCTAssertEqual(viewModel.selectedChatId, selectedChatId)
+        XCTAssertEqual(viewModel.selectedChat?.messages.count, 0)
+    }
+
+    @MainActor
+    func testSubmitQuickPromptBlocksWhileBusy() {
+        let viewModel = makeQuickPromptViewModel()
+        viewModel.isGenerating = true
+
+        let didSubmit = viewModel.submitQuickPrompt("Explain this")
+
+        XCTAssertFalse(didSubmit)
+        XCTAssertEqual(viewModel.chats.count, 1)
+        XCTAssertEqual(viewModel.selectedChat?.messages.count, 0)
+    }
+
+    @MainActor
+    func testSubmitQuickPromptCreatesNewChatAndSendsUserMessage() {
+        let viewModel = makeQuickPromptViewModel()
+        let originalChatId = viewModel.selectedChatId
+
+        let didSubmit = viewModel.submitQuickPrompt("  Explain local models  ")
+
+        XCTAssertTrue(didSubmit)
+        XCTAssertEqual(viewModel.chats.count, 2)
+        XCTAssertNotEqual(viewModel.selectedChatId, originalChatId)
+        XCTAssertEqual(viewModel.selectedChat?.messages.count, 1)
+        XCTAssertEqual(viewModel.selectedChat?.messages.first?.content, "Explain local models")
+        XCTAssertEqual(viewModel.selectedChat?.messages.first?.isUser, true)
+        XCTAssertEqual(viewModel.inputText, "")
+        viewModel.cancelGeneration()
+    }
+
+    @MainActor
+    func testSubmitQuickPromptResetsToAutoAndClearsComposerOnlyState() {
+        let viewModel = makeQuickPromptViewModel()
+        viewModel.selectedTool = .music
+        viewModel.selectedImagePaths = [URL(fileURLWithPath: "/tmp/reference.png")]
+        viewModel.musicLyricsText = "[verse]\nOld draft"
+        viewModel.musicLyricsApproved = true
+        viewModel.isMusicLyricsEditorVisible = true
+        viewModel.musicVocalMode = .vocals
+
+        let didSubmit = viewModel.submitQuickPrompt("Generate a product image")
+
+        XCTAssertTrue(didSubmit)
+        XCTAssertEqual(viewModel.selectedTool, .auto)
+        XCTAssertEqual(viewModel.selectedImagePaths, [])
+        XCTAssertEqual(viewModel.musicLyricsText, "")
+        XCTAssertFalse(viewModel.musicLyricsApproved)
+        XCTAssertFalse(viewModel.isMusicLyricsEditorVisible)
+        XCTAssertEqual(viewModel.musicVocalMode, .auto)
+        XCTAssertEqual(viewModel.selectedChat?.messages.first?.content, "Generate a product image")
+        viewModel.cancelGeneration()
+    }
+
+    @MainActor
     func testMusicPromptHelpersRecognizeVocalAndLyricsMarkers() {
         let viewModel = makeViewModel()
 
@@ -332,6 +446,27 @@ final class ChatViewModelLogicTests: XCTestCase {
     @MainActor
     private func makeViewModel() -> ChatViewModel {
         ChatViewModel(chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil))
+    }
+
+    @MainActor
+    private func makeQuickPromptViewModel() -> ChatViewModel {
+        ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+    }
+
+    private func makeDefaults() -> (defaults: UserDefaults, suiteName: String) {
+        let suiteName = "MLXtraTests.ChatViewModelLogicTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return (defaults, suiteName)
+    }
+
+    private var testVisionProfiles: [ModelCapabilityProfile] {
+        ModelCapabilityProfile.sortedProfiles(for: .vision)
     }
 }
 
@@ -368,4 +503,93 @@ private final class RecordingChatPersistenceService: ChatPersistenceServicing {
     }
 
     func deleteAttachments(for chatId: UUID) {}
+}
+
+@MainActor
+private final class QuickPromptTestExecutor: ChatModelExecuting {
+    let backend: RuntimeBackend = .vlm
+    var isReady = true
+    var isModelLoaded = false
+    var currentModelId: String?
+    var currentModelBackend: RuntimeBackend?
+    weak var delegate: VLMExecutionDelegate?
+    private(set) var receivedRequests: [ExecutionRequest] = []
+
+    func initialize() async throws {
+        isReady = true
+    }
+
+    func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
+        receivedRequests.append(request)
+        isReady = true
+        isModelLoaded = true
+        currentModelId = request.modelId
+        currentModelBackend = request.backend
+
+        return AsyncStream { continuation in
+            continuation.yield(.started)
+            continuation.yield(.token("Quick response"))
+            continuation.yield(.complete("Quick response", usage: TokenUsage(promptTokens: 1, completionTokens: 2)))
+            continuation.finish()
+        }
+    }
+
+    func terminate() async {
+        isReady = false
+        isModelLoaded = false
+        currentModelId = nil
+        currentModelBackend = nil
+    }
+}
+
+@MainActor
+private final class QuickPromptRuntimeManager: ChatRuntimeManaging {
+    var state: RuntimeManager.RuntimeState = .ready
+
+    func initialize() async throws {
+        state = .ready
+    }
+
+    func estimatedModelSize(modelId: String) -> Double {
+        1.0
+    }
+
+    func isModelDownloadedOffMain(modelId: String) async -> Bool {
+        true
+    }
+}
+
+@MainActor
+private final class DefaultSelectionRuntimeManager: ChatRuntimeManaging {
+    var state: RuntimeManager.RuntimeState = .ready
+    let downloadedModelIds: Set<String>
+
+    init(downloadedModelIds: Set<String>) {
+        self.downloadedModelIds = downloadedModelIds
+    }
+
+    func initialize() async throws {}
+
+    func estimatedModelSize(modelId: String) -> Double {
+        1.0
+    }
+
+    func isModelDownloadedOffMain(modelId: String) async -> Bool {
+        downloadedModelIds.contains(modelId)
+    }
+}
+
+@MainActor
+private final class QuickPromptToolExecutionService: ChatToolExecutionServicing {
+    func executeWebSearch(query: String) async -> String {
+        "search context"
+    }
+
+    func executeMediaTool(
+        plan: ChatMediaToolExecutionPlan,
+        onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
+    ) async -> ChatToolExecutionOutcome {
+        onUpdate(.progress(plan.loadingStatus))
+        return .toolMessage("Quick media response")
+    }
 }

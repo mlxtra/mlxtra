@@ -1172,6 +1172,52 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(parameters["lyrics"] as? String, "[Instrumental]")
     }
 
+    func testAutoModeMissingVocalLyricsContinuesToLyricsDraft() async {
+        resetPromptConfigurationDefaults()
+        let toolCall = ExecutionToolCall(
+            id: "music-missing-lyrics",
+            function: ExecutionToolCallFunction(
+                name: "generate_music",
+                arguments: #"{"caption":"pop song about Oxford with vocals","instrumental":false}"#
+            )
+        )
+        let lyrics = """
+        [verse]
+        Spires in the morning, bells over stone
+        [chorus]
+        Oxford, carry my heart back home
+        """
+        let executor = MockChatModelExecutor(eventBatches: [
+            [.toolCalls([toolCall])],
+            [.complete(lyrics, usage: TokenUsage(promptTokens: 1, completionTokens: 2))]
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "can you create a music about oxford with lyrics?"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 2 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        let messages = viewModel.chats.first?.messages ?? []
+        XCTAssertTrue(toolExecutor.mediaPlans.isEmpty)
+        XCTAssertEqual(messages.last?.content, lyrics)
+        XCTAssertFalse(messages.contains { $0.content.contains("Do not call generate_music") })
+        XCTAssertTrue(
+            executor.receivedRequests[1].messages.contains {
+                $0.role == .tool && ($0.content?.contains("Draft concise lyrics") ?? false)
+            }
+        )
+    }
+
     func testMalformedPlainTextFunctionCallStaysVisibleAndDoesNotExecute() async {
         resetPromptConfigurationDefaults()
         let executor = MockChatModelExecutor(events: [

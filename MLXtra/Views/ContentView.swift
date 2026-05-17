@@ -4,14 +4,14 @@ import AppKit
 #endif
 
 struct ContentView: View {
-    @StateObject private var viewModel: ChatViewModel
+    @ObservedObject private var viewModel: ChatViewModel
     @State private var columnVisibility: NavigationSplitViewVisibility
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("MLXtra.pendingDownloadModelId") private var pendingDownloadModelId = ""
 
     init(viewModel: ChatViewModel = ChatViewModel()) {
-        _viewModel = StateObject(wrappedValue: viewModel)
+        self.viewModel = viewModel
         _columnVisibility = State(initialValue: Self.initialColumnVisibility)
     }
 

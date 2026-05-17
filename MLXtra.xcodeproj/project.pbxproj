@@ -70,6 +70,7 @@
 		8A0500010000000000000007 /* ComposerModelControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001007 /* ComposerModelControl.swift */; };
 		8A0500010000000000000008 /* ComposerToolSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001008 /* ComposerToolSelector.swift */; };
 		8A0500010000000000000009 /* ComposerInputViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001009 /* ComposerInputViews.swift */; };
+		8A0600010000000000000001 /* QuickStudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0600010000000000001001 /* QuickStudioView.swift */; };
 		8A050001000000000000000A /* SettingsModelSorting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100A /* SettingsModelSorting.swift */; };
 		8A050001000000000000000B /* SettingsModelTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100B /* SettingsModelTypes.swift */; };
 		8A050001000000000000000C /* SettingsRuntimeSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100C /* SettingsRuntimeSections.swift */; };
@@ -158,6 +159,7 @@
 		8A0500010000000000001007 /* ComposerModelControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerModelControl.swift; sourceTree = "<group>"; };
 		8A0500010000000000001008 /* ComposerToolSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerToolSelector.swift; sourceTree = "<group>"; };
 		8A0500010000000000001009 /* ComposerInputViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerInputViews.swift; sourceTree = "<group>"; };
+		8A0600010000000000001001 /* QuickStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickStudioView.swift; sourceTree = "<group>"; };
 		8A050001000000000000100A /* SettingsModelSorting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelSorting.swift; sourceTree = "<group>"; };
 		8A050001000000000000100B /* SettingsModelTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelTypes.swift; sourceTree = "<group>"; };
 		8A050001000000000000100C /* SettingsRuntimeSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRuntimeSections.swift; sourceTree = "<group>"; };
@@ -236,6 +238,7 @@
 				8A0500010000000000001007 /* ComposerModelControl.swift */,
 				8A0500010000000000001008 /* ComposerToolSelector.swift */,
 				8A0500010000000000001009 /* ComposerInputViews.swift */,
+				8A0600010000000000001001 /* QuickStudioView.swift */,
 				8A0100010000000000001008 /* MessageBubbleView.swift */,
 				8A0500010000000000001001 /* MessageGeneratedAudioAttachmentView.swift */,
 				8A0500010000000000001002 /* MessageGeneratedImageAttachmentView.swift */,
@@ -591,6 +594,7 @@
 				8A0500010000000000000007 /* ComposerModelControl.swift in Sources */,
 				8A0500010000000000000008 /* ComposerToolSelector.swift in Sources */,
 				8A0500010000000000000009 /* ComposerInputViews.swift in Sources */,
+				8A0600010000000000000001 /* QuickStudioView.swift in Sources */,
 				8A050001000000000000000A /* SettingsModelSorting.swift in Sources */,
 				8A050001000000000000000B /* SettingsModelTypes.swift in Sources */,
 				8A050001000000000000000C /* SettingsRuntimeSections.swift in Sources */,

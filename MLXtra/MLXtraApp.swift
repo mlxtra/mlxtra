@@ -4,16 +4,22 @@ import SwiftUI
 @main
 struct MLXtraApp: App {
     @NSApplicationDelegateAdaptor(MLXtraApplicationDelegate.self) private var appDelegate
+    @StateObject private var appState = MLXtraAppState()
 
     var body: some Scene {
-        WindowGroup {
-            ContentView(viewModel: makeLaunchViewModel())
+        WindowGroup("MLXtra", id: "main") {
+            ContentView(viewModel: appState.viewModel)
         }
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .windowStyle(.titleBar)
         .commands {
             MLXtraCommands()
         }
+
+        MenuBarExtra("MLXtra", image: "MLXtraMenuBarIcon") {
+            QuickStudioView(viewModel: appState.viewModel)
+        }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()
@@ -34,8 +40,17 @@ struct MLXtraApp: App {
         return CGSize(width: 1200, height: 700)
     }
 
-    @MainActor
-    private func makeLaunchViewModel() -> ChatViewModel {
+}
+
+@MainActor
+private final class MLXtraAppState: ObservableObject {
+    let viewModel: ChatViewModel
+
+    init(viewModel: ChatViewModel = MLXtraAppState.makeLaunchViewModel()) {
+        self.viewModel = viewModel
+    }
+
+    private static func makeLaunchViewModel() -> ChatViewModel {
 #if DEBUG
         if ProcessInfo.processInfo.environment["MLXTRA_UI_TEST_MODE"] == "1" {
             return ChatViewModel.makeUITestViewModel()

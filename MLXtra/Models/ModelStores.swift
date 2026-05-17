@@ -20,16 +20,36 @@ struct ModelSelectionStore {
         userDefaults.set(modelId, forKey: key(for: modality))
     }
 
+    func storedProfile(
+        for modality: ModelModality,
+        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB,
+        runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
+    ) -> ModelCapabilityProfile? {
+        guard let modelId = selectedModelId(for: modality),
+              let profile = ModelCapabilityProfile.embeddedProfile(modelId: modelId),
+              profile.modality == modality,
+              profile.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) else {
+            return nil
+        }
+
+        if let runtimeManifest,
+           !profile.isRuntimeCompatible(manifest: runtimeManifest) {
+            return nil
+        }
+
+        return profile
+    }
+
     func selectedProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB,
         runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
     ) -> ModelCapabilityProfile? {
-        if let modelId = selectedModelId(for: modality),
-           let profile = ModelCapabilityProfile.embeddedProfile(modelId: modelId),
-           profile.modality == modality,
-           profile.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB),
-           profile.isRuntimeCompatible(manifest: runtimeManifest) {
+        if let profile = storedProfile(
+            for: modality,
+            hardwareMemoryGB: hardwareMemoryGB,
+            runtimeManifest: runtimeManifest
+        ) {
             return profile
         }
 
