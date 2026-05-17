@@ -60,10 +60,21 @@ private final class MLXtraAppState: ObservableObject {
     }
 }
 
+@MainActor
 private final class MLXtraApplicationDelegate: NSObject, NSApplicationDelegate {
+    private let appUpdateController = AppUpdateController()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    var canCheckForUpdates: Bool {
+        appUpdateController.canCheckForUpdates
+    }
+
+    func checkForUpdates() {
+        appUpdateController.checkForUpdates()
     }
 }
 
@@ -96,6 +107,13 @@ private struct MLXtraCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(chatActions == nil)
+        }
+
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates...") {
+                NSApp.delegate.flatMap { $0 as? MLXtraApplicationDelegate }?.checkForUpdates()
+            }
+            .disabled(NSApp.delegate.flatMap { $0 as? MLXtraApplicationDelegate }?.canCheckForUpdates != true)
         }
 
         CommandMenu("Chat") {

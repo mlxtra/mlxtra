@@ -90,6 +90,10 @@ The bundled runtime is the baseline version shipped inside the app. Runtime
 updates can then be published separately through GitHub releases and referenced
 from `MLXtra/Resources/stable-channel.json`.
 
+App binary updates use Sparkle with a GitHub-hosted appcast. Release builds
+embed the Sparkle public EdDSA key and are published as notarized DMGs with
+`Scripts/publish-app-release.sh`. See `docs/RELEASE_WORKFLOW.md`.
+
 ## Architecture
 
 ```
@@ -99,6 +103,7 @@ MLXtra/
 │   ├── ViewModels/        # Business logic
 │   ├── Models/            # Data models
 │   ├── Services/          # Core services
+│   │   ├── AppUpdate/     # Sparkle app update integration
 │   │   ├── Execution/     # Model execution engines
 │   │   └── Runtime/       # Runtime management
 │   └── Resources/         # Python bridges and runtime
@@ -179,6 +184,8 @@ Generated files are saved to the app library:
 ### Swift
 - SwiftUI (built-in)
 - Foundation (built-in)
+- Swift Markdown
+- Sparkle
 
 ### Python (via bundled runtime)
 - mlx-vlm: Vision-language models

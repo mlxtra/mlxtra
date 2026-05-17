@@ -4,6 +4,7 @@ MLXtra has two update lanes:
 
 - **Catalog-only update**: add or rerank curated models that the current runtime already supports.
 - **Runtime update**: ship executable Python/runtime code. This must be immutable, checksum-verified, and explicitly installed by the user.
+- **App update**: ship a signed and notarized MLXtra app bundle through Sparkle using a GitHub-hosted appcast.
 
 The app must always keep working with the bundled catalog and bundled runtime if remote metadata is unavailable or invalid.
 
@@ -188,16 +189,91 @@ before publishing a binary/runtime release; it builds the runtime bundle, runs
 
 ## Binary App Release
 
+MLXtra uses Sparkle 2 for self-updating app binaries. The appcast URL is baked
+into the app as:
+
+```text
+https://github.com/mlxtra/mlxtra/releases/download/appcast-stable/appcast.xml
+```
+
+Sparkle's public EdDSA key is supplied through the
+`MLXTRA_SPARKLE_PUBLIC_ED_KEY` Xcode build setting. The Release configuration
+embeds the public key; keep the private key outside the repository in the macOS
+Keychain account used by Sparkle.
+
 The Xcode Release configuration enables the hardened runtime. For a public
 binary app, archive with a Developer ID Application identity and notarize the
 exported `.app` or `.dmg`; the checked-in project uses ad-hoc signing for local
 source builds unless those signing values are supplied at archive time.
 
+Release tags:
+
+- `app-<version>`: immutable release containing notarized `MLXtra-<version>.dmg`
+- `appcast-stable`: moving release containing the current `appcast.xml` and
+  release notes referenced by the appcast
+
+Check the printed DMG size before upload. GitHub release assets must stay under
+2 GiB per file, and the bundled runtime makes the app DMG close enough to that
+limit that future runtime growth should be watched.
+
+App release flow:
+
+1. Increment `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`.
+2. For the first app release on a machine, let the release script store App
+   Store Connect notarization credentials:
+
+```bash
+Scripts/publish-app-release.sh --repo mlxtra/mlxtra --setup-notary --apple-id "<apple-id>"
+```
+
+The script auto-detects a single installed Developer ID Application identity,
+infers the Apple Developer Team ID from it, stores credentials in the
+`mlxtra-notary` keychain profile, then continues with the release. If multiple
+Developer ID Application identities are installed, pass the intended one with
+`--signing-identity`.
+
+If you already created a notary profile with a different name, pass it with
+`--notary-keychain-profile "<profile-name>"`.
+
+3. For later releases from the same machine, run:
+
+```bash
+Scripts/publish-app-release.sh --repo mlxtra/mlxtra
+```
+
+4. To run a local packaging dry run:
+
+```bash
+Scripts/publish-app-release.sh --skip-notarization --skip-publish
+```
+
+This dry run proves archive, packaging, Sparkle signing, and appcast generation,
+but it is not a public distribution artifact. When notarization is skipped,
+Gatekeeper reports the DMG as unnotarized. If you want the dry run to use the
+Developer ID certificate while still skipping Apple notarization, pass
+`--signing-identity` and `--team-id` explicitly.
+
+The repository must be public before publishing app-visible assets. For an
+internal private-repository test, pass `--allow-private`; do not use that for
+public app updates because the app downloads updates with unauthenticated HTTPS.
+
+The release script archives the Release build, embeds the Sparkle public key,
+prunes broken runtime symlinks from the packaged app copy, re-signs and verifies
+the app, creates and signs the DMG container, notarizes and staples both the app
+and DMG, validates the final DMG with Gatekeeper, generates `appcast.xml` from
+the final DMG bytes, uploads the DMG to `app-<version>`, and replaces
+`appcast.xml` plus its release notes on `appcast-stable`.
+
+5. Install the previous public version and use `Check for Updates...` to verify
+   Sparkle can discover and install the new release.
+
 Minimum signing validation before upload:
 
 ```bash
-codesign -dvvv --entitlements :- path/to/MLXtra.app
-spctl -a -vv path/to/MLXtra.app
+codesign -dvvv --entitlements :- .build/app-release/app/MLXtra.app
+codesign -dvvv .build/app-release/assets/MLXtra-<version>.dmg
+xcrun stapler validate .build/app-release/assets/MLXtra-<version>.dmg
+spctl -a -vv -t open --context context:primary-signature .build/app-release/assets/MLXtra-<version>.dmg
 ```
 
 ## Rollback

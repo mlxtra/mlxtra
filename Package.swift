@@ -22,13 +22,15 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.7.3")
+        .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.7.3"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.1")
     ],
     targets: [
         .executableTarget(
             name: "MLXtra",
             dependencies: [
-                .product(name: "Markdown", package: "swift-markdown")
+                .product(name: "Markdown", package: "swift-markdown"),
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "MLXtra",
             exclude: [
