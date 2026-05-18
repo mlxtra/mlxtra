@@ -1,209 +1,145 @@
 # MLXtra
 
-A macOS-native GUI application for running and interacting with [MLX](https://github.com/ml-explore/mlx)-powered models on Apple Silicon. Built with SwiftUI and Python bridges for seamless local AI model execution.
+MLXtra is a native macOS app for running local AI models on Apple Silicon with
+[MLX](https://github.com/ml-explore/mlx). It brings chat, image generation,
+speech generation, and music generation into one desktop app.
 
-## Features
+Models run locally on your Mac. The app downloads its verified runtime and the
+models you choose after installation.
 
-### Model Support
-- **Vision-Language Models (VLM)**: Chat with vision models like Qwen3.5 and Gemma4
-- **Text-to-Image**: Generate images with mflux (Flux-based models)
-- **Image Editing**: Edit images with Flux2KleinEdit
-- **Text-to-Speech**: Generate speech with KugelAudio
-- **Text-to-Music**: Create music with ACE-Step 1.5
+## Download
 
-### Core Capabilities
-- **Tool Calling**: Models can use tools/functions for enhanced capabilities
-- **Streaming Responses**: Real-time chat responses with typing indicators
-- **Model Management**: Download and cache models locally with progress tracking
-- **Multi-turn Conversations**: Persistent chat history with context
-- **Drag & Drop**: Easy image attachment for vision tasks
+Download the latest notarized DMG from
+[GitHub Releases](https://github.com/mlxtra/mlxtra/releases/latest).
 
-## Screenshots
-
-### Welcome Screen
-![Welcome Screen](docs/assets/screenshots/welcome.png)
-
-### Chat Interface with Image Generation
-![Image Generation](docs/assets/screenshots/image.png)
-
-### Speech Generation
-![Speech Generation](docs/assets/screenshots/speech.png)
-
-### Music Generation
-![Music Generation](docs/assets/screenshots/music.png)
-
-### Tool Selector
-![Tool Selector](docs/assets/screenshots/web.png)
-
-### Model Management
-![Models](docs/assets/screenshots/models.png)
+Open the release page and download the `MLXtra-*.dmg` asset.
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later
-- Apple Silicon Mac (M1, M2, M3, M4)
-- Xcode 15+ (for building)
+- macOS 14 Sonoma or later
+- Apple Silicon Mac
+- Internet connection for the first runtime and model downloads
+- Sufficient free disk space for selected models
 
-## Installation
+Model sizes vary. Small chat models are a few GB; image and speech models can be
+larger.
 
-### From Source
+## First Run
 
-1. Clone the repository:
+On first launch, MLXtra starts setting up the local runtime in the background.
+You can choose your first model while setup finishes. If the runtime is still
+installing, the model download is queued and starts automatically once the
+runtime is ready.
+
+The runtime is installed under:
+
+```text
+~/Library/Application Support/MLXtra/runtimes/
+```
+
+Downloaded model files and generated media stay on your Mac.
+
+## Features
+
+- Chat with local models, including models that can understand images
+- Generate images with FLUX.2 Klein
+- Generate speech with KugelAudio
+- Generate music with ACE-Step
+- Manage model downloads from Settings
+- Stream chat responses in real time
+- Keep conversation history locally
+- Receive app updates through Sparkle
+
+## Screenshots
+
+![Welcome screen](docs/assets/screenshots/welcome.png)
+
+![Chat interface with image generation](docs/assets/screenshots/image.png)
+
+![Speech generation](docs/assets/screenshots/speech.png)
+
+![Music generation](docs/assets/screenshots/music.png)
+
+![Tool selector](docs/assets/screenshots/web.png)
+
+![Model management](docs/assets/screenshots/models.png)
+
+## Models
+
+MLXtra ships with a curated model catalog. The current catalog includes:
+
+- Qwen 3.5
+- Qwen 3.5 Mini
+- Gemma 4
+- FLUX.2 Klein
+- KugelAudio 0 Open
+- ACE-Step 1.5 Turbo
+
+Some model providers may require accepting model terms or signing in to Hugging
+Face before downloads work.
+
+## Generated Files
+
+Generated media is saved in the app support directory:
+
+```text
+~/Library/Application Support/MLXtra/GeneratedImages/
+~/Library/Application Support/MLXtra/GeneratedSpeech/
+~/Library/Application Support/MLXtra/GeneratedMusic/
+```
+
+## Build From Source
+
+Clone the repository:
+
 ```bash
 git clone https://github.com/mlxtra/mlxtra.git
 cd mlxtra
 ```
 
-2. Open the Xcode project:
+Build the app bundle with Xcode:
+
 ```bash
-open MLXtra.xcodeproj
+xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug build
 ```
 
-3. Build and run the `MLXtra` scheme on `My Mac` (⌘+R).
-
-On first launch, MLXtra checks the stable runtime channel and starts downloading
-the Python/MLX runtime in the background when no compatible runtime is installed.
-
-For a command-line build and launch, run:
+Or build and launch the debug app:
 
 ```bash
 Scripts/launch-debug-app.sh
 ```
 
-### Runtime Setup
-
-The app package does not embed the Python runtime. Runtime archives are published
-as separate GitHub release assets and installed under
-`~/Library/Application Support/MLXtra/runtimes/`.
-
-To build a runtime archive for release work, run:
+Run the Swift test suite:
 
 ```bash
-./Scripts/build-runtime-bundle.sh
+swift test
 ```
 
-This will:
-- Create Python virtual environments
-- Install required packages (mlx-vlm, mlx-lm, mflux, acestep, etc.)
-- Write the local release runtime under `MLXtra/Resources/runtime/`
+Python bridge and integration tests are documented in [AGENTS.md](AGENTS.md).
 
-Runtime releases are referenced from `MLXtra/Resources/stable-channel.json`.
+## Project Layout
 
-App binary updates use Sparkle with a GitHub-hosted appcast. Release builds
-embed the Sparkle public EdDSA key and are published as notarized DMGs with
-`Scripts/publish-app-release.sh`. See `docs/RELEASE_WORKFLOW.md`.
-
-## Architecture
-
-```
+```text
 MLXtra/
-├── MLXtra/                 # Main Swift source code
-│   ├── Views/             # SwiftUI views
-│   ├── ViewModels/        # Business logic
-│   ├── Models/            # Data models
-│   ├── Services/          # Core services
-│   │   ├── AppUpdate/     # Sparkle app update integration
-│   │   ├── Execution/     # Model execution engines
-│   │   └── Runtime/       # Runtime management
-│   └── Resources/         # Python bridges and fallback release metadata
-│       ├── python_bridge.py    # Main Python bridge
-│       ├── acestep_bridge.py   # ACE-Step music bridge
-│       └── stable-channel.json # Runtime/catalog release channel
-├── Scripts/               # Build scripts
-└── Package.swift         # Swift Package Manager
+├── MLXtra/
+│   ├── Models/
+│   ├── Services/
+│   │   ├── AppUpdate/
+│   │   ├── Execution/
+│   │   └── Runtime/
+│   ├── ViewModels/
+│   ├── Views/
+│   └── Resources/
+│       ├── python_bridge.py
+│       ├── acestep_bridge.py
+│       └── stable-channel.json
+├── Scripts/
+├── Tests/
+└── docs/
 ```
 
-## Usage
-
-### Chat Interface
-- Start a new chat from the sidebar
-- Type messages or use `/image <path>` to attach images
-- Models with tool support can execute functions automatically
-
-### Model Selection
-- Click the model dropdown to switch between available models
-- Models are downloaded automatically on first use
-- Download progress is shown in the sidebar
-
-### Image Generation
-- Select an image generation model (e.g., Flux2Klein)
-- Enter a prompt describing the desired image
-- Adjust parameters like steps, guidance scale, etc.
-
-### Music Generation
-- Use ACE-Step models
-- Provide a caption describing the music style
-- Optional: Add lyrics for vocal generation
-
-## Development
-
-### Project Structure
-
-- **SwiftUI Frontend**: Modern declarative UI with macOS-native look
-- **Python Bridge**: `python_bridge.py` handles model execution
-- **Async/Await**: Concurrent model loading and generation
-- **Actors**: Thread-safe model registries
-
-### Key Components
-
-#### Python Bridge (`python_bridge.py`)
-- Transparent proxy to mlx-vlm, mlx-lm, and other MLX libraries
-- Supports hot-swapping between models
-- JSON-based communication with Swift
-
-#### Model Executors
-- `VLMExecutor`: Vision-language model execution
-- `ImageExecutor`: Text-to-image generation
-- Specialized bridges for ACE-Step (music) and mflux (images)
-
-#### Chat System
-- `ChatViewModel`: Manages chat state and model interactions
-- `Message`: Represents chat messages with tool calls
-- `ToolUse`: Function calling infrastructure
-
-### Adding New Models
-
-1. Add model entry to `runtime-manifest.json`
-2. Implement executor in `Services/Execution/`
-3. Update model registry in `python_bridge.py`
-
-## Configuration
-
-Settings are accessible via `MLXtra → Settings`:
-- Default model selection
-- Advanced generation parameters
-
-Generated files are saved to the app library:
-- Images: `~/Library/Application Support/MLXtra/GeneratedImages`
-- Speech: `~/Library/Application Support/MLXtra/GeneratedSpeech`
-- Music: `~/Library/Application Support/MLXtra/GeneratedMusic`
-
-## Dependencies
-
-### Swift
-- SwiftUI (built-in)
-- Foundation (built-in)
-- Swift Markdown
-- Sparkle
-
-### Python (via downloaded runtime)
-- mlx-vlm: Vision-language models
-- mlx-lm: Language models
-- mflux: Flux image generation
-- acestep: Music generation
-- transformers: Model utilities
-
-## Troubleshooting
-
-### Runtime is unavailable
-Check internet access and the stable GitHub release. The app downloads the
-runtime automatically when no compatible installed runtime is present.
-
-### Model downloads fail
-Check internet connection and Hugging Face access. Some models require authentication.
-
-### Out of memory
-Reduce model quantization or use smaller models. MLX automatically manages memory but large models may exceed available RAM.
+Release, runtime, notarization, and appcast workflows are documented in
+[docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md).
 
 ## Contributing
 
@@ -225,6 +161,6 @@ separately by their respective owners. See
 ## Acknowledgments
 
 - [MLX](https://github.com/ml-explore/mlx) by Apple
-- [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) by Prince Canuma
-- [mflux](https://github.com/filipstrand/mflux) by Filip Strand
-- [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) for music generation
+- [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)
+- [mflux](https://github.com/filipstrand/mflux)
+- [ACE-Step](https://github.com/ace-step/ACE-Step)
