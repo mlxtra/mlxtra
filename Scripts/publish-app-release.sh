@@ -207,6 +207,12 @@ sha256_file() {
     shasum -a 256 "$1" | awk '{print $1}'
 }
 
+notary_json_value() {
+    local key="$1"
+    local path="$2"
+    /usr/bin/plutil -extract "${key}" raw -o - "${path}" 2>/dev/null || true
+}
+
 detect_signing_identity() {
     local identities
     identities="$(security find-identity -v -p codesigning \
@@ -286,6 +292,90 @@ prune_broken_symlinks() {
     find "${root}" -type l ! -exec test -e {} \; -print -delete
 }
 
+prune_packaging_artifacts() {
+    local root="$1"
+    local artifact_count
+    artifact_count="$(find "${root}" -type f \( -name '*.a' -o -name '*.o' \) -print | wc -l | tr -d ' ')"
+
+    if [ "${artifact_count}" = "0" ]; then
+        return
+    fi
+
+    echo "Pruning ${artifact_count} static/object artifact(s) from packaged app resources."
+    find "${root}" -type f \( -name '*.a' -o -name '*.o' \) -print -delete
+}
+
+codesign_path() {
+    local path="$1"
+    local preserve_metadata="${2:-0}"
+    local codesign_args=(
+        codesign
+        --force
+        --sign "${SIGNING_IDENTITY}"
+        --options runtime
+    )
+
+    if [ "${SIGNING_IDENTITY}" != "-" ]; then
+        codesign_args+=(--timestamp)
+    fi
+
+    if [ "${preserve_metadata}" = "1" ]; then
+        codesign_args+=(--preserve-metadata=identifier,entitlements)
+    fi
+
+    codesign_args+=("${path}")
+
+    if ! "${codesign_args[@]}"; then
+        echo "Failed to sign: ${path}" >&2
+        exit 1
+    fi
+}
+
+is_macho_file() {
+    file -b "$1" 2>/dev/null | grep -q 'Mach-O'
+}
+
+sign_nested_code() {
+    local app_path="$1"
+    local signed_file_count=0
+    local signed_bundle_count=0
+    local path
+
+    if [ "${SIGNING_IDENTITY}" = "-" ]; then
+        return
+    fi
+
+    echo "Signing nested Mach-O runtime and helper code."
+
+    while IFS= read -r -d '' path; do
+        if ! is_macho_file "${path}"; then
+            continue
+        fi
+
+        codesign_path "${path}" 1
+        signed_file_count=$((signed_file_count + 1))
+        if [ $((signed_file_count % 100)) = "0" ]; then
+            echo "  Signed ${signed_file_count} nested Mach-O file(s)..."
+        fi
+    done < <(find "${app_path}" -type f \( -perm -111 -o -name '*.dylib' -o -name '*.so' \) -print0)
+
+    while IFS= read -r path; do
+        if [ "${path}" = "${app_path}" ]; then
+            continue
+        fi
+
+        codesign_path "${path}" 1
+        signed_bundle_count=$((signed_bundle_count + 1))
+    done < <(find "${app_path}" -depth -type d \( -name '*.app' -o -name '*.framework' -o -name '*.xpc' \) -print)
+
+    while IFS= read -r -d '' path; do
+        codesign_path "${path}" 1
+        signed_file_count=$((signed_file_count + 1))
+    done < <(find "${app_path}" -path '*/python/Frameworks/Versions/*/Python' -type f -print0)
+
+    echo "Signed ${signed_file_count} nested Mach-O file(s) and ${signed_bundle_count} nested bundle(s)."
+}
+
 resign_app_bundle() {
     local app_path="$1"
     local entitlements_path="$2"
@@ -306,6 +396,46 @@ resign_app_bundle() {
 
     codesign_args+=("${app_path}")
     run "${codesign_args[@]}"
+}
+
+submit_for_notarization() {
+    local path="$1"
+    local result_path="$2"
+    local log_path="${result_path%.json}-log.json"
+    local status
+    local submission_id
+
+    printf '+ xcrun notarytool submit %q --keychain-profile %q --wait --output-format json > %q\n' \
+        "${path}" \
+        "${NOTARY_PROFILE}" \
+        "${result_path}"
+
+    if ! xcrun notarytool submit "${path}" \
+        --keychain-profile "${NOTARY_PROFILE}" \
+        --wait \
+        --output-format json > "${result_path}"; then
+        cat "${result_path}" >&2 || true
+        exit 1
+    fi
+
+    status="$(notary_json_value status "${result_path}")"
+    submission_id="$(notary_json_value id "${result_path}")"
+
+    if [ "${status}" != "Accepted" ]; then
+        echo "Notarization failed for ${path}. Status: ${status:-unknown}" >&2
+
+        if [ -n "${submission_id}" ]; then
+            echo "+ xcrun notarytool log ${submission_id} --keychain-profile ${NOTARY_PROFILE} ${log_path}" >&2
+            xcrun notarytool log "${submission_id}" \
+                --keychain-profile "${NOTARY_PROFILE}" \
+                "${log_path}" >/dev/null || true
+            echo "Notarization log: ${log_path}" >&2
+        fi
+
+        exit 1
+    fi
+
+    echo "Notarization accepted for ${path}."
 }
 
 release_exists() {
@@ -428,8 +558,10 @@ maybe_download_existing_appcast() {
 require_command xcodebuild
 require_command xcrun
 require_command hdiutil
+require_command file
 require_command shasum
 require_command security
+require_command /usr/bin/plutil
 require_command /usr/bin/ditto
 require_command /usr/libexec/PlistBuddy
 require_command gh
@@ -552,12 +684,14 @@ fi
 
 codesign -d --entitlements :- "${APP_PATH}" > "${ENTITLEMENTS_PATH}" 2>/dev/null || true
 prune_broken_symlinks "${APP_PATH}"
+prune_packaging_artifacts "${APP_PATH}"
+sign_nested_code "${APP_PATH}"
 resign_app_bundle "${APP_PATH}" "${ENTITLEMENTS_PATH}"
 run codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
 if [ "${SKIP_NOTARIZATION}" = "0" ]; then
     run /usr/bin/ditto -c -k --keepParent "${APP_PATH}" "${NOTARY_ZIP}"
-    run xcrun notarytool submit "${NOTARY_ZIP}" --keychain-profile "${NOTARY_PROFILE}" --wait
+    submit_for_notarization "${NOTARY_ZIP}" "${OUTPUT_DIR}/app-notarization-result.json"
     run xcrun stapler staple "${APP_PATH}"
     run xcrun stapler validate "${APP_PATH}"
 fi
@@ -577,7 +711,7 @@ if [ "${SIGNING_IDENTITY}" != "-" ]; then
 fi
 
 if [ "${SKIP_NOTARIZATION}" = "0" ]; then
-    run xcrun notarytool submit "${DMG_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait
+    submit_for_notarization "${DMG_PATH}" "${OUTPUT_DIR}/dmg-notarization-result.json"
     run xcrun stapler staple "${DMG_PATH}"
     run xcrun stapler validate "${DMG_PATH}"
     run spctl -a -vv -t open --context context:primary-signature "${DMG_PATH}"

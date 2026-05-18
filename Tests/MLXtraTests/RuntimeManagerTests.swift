@@ -532,6 +532,74 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testRuntimeBootstrapInstallsWhenNoRuntimeIsActive() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("runtime-macos-arm64")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveURL = directory.appendingPathComponent("runtime-macos-arm64-0.1.1.zip")
+        try makeZipArchive(from: runtimeRoot, at: archiveURL)
+
+        let installRoot = directory.appendingPathComponent("installed-runtimes")
+        let checksum = try SHA256Checksum.hexDigest(for: archiveURL)
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(
+                    version: "0.1.1",
+                    url: archiveURL,
+                    sha256: checksum,
+                    sizeBytes: try archiveSizeBytes(archiveURL)
+                )
+            ]
+        )
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { archive in
+                try RuntimeManager.installRuntimeArchive(archive, installRoot: installRoot)
+            }
+        )
+
+        await manager.bootstrapStableRuntimeIfNeeded(channelURL: channelURL)
+
+        XCTAssertEqual(manager.state, .installed("0.1.1"))
+        XCTAssertTrue(
+            RuntimeManager.isRuntimeBundleStructurallyValid(
+                installRoot.appendingPathComponent("current")
+            )
+        )
+    }
+
+    @MainActor
+    func testRuntimeBootstrapDoesNotReinstallCurrentRuntime() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.0")
+            ]
+        )
+        let recorder = InstallerCallRecorder()
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { self.makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1) },
+            runtimeArchiveInstaller: { _ in
+                recorder.wasCalled = true
+                return directory
+            }
+        )
+
+        await manager.bootstrapStableRuntimeIfNeeded(channelURL: channelURL)
+
+        XCTAssertFalse(recorder.wasCalled)
+        XCTAssertEqual(manager.state, .idle)
+    }
+
+    @MainActor
     func testRuntimeInstallRejectsChecksumMismatchBeforeInstalling() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

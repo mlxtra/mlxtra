@@ -92,7 +92,7 @@ struct QuickStudioView: View {
             .frame(width: 34, height: 34)
 
             VStack(alignment: .leading, spacing: MLXtraDesignSystem.Spacing.xxs) {
-                Text("Quick Studio")
+                Text("MLXtra")
                     .font(MLXtraDesignSystem.Typography.sectionTitle)
                 Text("\(status.title) - \(status.detail)")
                     .font(MLXtraDesignSystem.Typography.caption)

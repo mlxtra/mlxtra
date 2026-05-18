@@ -35,15 +35,15 @@ let package = Package(
             path: "MLXtra",
             exclude: [
                 "Resources/Info.plist",
-                "Resources/Assets.xcassets"
+                "Resources/Assets.xcassets",
+                "Resources/runtime"
             ] + generatedResourceExcludes,
             resources: [
                 .copy("Resources/bridge_utils.py"),
                 .copy("Resources/python_bridge.py"),
                 .copy("Resources/acestep_bridge.py"),
                 .copy("Resources/model-catalog.json"),
-                .copy("Resources/stable-channel.json"),
-                .copy("Resources/runtime")
+                .copy("Resources/stable-channel.json")
             ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")

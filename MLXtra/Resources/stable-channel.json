@@ -7,5 +7,15 @@
     "sha256": "b208da185d1bd51a05bbbf03718ca619f63aa7aae6a3df0ab1b5fd8e3c713a67",
     "sizeBytes": 17305
   },
-  "runtimes": []
+  "runtimes": [
+    {
+      "version": "0.1.0",
+      "platform": "macos",
+      "arch": "arm64",
+      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.0/runtime-macos-arm64-0.1.0.zip",
+      "sha256": "9615a00f044e8800b155bd4d57fcda9da5f77f084b8a1188808129859d67ef64",
+      "sizeBytes": 1055801248,
+      "compatibilityApi": 1
+    }
+  ]
 }

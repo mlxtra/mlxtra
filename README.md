@@ -43,7 +43,6 @@ A macOS-native GUI application for running and interacting with [MLX](https://gi
 - macOS 14 (Sonoma) or later
 - Apple Silicon Mac (M1, M2, M3, M4)
 - Xcode 15+ (for building)
-- Python 3.12 (for runtime)
 
 ## Installation
 
@@ -62,9 +61,8 @@ open MLXtra.xcodeproj
 
 3. Build and run the `MLXtra` scheme on `My Mac` (⌘+R).
 
-The first Xcode build from a clean checkout bootstraps the local Python runtime
-automatically. This can take several minutes and requires network access. After
-that, normal builds reuse the generated runtime.
+On first launch, MLXtra checks the stable runtime channel and starts downloading
+the Python/MLX runtime in the background when no compatible runtime is installed.
 
 For a command-line build and launch, run:
 
@@ -74,8 +72,11 @@ Scripts/launch-debug-app.sh
 
 ### Runtime Setup
 
-The application requires Python runtime bundles. Xcode builds run the bootstrap
-automatically when the runtime is missing. To prepare it manually, run:
+The app package does not embed the Python runtime. Runtime archives are published
+as separate GitHub release assets and installed under
+`~/Library/Application Support/MLXtra/runtimes/`.
+
+To build a runtime archive for release work, run:
 
 ```bash
 ./Scripts/build-runtime-bundle.sh
@@ -84,11 +85,9 @@ automatically when the runtime is missing. To prepare it manually, run:
 This will:
 - Create Python virtual environments
 - Install required packages (mlx-vlm, mlx-lm, mflux, acestep, etc.)
-- Set up the runtime in `MLXtra/Resources/runtime/`
+- Write the local release runtime under `MLXtra/Resources/runtime/`
 
-The bundled runtime is the baseline version shipped inside the app. Runtime
-updates can then be published separately through GitHub releases and referenced
-from `MLXtra/Resources/stable-channel.json`.
+Runtime releases are referenced from `MLXtra/Resources/stable-channel.json`.
 
 App binary updates use Sparkle with a GitHub-hosted appcast. Release builds
 embed the Sparkle public EdDSA key and are published as notarized DMGs with
@@ -106,10 +105,10 @@ MLXtra/
 │   │   ├── AppUpdate/     # Sparkle app update integration
 │   │   ├── Execution/     # Model execution engines
 │   │   └── Runtime/       # Runtime management
-│   └── Resources/         # Python bridges and runtime
+│   └── Resources/         # Python bridges and fallback release metadata
 │       ├── python_bridge.py    # Main Python bridge
 │       ├── acestep_bridge.py   # ACE-Step music bridge
-│       └── runtime/            # Python environments
+│       └── stable-channel.json # Runtime/catalog release channel
 ├── Scripts/               # Build scripts
 └── Package.swift         # Swift Package Manager
 ```
@@ -187,7 +186,7 @@ Generated files are saved to the app library:
 - Swift Markdown
 - Sparkle
 
-### Python (via bundled runtime)
+### Python (via downloaded runtime)
 - mlx-vlm: Vision-language models
 - mlx-lm: Language models
 - mflux: Flux image generation
@@ -196,11 +195,9 @@ Generated files are saved to the app library:
 
 ## Troubleshooting
 
-### "No module named 'acestep'"
-The acestep-venv must be built locally:
-```bash
-./Scripts/build-runtime-bundle.sh
-```
+### Runtime is unavailable
+Check internet access and the stable GitHub release. The app downloads the
+runtime automatically when no compatible installed runtime is present.
 
 ### Model downloads fail
 Check internet connection and Hugging Face access. Some models require authentication.

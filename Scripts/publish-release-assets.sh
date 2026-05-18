@@ -338,9 +338,8 @@ ensure_release \
     "${STABLE_TAG}" \
     "Stable Channel" \
     "Moving MLXtra stable channel pointer. Immutable catalog and runtime assets live on catalog-* and runtime-* releases." \
-    "1"
+    "0"
 upload_stable_asset "${STABLE_TAG}" "${CHANNEL_ASSET}"
-run_gh_write gh release edit "${STABLE_TAG}" --repo "${REPOSITORY}" --latest
 
 echo ""
 echo "Published release channel:"

@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct RuntimeUpdateSection: View {
@@ -7,24 +6,11 @@ struct RuntimeUpdateSection: View {
     var body: some View {
         switch manager.state {
         case .available(let asset):
-            updateCard(
-                title: "Runtime update available",
-                detail: "Runtime \(asset.version), \(formatBytes(asset.sizeBytes))",
-                icon: "arrow.triangle.2.circlepath.circle.fill",
-                tint: .accentColor
-            ) {
-                Button {
-                    Task {
-                        await manager.installRuntime(asset)
-                        if case .installed = manager.state {
-                            MLXtraApplicationRelauncher.restartFromCurrentBundle()
-                        }
-                    }
-                } label: {
-                    Label("Install & Restart", systemImage: "arrow.clockwise.circle.fill")
+            Color.clear
+                .frame(height: 0)
+                .task(id: asset.version) {
+                    await manager.installRuntime(asset)
                 }
-                .buttonStyle(.borderedProminent)
-            }
         case .installing:
             updateCard(
                 title: "Installing runtime",
@@ -37,17 +23,12 @@ struct RuntimeUpdateSection: View {
             }
         case .installed(let version):
             updateCard(
-                title: "Runtime installed",
-                detail: "Restart MLXtra to use runtime \(version).",
+                title: "Runtime ready",
+                detail: "Runtime \(version) is ready to use.",
                 icon: "checkmark.circle.fill",
                 tint: .secondary
             ) {
-                Button {
-                    MLXtraApplicationRelauncher.restartFromCurrentBundle()
-                } label: {
-                    Label("Restart", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
+                EmptyView()
             }
         case .failed(let message):
             updateCard(
@@ -58,7 +39,7 @@ struct RuntimeUpdateSection: View {
             ) {
                 Button {
                     Task {
-                        await manager.refreshStableChannel()
+                        await manager.bootstrapStableRuntimeIfNeeded(reportFailures: true)
                     }
                 } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
@@ -100,38 +81,6 @@ struct RuntimeUpdateSection: View {
         .designTintSurface(tint, cornerRadius: MLXtraDesignSystem.Radius.card)
     }
 
-    private func formatBytes(_ bytes: Int64?) -> String {
-        guard let bytes else { return "size unknown" }
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useGB, .useMB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
-    }
-
-}
-
-enum MLXtraApplicationRelauncher {
-    @discardableResult
-    @MainActor
-    static func restartFromCurrentBundle() -> Bool {
-        let bundleURL = Bundle.main.bundleURL
-
-        guard bundleURL.pathExtension == "app" else {
-            return false
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-n", bundleURL.path]
-
-        do {
-            try process.run()
-            NSApplication.shared.terminate(nil)
-            return true
-        } catch {
-            return false
-        }
-    }
 }
 
 struct CapabilitySetupSection: View {

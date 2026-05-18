@@ -67,6 +67,7 @@ private final class MLXtraApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        bootstrapRuntimeIfNeeded()
     }
 
     var canCheckForUpdates: Bool {
@@ -75,6 +76,18 @@ private final class MLXtraApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func checkForUpdates() {
         appUpdateController.checkForUpdates()
+    }
+
+    private func bootstrapRuntimeIfNeeded() {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["MLXTRA_UI_TEST_MODE"] != "1",
+              environment["MLXTRA_DISABLE_RUNTIME_BOOTSTRAP"] != "1" else {
+            return
+        }
+
+        Task {
+            await RuntimeUpdateManager.shared.bootstrapStableRuntimeIfNeeded(reportFailures: false)
+        }
     }
 }
 

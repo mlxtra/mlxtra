@@ -142,38 +142,18 @@ struct ModelManagerRow: View {
     private var runtimeAction: some View {
         switch runtimeUpdateManager.state {
         case .available(let asset):
-            Button {
-                Task {
+            runtimeInstallingStatus("Installing")
+                .task(id: asset.version) {
                     await runtimeUpdateManager.installRuntime(asset)
-                    if case .installed = runtimeUpdateManager.state {
-                        MLXtraApplicationRelauncher.restartFromCurrentBundle()
-                    }
                 }
-            } label: {
-                Label("Install & Restart", systemImage: "arrow.clockwise.circle")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         case .installing:
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Installing")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            runtimeInstallingStatus("Installing")
         case .checking:
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Checking")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            runtimeInstallingStatus("Checking")
         case .failed:
             Button {
                 Task {
-                    await runtimeUpdateManager.refreshStableChannel()
+                    await runtimeUpdateManager.bootstrapStableRuntimeIfNeeded(reportFailures: true)
                 }
             } label: {
                 Label("Retry Runtime", systemImage: "arrow.clockwise")
@@ -183,7 +163,7 @@ struct ModelManagerRow: View {
         case .idle, .installed:
             Button {
                 Task {
-                    await runtimeUpdateManager.refreshStableChannel()
+                    await runtimeUpdateManager.bootstrapStableRuntimeIfNeeded(reportFailures: true)
                 }
             } label: {
                 Label("Check Runtime", systemImage: "arrow.clockwise")
@@ -191,6 +171,16 @@ struct ModelManagerRow: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
+    }
+
+    private func runtimeInstallingStatus(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+            Text(text)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 
     @ViewBuilder

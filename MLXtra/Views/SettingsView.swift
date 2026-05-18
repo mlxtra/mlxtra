@@ -71,7 +71,7 @@ struct SettingsView: View {
         }
         .task {
             await catalogService.refreshFromStableChannel()
-            await runtimeUpdateManager.refreshStableChannel(reportFailures: false)
+            await runtimeUpdateManager.bootstrapStableRuntimeIfNeeded(reportFailures: false)
             downloadManager.refreshStatuses()
             clearPendingDownloadIfReady()
         }

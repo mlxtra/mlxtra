@@ -204,6 +204,23 @@ final class RuntimeUpdateManager: ObservableObject {
         return nil
     }
 
+    func bootstrapStableRuntimeIfNeeded(
+        channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
+        reportFailures: Bool = false
+    ) async {
+        switch state {
+        case .checking, .installing:
+            return
+        default:
+            break
+        }
+
+        await refreshStableChannel(channelURL: channelURL, reportFailures: reportFailures)
+        if case .available(let asset) = state {
+            await installRuntime(asset)
+        }
+    }
+
     func refreshStableChannel(
         channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
         reportFailures: Bool = true
@@ -230,6 +247,10 @@ final class RuntimeUpdateManager: ObservableObject {
     }
 
     func installRuntime(_ asset: RuntimeReleaseAsset) async {
+        if case .installing = state {
+            return
+        }
+
         state = .installing(nil)
         do {
             let archiveURL = try await fetchRuntimeArchive(asset)

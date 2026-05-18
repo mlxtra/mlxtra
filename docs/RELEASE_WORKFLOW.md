@@ -3,10 +3,10 @@
 MLXtra has two update lanes:
 
 - **Catalog-only update**: add or rerank curated models that the current runtime already supports.
-- **Runtime update**: ship executable Python/runtime code. This must be immutable, checksum-verified, and explicitly installed by the user.
+- **Runtime update**: ship executable Python/runtime code. This must be immutable, checksum-verified, and automatically installed by the app when no compatible runtime is present.
 - **App update**: ship a signed and notarized MLXtra app bundle through Sparkle using a GitHub-hosted appcast.
 
-The app must always keep working with the bundled catalog and bundled runtime if remote metadata is unavailable or invalid.
+The app must always open with the bundled catalog if remote metadata is unavailable or invalid. Runtime-dependent generation waits until a compatible runtime has been downloaded and installed.
 
 ## Release Files
 
@@ -22,7 +22,7 @@ The app must always keep working with the bundled catalog and bundled runtime if
 - Stable pointer to the current catalog and any published runtime update assets.
 - Contains version, URL, size, and SHA-256 for each asset.
 - This file is the only metadata that should move forward between immutable asset releases.
-- `runtimes` can be empty when no remote runtime update has been published yet; the app keeps using the bundled runtime.
+- `runtimes` should point at the current runtime archive for public builds; when no compatible installed runtime exists, the app starts the download automatically.
 - Published at the moving GitHub release tag `stable` as
   `https://github.com/mlxtra/mlxtra/releases/download/stable/stable-channel.json`.
 
@@ -46,7 +46,7 @@ While a generated channel candidate still contains a local runtime archive place
 Scripts/validate-release-metadata.py --allow-runtime-placeholders
 ```
 
-The validator checks catalog schema, required model fields, source metadata, parameter/preset consistency, channel checksums, channel sizes, and whether the bundled runtime manifest declares the backends and capabilities required by the catalog.
+The validator checks catalog schema, required model fields, source metadata, parameter/preset consistency, channel checksums, channel sizes, and whether the local runtime manifest declares the backends and capabilities required by the catalog.
 
 ## Prepare Local Release Assets
 
@@ -114,7 +114,9 @@ Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --skip-runtime-archive
 By default, existing assets on `catalog-*` and `runtime-*` releases cause the
 script to fail, because those releases are treated as immutable. Use
 `--force-immutable` only to repair a mistaken unpublished/internal release.
-The `stable` release asset is intentionally replaced each time.
+The `stable` release asset is intentionally replaced each time, but the `stable`
+release is not marked as GitHub's Latest release; the latest public release
+should remain the current `app-*` DMG release.
 
 To preview the GitHub write operations without uploading assets:
 
@@ -184,8 +186,7 @@ missing model files as skips.
 
 GitHub Actions also includes a manual `Runtime Validation` workflow. Run it
 before publishing a binary/runtime release; it builds the runtime bundle, runs
-`Scripts/validate-runtime-bundle.sh`, and builds the app without
-`MLXTRA_SKIP_RUNTIME_VALIDATION`.
+`Scripts/validate-runtime-bundle.sh`, and builds the app.
 
 ## Binary App Release
 
@@ -213,8 +214,8 @@ Release tags:
   release notes referenced by the appcast
 
 Check the printed DMG size before upload. GitHub release assets must stay under
-2 GiB per file, and the bundled runtime makes the app DMG close enough to that
-limit that future runtime growth should be watched.
+2 GiB per file. The app DMG should remain small because the Python/MLX runtime is
+published as a separate runtime asset.
 
 App release flow:
 
@@ -258,11 +259,11 @@ internal private-repository test, pass `--allow-private`; do not use that for
 public app updates because the app downloads updates with unauthenticated HTTPS.
 
 The release script archives the Release build, embeds the Sparkle public key,
-prunes broken runtime symlinks from the packaged app copy, re-signs and verifies
-the app, creates and signs the DMG container, notarizes and staples both the app
-and DMG, validates the final DMG with Gatekeeper, generates `appcast.xml` from
-the final DMG bytes, uploads the DMG to `app-<version>`, and replaces
-`appcast.xml` plus its release notes on `appcast-stable`.
+signs nested code if present, re-signs and verifies the app, creates and signs
+the DMG container, notarizes and staples both the app and DMG, validates the
+final DMG with Gatekeeper, generates `appcast.xml` from the final DMG bytes,
+uploads the DMG to `app-<version>`, and replaces `appcast.xml` plus its release
+notes on `appcast-stable`.
 
 5. Install the previous public version and use `Check for Updates...` to verify
    Sparkle can discover and install the new release.
@@ -280,4 +281,4 @@ spctl -a -vv -t open --context context:primary-signature .build/app-release/asse
 
 Do not mutate published catalog or runtime assets. To roll back, publish a new `stable-channel.json` that points back to the previous known-good catalog/runtime asset versions.
 
-Remote failure, bad checksums, incompatible schema, and invalid runtime bundles should all leave users on the bundled fallback path.
+Remote failure, bad checksums, incompatible schema, and invalid runtime bundles should leave the current installed runtime untouched. If no runtime is installed yet, the app remains usable but runtime-dependent generation is unavailable until a valid runtime download succeeds.
