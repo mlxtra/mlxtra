@@ -3,7 +3,7 @@
 # Shared runtime dependency pins for the embedded macOS Python bundle.
 # Keep runtime upgrades here so the builder, validator, and generated manifest stay in sync.
 
-RUNTIME_VERSION="0.1.0"
+RUNTIME_VERSION="0.1.1"
 PYTHON_VERSION="3.12.8"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-macos11.pkg"
 PYTHON_PKG_NAME="python-${PYTHON_VERSION}-macos11.pkg"
