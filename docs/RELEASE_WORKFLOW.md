@@ -167,7 +167,20 @@ Scripts/validate-runtime-bundle.sh
 Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --write-channel
 ```
 
-4. Run one smoke test per backend before announcing the release:
+4. Commit the checked-in channel update after the publish succeeds:
+
+```bash
+git status --short
+git add MLXtra/Resources/stable-channel.json
+git commit -m "Update stable runtime channel"
+git push
+```
+
+This keeps the bundled fallback channel aligned with the public `stable`
+release asset. Do not commit a channel file that points at assets that were not
+successfully uploaded.
+
+5. Run one smoke test per backend before announcing the release:
 
 ```bash
 swift test
@@ -207,6 +220,30 @@ binary app, archive with a Developer ID Application identity and notarize the
 exported `.app` or `.dmg`; the checked-in project uses ad-hoc signing for local
 source builds unless those signing values are supplied at archive time.
 
+### One-Time App Release Setup
+
+Install or resolve Sparkle's command-line tools:
+
+```bash
+swift package resolve
+```
+
+Generate the Sparkle EdDSA key pair on the release machine:
+
+```bash
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account mlxtra
+```
+
+The private key is stored in the macOS login Keychain. The command prints the
+public key; put that value in the Release configuration's
+`MLXTRA_SPARKLE_PUBLIC_ED_KEY` build setting, or pass it to
+`Scripts/publish-app-release.sh` with `--public-key`. Never export or commit the
+private key.
+
+For notarization, create an Apple app-specific password for the Apple ID in the
+Apple Account security settings. The first `--setup-notary` run stores it in the
+local Keychain as the `mlxtra-notary` notarytool profile.
+
 Release tags:
 
 - `app-<version>`: immutable release containing notarized `MLXtra-<version>.dmg`
@@ -219,7 +256,16 @@ published as a separate runtime asset.
 
 App release flow:
 
-1. Increment `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`.
+1. Increment `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`, then commit and
+   push that source change before publishing:
+
+```bash
+git status --short
+git add MLXtra.xcodeproj/project.pbxproj
+git commit -m "Bump app version to <version>"
+git push
+```
+
 2. For the first app release on a machine, let the release script store App
    Store Connect notarization credentials:
 
