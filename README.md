@@ -68,13 +68,16 @@ Downloaded model files and generated media stay on your Mac.
 
 MLXtra ships with a curated model catalog. The current catalog includes:
 
-- Qwen 3.5
-- Qwen 3.5 Mini
+- Qwen 3.5 9B
+- Qwen 3.5 Mini 2B
+- Qwen 3.6 27B
+- Qwen 3.6 35B A3B
 - Gemma 4
 - FLUX.2 Klein
 - KugelAudio 0 Open
 - ACE-Step 1.5 Turbo
 
+Large models are shown only on Macs where they are expected to fit comfortably.
 Some model providers may require accepting model terms or signing in to Hugging
 Face before downloads work.
 
