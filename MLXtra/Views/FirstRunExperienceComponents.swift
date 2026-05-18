@@ -143,7 +143,7 @@ struct FirstRunHeroVisual: View {
     }
 
     private func orbitOffset(for item: FirstRunOrbitItem, phase: TimeInterval) -> CGSize {
-        let angle = item.baseAngle + (reduceMotion ? 0 : phase * item.speed)
+        let angle = CGFloat(item.baseAngle + (reduceMotion ? 0 : phase * item.speed))
         return CGSize(
             width: cos(angle) * item.radius,
             height: sin(angle) * item.radius
