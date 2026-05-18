@@ -62,7 +62,6 @@ runtime_bootstrap_required() {
     [ -f "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" ] || return 0
-    [ -f "${RUNTIME_DIR}/hf_download_helper.py" ] || return 0
     [ -f "${RUNTIME_DIR}/acestep_download_helper.py" ] || return 0
     return 1
 }
@@ -92,7 +91,6 @@ require_file "${MANIFEST}" "Runtime manifest"
 require_file "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" "Python bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" "ACE-Step bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" "Bridge utilities"
-require_file "${RUNTIME_DIR}/hf_download_helper.py" "Hugging Face download helper"
 require_file "${RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
 
 validate_manifest() {

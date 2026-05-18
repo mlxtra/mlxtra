@@ -216,9 +216,11 @@ struct ModelManagerRow: View {
                 if let fractionCompleted = progress?.fractionCompleted {
                     ProgressView(value: fractionCompleted)
                         .frame(width: 150)
-                    Text(progress?.displayText ?? "Downloading")
+                    Text(downloadProgressText(progress))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 } else {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -351,6 +353,12 @@ struct ModelManagerRow: View {
 
     private var primaryActionWidth: CGFloat {
         112
+    }
+
+    private func downloadProgressText(_ progress: ModelDownloadManager.DownloadProgress?) -> String {
+        guard let progress else { return "Downloading" }
+        guard let detailText = progress.detailText else { return progress.displayText }
+        return "\(progress.displayText) · \(detailText)"
     }
 
     private var readinessBadge: some View {

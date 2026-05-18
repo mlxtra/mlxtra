@@ -26,6 +26,8 @@
 		8A0100010000000000000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001016 /* SettingsView.swift */; };
 		8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001017 /* ModelDownloadManager.swift */; };
 		8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */; };
+		8A0900010000000000000001 /* NativeModelDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001001 /* NativeModelDownloadService.swift */; };
+		8A0900010000000000000002 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
 		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
@@ -183,6 +185,7 @@
 		8A0500010000000000001015 /* VersionComparator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionComparator.swift; sourceTree = "<group>"; };
 		8A0500010000000000001016 /* ChatViewModel+Streaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Streaming.swift"; sourceTree = "<group>"; };
 		8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadHelperProcessRunner.swift; sourceTree = "<group>"; };
+		8A0900010000000000001001 /* NativeModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelDownloadService.swift; sourceTree = "<group>"; };
 		8A0500010000000000001018 /* StreamingMarkdownSplitter+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamingMarkdownSplitter+Parsing.swift"; sourceTree = "<group>"; };
 		8A0700010000000000001001 /* AppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -379,6 +382,7 @@
 				8A010001000000000000100F /* RuntimeManager.swift */,
 				8A0100010000000000001017 /* ModelDownloadManager.swift */,
 				8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */,
+				8A0900010000000000001001 /* NativeModelDownloadService.swift */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
@@ -522,6 +526,7 @@
 				8A010001000000000000001A /* bridge_utils.py in Resources */,
 				8A0100010000000000000030 /* model-catalog.json in Resources */,
 				8A0100010000000000000031 /* stable-channel.json in Resources */,
+				8A0900010000000000000002 /* runtime in Resources */,
 				8A0300010000000000000001 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -573,6 +578,7 @@
 				8A010001000000000000000F /* RuntimeManager.swift in Sources */,
 				8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */,
 				8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */,
+				8A0900010000000000000001 /* NativeModelDownloadService.swift in Sources */,
 				8A0700010000000000000001 /* AppUpdateController.swift in Sources */,
 				8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */,
 				8A0100010000000000000024 /* ImageCache.swift in Sources */,

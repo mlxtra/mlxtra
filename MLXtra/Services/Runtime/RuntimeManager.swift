@@ -42,12 +42,6 @@ private final class PipeDataReader: @unchecked Sendable {
 }
 
 private struct DownloadSupportValidationContext: Sendable {
-    enum RuntimeKind: Sendable {
-        case aceStep
-        case huggingFace
-    }
-
-    let kind: RuntimeKind
     let runtimeBundleURL: URL
     let pythonHomePath: URL
     let pythonExecutablePath: URL
@@ -532,7 +526,6 @@ class RuntimeManager: ObservableObject {
             "venv/bin/python",
             "acestep-venv/bin/python",
             "python/Frameworks/Versions/3.12",
-            "hf_download_helper.py",
             "acestep_download_helper.py",
             "runtime-manifest.json",
         ]
@@ -737,12 +730,6 @@ class RuntimeManager: ObservableObject {
             let bridgePath = bridgeScriptPath()
             try Self.validateRequiredFile(bridgePath, error: .bridgeScriptNotFound(bridgePath.path))
 
-            let huggingFaceHelper = huggingFaceDownloadHelperPath()
-            try Self.validateRequiredFile(
-                huggingFaceHelper,
-                error: .runtimeComponentNotFound("Hugging Face download helper", huggingFaceHelper.path)
-            )
-
             let aceStepPython = acestepPythonExecutablePath()
             try Self.validateRequiredFile(
                 aceStepPython,
@@ -782,11 +769,23 @@ class RuntimeManager: ObservableObject {
 
     /// Downloading should not require unrelated model runtimes to be present.
     func validateDownloadSupport(for model: DownloadableModel) throws {
+        guard model.isRuntimeCompatible else {
+            throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
+        }
+        guard model.source.usesComponentBundle else {
+            return
+        }
         let context = try downloadSupportValidationContext(for: model)
         try Self.validateDownloadSupport(context)
     }
 
     func validateDownloadSupportOffMain(for model: DownloadableModel) async throws {
+        guard model.isRuntimeCompatible else {
+            throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
+        }
+        guard model.source.usesComponentBundle else {
+            return
+        }
         let context = try downloadSupportValidationContext(for: model)
         try await Task.detached(priority: .utility) {
             try Self.validateDownloadSupport(context)
@@ -798,33 +797,17 @@ class RuntimeManager: ObservableObject {
             throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
         }
 
-        if model.source.usesComponentBundle {
-            let aceStepPython = acestepPythonExecutablePath()
-            let aceStepHelper = acestepDownloadHelperPath()
-            return DownloadSupportValidationContext(
-                kind: .aceStep,
-                runtimeBundleURL: runtimeBundleURL,
-                pythonHomePath: pythonHomePath(),
-                pythonExecutablePath: aceStepPython,
-                helperPath: aceStepHelper,
-                importPackages: ["huggingface_hub", "tqdm", "acestep"],
-                importContext: "ACE-Step download runtime",
-                environment: bundledPythonEnvironment()
-            )
-        } else {
-            let pythonPath = pythonExecutablePath()
-            let huggingFaceHelper = huggingFaceDownloadHelperPath()
-            return DownloadSupportValidationContext(
-                kind: .huggingFace,
-                runtimeBundleURL: runtimeBundleURL,
-                pythonHomePath: pythonHomePath(),
-                pythonExecutablePath: pythonPath,
-                helperPath: huggingFaceHelper,
-                importPackages: ["huggingface_hub", "tqdm"],
-                importContext: "Hugging Face download runtime",
-                environment: bundledPythonEnvironment()
-            )
-        }
+        let aceStepPython = acestepPythonExecutablePath()
+        let aceStepHelper = acestepDownloadHelperPath()
+        return DownloadSupportValidationContext(
+            runtimeBundleURL: runtimeBundleURL,
+            pythonHomePath: pythonHomePath(),
+            pythonExecutablePath: aceStepPython,
+            helperPath: aceStepHelper,
+            importPackages: ["huggingface_hub", "tqdm", "acestep"],
+            importContext: "ACE-Step download runtime",
+            environment: bundledPythonEnvironment()
+        )
     }
 
     private nonisolated static func validateDownloadSupport(_ context: DownloadSupportValidationContext) throws {
@@ -837,28 +820,15 @@ class RuntimeManager: ObservableObject {
             error: .runtimeComponentNotFound("Bundled Python home", context.pythonHomePath.path)
         )
 
-        switch context.kind {
-        case .aceStep:
-            try validateRequiredFile(
-                context.pythonExecutablePath,
-                error: .runtimeComponentNotFound("ACE-Step Python executable", context.pythonExecutablePath.path),
-                executable: true
-            )
-            try validateRequiredFile(
-                context.helperPath,
-                error: .runtimeComponentNotFound("ACE-Step download helper", context.helperPath.path)
-            )
-        case .huggingFace:
-            try validateRequiredFile(
-                context.pythonExecutablePath,
-                error: .pythonNotFound(context.pythonExecutablePath.path),
-                executable: true
-            )
-            try validateRequiredFile(
-                context.helperPath,
-                error: .runtimeComponentNotFound("Hugging Face download helper", context.helperPath.path)
-            )
-        }
+        try validateRequiredFile(
+            context.pythonExecutablePath,
+            error: .runtimeComponentNotFound("ACE-Step Python executable", context.pythonExecutablePath.path),
+            executable: true
+        )
+        try validateRequiredFile(
+            context.helperPath,
+            error: .runtimeComponentNotFound("ACE-Step download helper", context.helperPath.path)
+        )
 
         try validatePythonImports(
             pythonPath: context.pythonExecutablePath,
@@ -960,10 +930,6 @@ class RuntimeManager: ObservableObject {
     func acestepDownloadHelperPath() -> URL {
         runtimeBundleURL.appendingPathComponent("acestep_download_helper.py")
     }
-
-    func huggingFaceDownloadHelperPath() -> URL {
-        runtimeBundleURL.appendingPathComponent("hf_download_helper.py")
-    }
     
     func pythonSitePackagesPath() -> URL {
         for version in ["python3.13", "python3.12", "python3.11"] {
@@ -1059,13 +1025,31 @@ class RuntimeManager: ObservableObject {
         }
 
         let snapshotsPath = path.appendingPathComponent("snapshots")
+        var markerIncompleteMessage: String?
         if FileManager.default.fileExists(atPath: snapshotsPath.path) {
             for snapshotPath in Self.snapshotCandidates(modelCachePath: path, snapshotsPath: snapshotsPath) {
+                if let nativeStatus = Self.nativeSnapshotStorageStatus(snapshotPath) {
+                    switch nativeStatus {
+                    case .downloaded:
+                        RuntimeDiagnostics.log("[RuntimeManager] Model \(modelId) found in native HF cache at \(snapshotPath.path)")
+                        return .downloaded
+                    case .incomplete(let message):
+                        markerIncompleteMessage = markerIncompleteMessage ?? message
+                        continue
+                    case .missing:
+                        continue
+                    }
+                }
                 if Self.snapshotContainsModelFiles(snapshotPath) {
                     RuntimeDiagnostics.log("[RuntimeManager] Model \(modelId) found in HF cache at \(snapshotPath.path)")
                     return .downloaded
                 }
             }
+        }
+
+        if let markerIncompleteMessage {
+            RuntimeDiagnostics.log("[RuntimeManager] Model \(modelId) native HF cache is incomplete")
+            return .incomplete(markerIncompleteMessage)
         }
 
         RuntimeDiagnostics.log("[RuntimeManager] Model \(modelId) cache is incomplete")
@@ -1078,6 +1062,9 @@ class RuntimeManager: ObservableObject {
         huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
     ) -> ModelStorageStatus {
         if model.source.usesComponentBundle {
+            if model.modelId.hasPrefix("ACE-Step/") || model.source.downloadRepository == AceStepDownloadPlan.mainRepository {
+                return aceStepModelStorageStatus(checkpointsPath: checkpointsPath)
+            }
             return componentBundleStorageStatus(
                 checkpointsPath: checkpointsPath,
                 components: model.source.components
@@ -1097,6 +1084,17 @@ class RuntimeManager: ObservableObject {
 
     private nonisolated static func aceStepModelStorageStatus(checkpointsPath: URL) -> ModelStorageStatus {
         let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+        if let contractStatus = aceStepContractStorageStatus(
+            checkpointsPath: checkpointsPath,
+            expectedComponents: aceStepComponents
+        ) {
+            switch contractStatus {
+            case .downloaded:
+                break
+            case .missing, .incomplete:
+                return contractStatus
+            }
+        }
         return componentBundleStorageStatus(checkpointsPath: checkpointsPath, components: aceStepComponents)
     }
 
@@ -1136,6 +1134,80 @@ class RuntimeManager: ObservableObject {
 
         RuntimeDiagnostics.log("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
         return .downloaded
+    }
+
+    private nonisolated static func aceStepContractStorageStatus(
+        checkpointsPath: URL,
+        expectedComponents: [String]
+    ) -> ModelStorageStatus? {
+        let inProgressURL = checkpointsPath.appendingPathComponent(AceStepContractCompletionManifest.inProgressFilename)
+        if FileManager.default.fileExists(atPath: inProgressURL.path) {
+            return .incomplete("ACE-Step contract validation is incomplete. Repair will verify model code and checkpoints.")
+        }
+
+        let completionURL = checkpointsPath.appendingPathComponent(AceStepContractCompletionManifest.filename)
+        guard FileManager.default.fileExists(atPath: completionURL.path) else {
+            return nil
+        }
+
+        guard let data = try? Data(contentsOf: completionURL),
+              let marker = try? JSONDecoder().decode(AceStepContractCompletionManifest.self, from: data),
+              marker.schemaVersion == AceStepContractCompletionManifest.currentSchemaVersion,
+              marker.repoID == AceStepDownloadPlan.mainRepository,
+              Set(marker.requiredComponents) == Set(expectedComponents) else {
+            return .incomplete("ACE-Step contract marker is invalid. Repair will verify model code and checkpoints.")
+        }
+
+        return .downloaded
+    }
+
+    private nonisolated static func nativeSnapshotStorageStatus(_ snapshotPath: URL) -> ModelStorageStatus? {
+        let inProgressURL = snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        if FileManager.default.fileExists(atPath: inProgressURL.path) {
+            return .incomplete("Native model download is still incomplete. Repair will resume and verify missing files.")
+        }
+
+        let completionURL = snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.filename)
+        guard FileManager.default.fileExists(atPath: completionURL.path) else {
+            return nil
+        }
+
+        guard let data = try? Data(contentsOf: completionURL),
+              let marker = try? JSONDecoder().decode(NativeSnapshotCompletionManifest.self, from: data),
+              marker.schemaVersion == NativeSnapshotCompletionManifest.currentSchemaVersion,
+              !marker.files.isEmpty else {
+            return .incomplete("Native model completion marker is invalid. Repair will verify and redownload missing files.")
+        }
+
+        let incompleteFiles = marker.manifestFiles.compactMap { file -> String? in
+            let fileURL = snapshotPath.appendingPathComponent(file.path)
+            return nativeSnapshotFileIsComplete(fileURL, expectedSize: file.size) ? nil : file.path
+        }
+
+        guard incompleteFiles.isEmpty else {
+            let displayedFiles = incompleteFiles.prefix(3).joined(separator: ", ")
+            let suffix = incompleteFiles.count > 3 ? " and \(incompleteFiles.count - 3) more" : ""
+            return .incomplete("Native model snapshot is incomplete: \(displayedFiles)\(suffix). Repair will redownload missing files.")
+        }
+
+        return .downloaded
+    }
+
+    private nonisolated static func nativeSnapshotFileIsComplete(_ fileURL: URL, expectedSize: Int64?) -> Bool {
+        let resolvedURL = fileURL.resolvingSymlinksInPath()
+        let pathToCheck = resolvedURL.path == fileURL.path ? fileURL.path : resolvedURL.path
+        guard FileManager.default.fileExists(atPath: pathToCheck),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: pathToCheck),
+              let fileType = attributes[.type] as? FileAttributeType,
+              fileType == .typeRegular,
+              let fileSize = attributes[.size] as? NSNumber else {
+            return false
+        }
+
+        guard let expectedSize else {
+            return fileSize.int64Value > 0
+        }
+        return fileSize.int64Value == expectedSize
     }
 
     private nonisolated static func snapshotCandidates(modelCachePath: URL, snapshotsPath: URL) -> [URL] {

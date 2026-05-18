@@ -43,8 +43,8 @@ final class RuntimeManagerTests: XCTestCase {
             "ACE-Step Python executable not found at /path/to/acestep-python. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
         )
         XCTAssertEqual(
-            RuntimeError.pythonValidationFailed("Hugging Face download runtime", "No module named 'huggingface_hub'").localizedDescription,
-            "Hugging Face download runtime is incomplete or broken. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh. No module named 'huggingface_hub'"
+            RuntimeError.pythonValidationFailed("ACE-Step download runtime", "No module named 'acestep'").localizedDescription,
+            "ACE-Step download runtime is incomplete or broken. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh. No module named 'acestep'"
         )
         XCTAssertEqual(
             RuntimeError.initializationFailed("test failure").localizedDescription,
@@ -53,11 +53,11 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     func testRuntimeErrorBridgesLocalizedDescriptionThroughError() {
-        let error: Error = RuntimeError.runtimeComponentNotFound("Hugging Face download helper", "/path/to/helper")
+        let error: Error = RuntimeError.runtimeComponentNotFound("ACE-Step download helper", "/path/to/helper")
 
         XCTAssertEqual(
             error.localizedDescription,
-            "Hugging Face download helper not found at /path/to/helper. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
+            "ACE-Step download helper not found at /path/to/helper. Rebuild the bundled runtime with ./Scripts/build-runtime-bundle.sh"
         )
     }
 
@@ -326,6 +326,157 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testHuggingFaceStorageStatusRejectsInProgressNativeSnapshot() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let defaultCheckpoints = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: defaultCheckpoints)
+        }
+
+        let modelId = "org/native-partial-model"
+        let snapshotPath = try makeNativeSnapshotDirectory(modelId: modelId, cacheRoot: cacheRoot)
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+        try Data("in-progress".utf8).write(
+            to: snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        )
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            modelId: modelId,
+            checkpointsPath: defaultCheckpoints,
+            huggingFaceCacheRoot: cacheRoot
+        ) else {
+            return XCTFail("Expected in-progress native snapshot to be incomplete")
+        }
+
+        XCTAssertTrue(message.contains("Native model download is still incomplete"))
+    }
+
+    func testHuggingFaceStorageStatusValidatesNativeCompletionManifest() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let defaultCheckpoints = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: defaultCheckpoints)
+        }
+
+        let modelId = "org/native-complete-model"
+        let snapshotPath = try makeNativeSnapshotDirectory(modelId: modelId, cacheRoot: cacheRoot)
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model-00001-of-00002.safetensors"))
+        try writeNativeCompletionMarker(
+            at: snapshotPath,
+            modelId: modelId,
+            files: [
+                HuggingFaceManifestFile(path: "config.json", size: 2, sha256: nil),
+                HuggingFaceManifestFile(path: "model-00001-of-00002.safetensors", size: 1, sha256: nil),
+                HuggingFaceManifestFile(path: "model-00002-of-00002.safetensors", size: 1, sha256: nil),
+            ]
+        )
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            modelId: modelId,
+            checkpointsPath: defaultCheckpoints,
+            huggingFaceCacheRoot: cacheRoot
+        ) else {
+            return XCTFail("Expected native snapshot with missing marker file to be incomplete")
+        }
+        XCTAssertTrue(message.contains("model-00002-of-00002.safetensors"))
+
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model-00002-of-00002.safetensors"))
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(
+                modelId: modelId,
+                checkpointsPath: defaultCheckpoints,
+                huggingFaceCacheRoot: cacheRoot
+            ),
+            .downloaded
+        )
+    }
+
+    func testAceStepStorageStatusRejectsInProgressContractMarker() throws {
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: checkpointsPath) }
+
+        for component in ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"] {
+            let componentPath = checkpointsPath.appendingPathComponent(component)
+            try FileManager.default.createDirectory(at: componentPath, withIntermediateDirectories: true)
+            try Data([1]).write(to: componentPath.appendingPathComponent("model.safetensors"))
+        }
+        try Data("in-progress".utf8).write(
+            to: checkpointsPath.appendingPathComponent(AceStepContractCompletionManifest.inProgressFilename)
+        )
+        try Data("in-progress".utf8).write(
+            to: checkpointsPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        )
+        try writeNativeCompletionMarker(
+            at: checkpointsPath,
+            modelId: "ACE-Step/Ace-Step1.5",
+            files: [
+                HuggingFaceManifestFile(path: "missing-generic-snapshot-file.json", size: 1, sha256: nil),
+            ]
+        )
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            modelId: "ACE-Step/acestep-v15-turbo-continuous",
+            checkpointsPath: checkpointsPath
+        ) else {
+            return XCTFail("Expected in-progress ACE-Step contract to be incomplete")
+        }
+        XCTAssertTrue(message.contains("ACE-Step contract validation is incomplete"))
+    }
+
+    func testAceStepStorageStatusAcceptsCompleteContractMarkerAndIgnoresGenericNativeSnapshotMarkers() throws {
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: checkpointsPath) }
+
+        for component in ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"] {
+            let componentPath = checkpointsPath.appendingPathComponent(component)
+            try FileManager.default.createDirectory(at: componentPath, withIntermediateDirectories: true)
+            try Data([1]).write(to: componentPath.appendingPathComponent("model.safetensors"))
+        }
+        try writeNativeCompletionMarker(
+            at: checkpointsPath,
+            modelId: "ACE-Step/Ace-Step1.5",
+            files: [
+                HuggingFaceManifestFile(path: "missing-generic-snapshot-file.json", size: 1, sha256: nil),
+            ]
+        )
+        try writeAceStepContractCompletionMarker(at: checkpointsPath)
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(
+                modelId: "ACE-Step/acestep-v15-turbo-continuous",
+                checkpointsPath: checkpointsPath
+            ),
+            .downloaded
+        )
+    }
+
+    func testAceStepStorageStatusRejectsInvalidContractMarker() throws {
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: checkpointsPath) }
+
+        for component in ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"] {
+            let componentPath = checkpointsPath.appendingPathComponent(component)
+            try FileManager.default.createDirectory(at: componentPath, withIntermediateDirectories: true)
+            try Data([1]).write(to: componentPath.appendingPathComponent("model.safetensors"))
+        }
+        try Data("{}".utf8).write(
+            to: checkpointsPath.appendingPathComponent(AceStepContractCompletionManifest.filename)
+        )
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            modelId: "ACE-Step/acestep-v15-turbo-continuous",
+            checkpointsPath: checkpointsPath
+        ) else {
+            return XCTFail("Expected invalid ACE-Step contract marker to be incomplete")
+        }
+        XCTAssertTrue(message.contains("ACE-Step contract marker is invalid"))
+    }
+
     func testPreferredRuntimeUsesValidInstalledRuntime() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -531,6 +682,16 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testRuntimeBundleValidityDoesNotRequireHuggingFaceDownloadHelper() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("runtime-macos-arm64")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+
+        XCTAssertTrue(RuntimeManager.isRuntimeBundleStructurallyValid(runtimeRoot))
+    }
+
     @MainActor
     func testRuntimeBootstrapInstallsWhenNoRuntimeIsActive() async throws {
         let directory = try makeTemporaryDirectory()
@@ -681,6 +842,41 @@ final class RuntimeManagerTests: XCTestCase {
         return directory
     }
 
+    private func makeNativeSnapshotDirectory(modelId: String, cacheRoot: URL) throws -> URL {
+        let modelCachePath = RuntimeManager.modelCachePath(modelId: modelId, huggingFaceCacheRoot: cacheRoot)
+        let snapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("revision")
+        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: modelCachePath.appendingPathComponent("refs"),
+            withIntermediateDirectories: true
+        )
+        try Data("revision".utf8).write(to: modelCachePath.appendingPathComponent("refs/main"))
+        return snapshotPath
+    }
+
+    private func writeNativeCompletionMarker(
+        at snapshotPath: URL,
+        modelId: String,
+        files: [HuggingFaceManifestFile]
+    ) throws {
+        let manifest = HuggingFaceManifest(
+            repoID: modelId,
+            revision: "main",
+            resolvedRevision: "revision",
+            files: files
+        )
+        let data = try JSONEncoder().encode(NativeSnapshotCompletionManifest(manifest: manifest))
+        try data.write(to: snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.filename))
+    }
+
+    private func writeAceStepContractCompletionMarker(at checkpointsPath: URL) throws {
+        let marker = AceStepContractCompletionManifest(plan: AceStepDownloadPlan(checkpointsRoot: checkpointsPath))
+        let data = try JSONEncoder().encode(marker)
+        try data.write(to: checkpointsPath.appendingPathComponent(AceStepContractCompletionManifest.filename))
+    }
+
     @MainActor
     private func waitForRuntimeUpdateState(
         _ manager: RuntimeUpdateManager,
@@ -706,7 +902,6 @@ final class RuntimeManagerTests: XCTestCase {
         )
         try writeExecutableFile(at: url.appendingPathComponent("venv/bin/python"))
         try writeExecutableFile(at: url.appendingPathComponent("acestep-venv/bin/python"))
-        FileManager.default.createFile(atPath: url.appendingPathComponent("hf_download_helper.py").path, contents: Data())
         FileManager.default.createFile(atPath: url.appendingPathComponent("acestep_download_helper.py").path, contents: Data())
         let manifest = makeRuntimeManifest(version: version, compatibilityApi: 1)
         let data = try JSONEncoder().encode(manifest)

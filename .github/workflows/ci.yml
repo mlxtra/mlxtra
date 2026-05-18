@@ -27,7 +27,6 @@ jobs:
           MLXtra/Resources/python_bridge.py
           MLXtra/Resources/acestep_bridge.py
           MLXtra/Resources/bridge_utils.py
-          MLXtra/Resources/runtime/macos-arm64/hf_download_helper.py
           MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py
           Scripts/validate-release-metadata.py
           Tests/IntegrationTests/test_all_models_integration.py

@@ -5,7 +5,9 @@ ACE-Step Model Download Helper for MLXtra
 This script properly triggers ACE-Step's model download mechanism,
 which handles the HF cache and checkpoint directory structure correctly.
 
-Usage: acestep_download_helper.py <repo_id> <local_dir>
+Usage:
+  acestep_download_helper.py <repo_id> <local_dir>
+  acestep_download_helper.py --contract <local_dir>
 """
 
 import sys
@@ -114,7 +116,77 @@ def install_huggingface_progress_hook():
     huggingface_hub.snapshot_download = snapshot_download_with_progress
 
 
+def run_contract_check(local_dir: Path) -> bool:
+    emit(
+        {
+            "type": "download.progress",
+            "status": "Verifying",
+            "description": "Checking ACE-Step checkpoint components",
+            "progress_kind": "activity",
+        }
+    )
+
+    with contextlib.redirect_stdout(sys.stderr):
+        from acestep.model_downloader import (
+            MAIN_MODEL_COMPONENTS,
+            _sync_model_code_files,
+            check_main_model_exists,
+        )
+
+    with contextlib.redirect_stdout(sys.stderr):
+        has_weights = check_main_model_exists(local_dir)
+    if not has_weights:
+        emit(
+            {
+                "type": "download.error",
+                "message": "ACE-Step checkpoints are missing required component weights",
+            }
+        )
+        return False
+
+    synced_files = []
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            for component in MAIN_MODEL_COMPONENTS:
+                synced_files.extend(_sync_model_code_files(component, local_dir))
+    except Exception as exc:
+        emit({"type": "download.error", "message": f"ACE-Step model code sync failed: {exc}"})
+        return False
+
+    with contextlib.redirect_stdout(sys.stderr):
+        verified = check_main_model_exists(local_dir)
+    if not verified:
+        emit(
+            {
+                "type": "download.error",
+                "message": "ACE-Step contract validation failed after model code sync",
+            }
+        )
+        return False
+
+    send_json(
+        {
+            "type": "download.status",
+            "status": "downloaded",
+            "path": str(local_dir),
+            "components": MAIN_MODEL_COMPONENTS,
+            "synced_files": sorted(set(synced_files)),
+        }
+    )
+    emit({"type": "download.complete", "repo_id": "ACE-Step/Ace-Step1.5", "path": str(local_dir)})
+    return True
+
+
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "--contract":
+        if len(sys.argv) < 3:
+            emit({"type": "download.error", "message": "Usage: acestep_download_helper.py --contract <local_dir>"})
+            sys.exit(1)
+
+        local_dir = Path(sys.argv[2]).resolve()
+        log(f"Running contract validation: local_dir={local_dir}")
+        sys.exit(0 if run_contract_check(local_dir) else 1)
+
     if len(sys.argv) < 3:
         emit({"type": "download.error", "message": "Usage: acestep_download_helper.py <repo_id> <local_dir>"})
         sys.exit(1)

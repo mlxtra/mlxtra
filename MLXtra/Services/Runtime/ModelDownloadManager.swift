@@ -180,6 +180,7 @@ final class ModelDownloadManager: ObservableObject {
     @Published private(set) var states: [String: DownloadState] = [:]
 
     private let runtimeManager = RuntimeManager()
+    private let nativeDownloader: NativeModelDownloadService
     private let checkpointsPathOverride: URL?
     private let huggingFaceCacheRootOverride: URL?
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -194,10 +195,12 @@ final class ModelDownloadManager: ObservableObject {
     init(
         refreshStatusesOnInit: Bool = true,
         checkpointsPathOverride: URL? = nil,
-        huggingFaceCacheRootOverride: URL? = nil
+        huggingFaceCacheRootOverride: URL? = nil,
+        nativeDownloader: NativeModelDownloadService = NativeModelDownloadService()
     ) {
         self.checkpointsPathOverride = checkpointsPathOverride
         self.huggingFaceCacheRootOverride = huggingFaceCacheRootOverride
+        self.nativeDownloader = nativeDownloader
 #if DEBUG
         usesUITestDownloadStates = ProcessInfo.processInfo.environment["MLXTRA_UI_TEST_DOWNLOAD_STATES"] == "1"
         if usesUITestDownloadStates {
@@ -312,7 +315,14 @@ final class ModelDownloadManager: ObservableObject {
 
         errorTracker.clearErrorReceived(for: model.id)
         stopReasons[model.id] = nil
-        states[model.id] = .downloading(states[model.id]?.progress ?? lastProgress[model.id])
+        let initialProgress: DownloadProgress?
+        if states[model.id]?.isPaused == true {
+            initialProgress = states[model.id]?.progress ?? lastProgress[model.id]
+        } else {
+            lastProgress[model.id] = nil
+            initialProgress = nil
+        }
+        states[model.id] = .downloading(initialProgress)
         tasks[model.id] = Task { [weak self] in
             guard let self else { return }
 
@@ -334,6 +344,7 @@ final class ModelDownloadManager: ObservableObject {
                     case .pause:
                         states[model.id] = .paused(lastProgress[model.id])
                     case .cancel:
+                        await cleanupNativePartialDownloads(for: model)
                         lastProgress[model.id] = nil
                         states[model.id] = .notDownloaded
                     }
@@ -473,8 +484,6 @@ final class ModelDownloadManager: ObservableObject {
             }
         } else {
             tasks[model.id]?.cancel()
-            tasks[model.id] = nil
-            stopReasons[model.id] = nil
         }
     }
 
@@ -581,13 +590,51 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     private func runAceStepDownload(model: DownloadableModel) async throws {
+        let modelId = model.id
+        let components = model.source.components.isEmpty
+            ? AceStepDownloadPlan.requiredComponents
+            : model.source.components
+        let plan = AceStepDownloadPlan(
+            revision: model.source.revision ?? "main",
+            requiredComponents: components,
+            checkpointsRoot: checkpointsPath
+        )
+
+        try await nativeDownloader.downloadAceStepMainSnapshot(plan: plan) { [weak self] progress in
+            await self?.handleNativeDownloadProgress(progress, modelId: modelId)
+        }
+        try Task.checkCancellation()
+        try await runAceStepContractValidation(model: model, plan: plan)
+        try nativeDownloader.markAceStepContractComplete(plan: plan)
+    }
+
+    private func cleanupNativePartialDownloads(for model: DownloadableModel) async {
+        let roots: [URL]
+        if model.source.usesComponentBundle {
+            roots = [checkpointsPath]
+        } else {
+            roots = [
+                RuntimeManager.modelCachePath(
+                    modelId: model.source.downloadRepository ?? model.modelId,
+                    huggingFaceCacheRoot: huggingFaceCacheRoot
+                )
+            ]
+        }
+        let nativeDownloader = self.nativeDownloader
+        await Task.detached(priority: .utility) {
+            for root in roots {
+                try? nativeDownloader.removePartialDownloads(at: root)
+            }
+        }.value
+    }
+
+    private func runAceStepContractValidation(model: DownloadableModel, plan: AceStepDownloadPlan) async throws {
         let helperPath = runtimeManager.acestepDownloadHelperPath()
         let pythonPath = runtimeManager.acestepPythonExecutablePath()
-        let localDir = runtimeManager.checkpointsPath.path
+        let localDir = plan.checkpointsRoot.path
         let modelId = model.id
-        let repoId = model.source.downloadRepository ?? model.modelId
 
-        DownloadDiagnostics.log("[ModelDownloadManager] Running ACE-Step download helper with Python at \(pythonPath.path)")
+        DownloadDiagnostics.log("[ModelDownloadManager] Running ACE-Step contract validation with Python at \(pythonPath.path)")
 
         var downloadEnv = bundledPythonEnvironment()
         downloadEnv["ACESTEP_CHECKPOINTS_DIR"] = localDir
@@ -595,13 +642,13 @@ final class ModelDownloadManager: ObservableObject {
         let result = try await runDownloadHelper(
             modelId: modelId,
             executableURL: pythonPath,
-            arguments: [helperPath.path, repoId, localDir],
+            arguments: [helperPath.path, "--contract", localDir],
             environment: downloadEnv
         )
 
-        DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step helper output: \(result.output.prefix(500))")
+        DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step contract output: \(result.output.prefix(500))")
         if !result.errorOutput.isEmpty {
-            DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step helper stderr: \(result.errorOutput.prefix(500))")
+            DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step contract stderr: \(result.errorOutput.prefix(500))")
         }
 
         try finishDownloadHelperRun(
@@ -612,23 +659,36 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     private func runSnapshotDownload(model: DownloadableModel) async throws {
-        let helperPath = runtimeManager.huggingFaceDownloadHelperPath()
-        let pythonPath = runtimeManager.pythonExecutablePath()
         let modelId = model.id
         let repoId = model.source.downloadRepository ?? model.modelId
+        let revision = model.source.revision ?? "main"
 
-        let result = try await runDownloadHelper(
-            modelId: modelId,
-            executableURL: pythonPath,
-            arguments: [helperPath.path, repoId],
-            environment: bundledPythonEnvironment()
+        try await nativeDownloader.downloadHuggingFaceSnapshot(
+            repoID: repoId,
+            revision: revision,
+            cacheRoot: huggingFaceCacheRoot
+        ) { [weak self] progress in
+            await self?.handleNativeDownloadProgress(progress, modelId: modelId)
+        }
+    }
+
+    private func handleNativeDownloadProgress(_ nativeProgress: NativeModelDownloadProgress, modelId: String) {
+        guard stopReasons[modelId] == nil,
+              states[modelId]?.isTerminal != true else {
+            return
+        }
+
+        let progress = DownloadProgress(
+            status: nativeProgress.status,
+            description: nativeProgress.description,
+            unit: nativeProgress.downloadedBytes == nil ? nil : "B",
+            progressKind: nativeProgress.downloadedBytes == nil ? nil : "bytes",
+            downloadedBytes: nativeProgress.downloadedBytes,
+            totalBytes: nativeProgress.totalBytes,
+            percent: Self.monotonicPercent(nativeProgress.percent, previous: lastProgress[modelId]?.percent)
         )
-        let errorOutput = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        try finishDownloadHelperRun(
-            result,
-            modelId: modelId,
-            failureMessage: errorOutput.isEmpty ? "huggingface_hub exited with status \(result.terminationStatus)" : errorOutput
-        )
+        lastProgress[modelId] = progress
+        states[modelId] = .downloading(progress)
     }
 
     private func runDownloadHelper(
