@@ -573,6 +573,50 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testRuntimeBackgroundBootstrapInstallsAfterCallerReturns() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("runtime-macos-arm64")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveURL = directory.appendingPathComponent("runtime-macos-arm64-0.1.1.zip")
+        try makeZipArchive(from: runtimeRoot, at: archiveURL)
+
+        let installRoot = directory.appendingPathComponent("installed-runtimes")
+        let checksum = try SHA256Checksum.hexDigest(for: archiveURL)
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(
+                    version: "0.1.1",
+                    url: archiveURL,
+                    sha256: checksum,
+                    sizeBytes: try archiveSizeBytes(archiveURL)
+                )
+            ]
+        )
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { archive in
+                try RuntimeManager.installRuntimeArchive(archive, installRoot: installRoot)
+            }
+        )
+
+        manager.bootstrapStableRuntimeInBackground(channelURL: channelURL)
+
+        let didInstall = await waitForRuntimeUpdateState(manager) { state in
+            state == .installed("0.1.1")
+        }
+        XCTAssertTrue(didInstall)
+        XCTAssertTrue(
+            RuntimeManager.isRuntimeBundleStructurallyValid(
+                installRoot.appendingPathComponent("current")
+            )
+        )
+    }
+
+    @MainActor
     func testRuntimeBootstrapDoesNotReinstallCurrentRuntime() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -635,6 +679,22 @@ final class RuntimeManagerTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    @MainActor
+    private func waitForRuntimeUpdateState(
+        _ manager: RuntimeUpdateManager,
+        timeout: TimeInterval = 2,
+        predicate: (RuntimeUpdateManager.InstallState) -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate(manager.state) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return predicate(manager.state)
     }
 
     private func makeRuntimeBundle(at url: URL, version: String) throws {

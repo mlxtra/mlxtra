@@ -170,6 +170,38 @@ enum SHA256Checksum {
     }
 }
 
+private final class RuntimeArchiveDownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let expectedBytes: Int64?
+    private let progressHandler: @Sendable (Double) -> Void
+
+    init(expectedBytes: Int64?, progressHandler: @escaping @Sendable (Double) -> Void) {
+        self.expectedBytes = expectedBytes
+        self.progressHandler = progressHandler
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedBytes ?? 0
+        guard expected > 0 else {
+            return
+        }
+
+        let progress = min(max(Double(totalBytesWritten) / Double(expected), 0), 1)
+        progressHandler(progress)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {}
+}
+
 @MainActor
 final class RuntimeUpdateManager: ObservableObject {
     static let shared = RuntimeUpdateManager()
@@ -188,6 +220,7 @@ final class RuntimeUpdateManager: ObservableObject {
 
     private let currentManifestProvider: () -> RuntimeManifest?
     private let runtimeArchiveInstaller: @Sendable (URL) throws -> URL
+    private var backgroundTask: Task<Void, Never>?
 
     init(
         currentManifestProvider: @escaping () -> RuntimeManifest? = { RuntimeManager.activeRuntimeManifest() },
@@ -202,6 +235,21 @@ final class RuntimeUpdateManager: ObservableObject {
             return asset
         }
         return nil
+    }
+
+    func bootstrapStableRuntimeInBackground(
+        channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
+        reportFailures: Bool = false
+    ) {
+        startBackgroundTask {
+            await $0.bootstrapStableRuntimeIfNeeded(channelURL: channelURL, reportFailures: reportFailures)
+        }
+    }
+
+    func installRuntimeInBackground(_ asset: RuntimeReleaseAsset) {
+        startBackgroundTask {
+            await $0.installRuntime(asset)
+        }
     }
 
     func bootstrapStableRuntimeIfNeeded(
@@ -241,6 +289,8 @@ final class RuntimeUpdateManager: ObservableObject {
             } else {
                 state = .idle
             }
+        } catch is CancellationError {
+            state = .idle
         } catch {
             state = reportFailures ? .failed(error.localizedDescription) : .idle
         }
@@ -251,7 +301,7 @@ final class RuntimeUpdateManager: ObservableObject {
             return
         }
 
-        state = .installing(nil)
+        state = asset.url.isFileURL || asset.sizeBytes == nil ? .installing(nil) : .installing(0)
         do {
             let archiveURL = try await fetchRuntimeArchive(asset)
             let expectedSHA256 = asset.sha256
@@ -264,8 +314,36 @@ final class RuntimeUpdateManager: ObservableObject {
                 )
             }.value
             state = .installed(runtimeVersion)
+        } catch is CancellationError {
+            state = .idle
         } catch {
             state = .failed(error.localizedDescription)
+        }
+    }
+
+    private func updateRuntimeDownloadProgress(_ progress: Double) {
+        guard case .installing = state else {
+            return
+        }
+        state = .installing(progress)
+    }
+
+    private func startBackgroundTask(_ operation: @escaping @MainActor (RuntimeUpdateManager) async -> Void) {
+        if let backgroundTask, !backgroundTask.isCancelled {
+            return
+        }
+
+        switch state {
+        case .checking, .installing:
+            return
+        default:
+            break
+        }
+
+        backgroundTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await operation(self)
+            self.backgroundTask = nil
         }
     }
 
@@ -304,7 +382,14 @@ final class RuntimeUpdateManager: ObservableObject {
             return asset.url
         }
 
-        let (downloadURL, _) = try await URLSession.shared.download(from: asset.url)
+        let progressDelegate = RuntimeArchiveDownloadProgressDelegate(expectedBytes: asset.sizeBytes) { [weak self] progress in
+            Task { @MainActor in
+                self?.updateRuntimeDownloadProgress(progress)
+            }
+        }
+        let (downloadURL, _) = try await URLSession.shared.download(from: asset.url, delegate: progressDelegate)
+        updateRuntimeDownloadProgress(1)
+
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("MLXtra-runtime-\(UUID().uuidString)")
             .appendingPathExtension(asset.url.pathExtension.isEmpty ? "zip" : asset.url.pathExtension)

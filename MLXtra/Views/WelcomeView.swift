@@ -3,9 +3,7 @@ import SwiftUI
 
 struct WelcomeView: View {
     @ObservedObject var viewModel: ChatViewModel
-    @Environment(\.openSettings) private var openSettings
-    @AppStorage(PromptConfiguration.hasSeenFirstRunGuideKey) private var hasSeenFirstRunGuide = false
-    @AppStorage("MLXtra.pendingDownloadModelId") private var pendingDownloadModelId = ""
+    @StateObject private var runtimeUpdateManager = RuntimeUpdateManager.shared
     @State private var welcomeMessage: String = ""
 
     private let welcomeMessages = [
@@ -41,22 +39,9 @@ struct WelcomeView: View {
                 }
                 .frame(maxWidth: MLXtraDesignSystem.Layout.messageMaxWidth)
 
-                if !hasSeenFirstRunGuide {
-                    FirstRunGuideView(
-                        modelName: viewModel.activeModelProfile.name,
-                        onOpenModels: {
-                            pendingDownloadModelId = viewModel.activeModelProfile.modelId
-                            openSettings()
-                        },
-                        onDeepResearch: {
-                            viewModel.selectTool(.research)
-                            hasSeenFirstRunGuide = true
-                        },
-                        onDismiss: {
-                            hasSeenFirstRunGuide = true
-                        }
-                    )
-                    .frame(maxWidth: MLXtraDesignSystem.Layout.messageMaxWidth)
+                if shouldShowRuntimeSetupStatus {
+                    RuntimeSetupStatusView(runtimeUpdateManager: runtimeUpdateManager, isCompact: true)
+                        .frame(maxWidth: MLXtraDesignSystem.Layout.messageMaxWidth)
                 }
 
                 Spacer(minLength: MLXtraDesignSystem.Spacing.loose)
@@ -101,6 +86,19 @@ struct WelcomeView: View {
         }
 
         welcomeMessage = newMessage
+    }
+
+    private var shouldShowRuntimeSetupStatus: Bool {
+        guard RuntimeManager.activeRuntimeManifest() == nil else {
+            return false
+        }
+
+        switch runtimeUpdateManager.state {
+        case .idle, .checking, .available, .installing, .failed:
+            return true
+        case .installed:
+            return false
+        }
     }
 }
 
@@ -266,59 +264,6 @@ private struct WelcomePromptChipButtonStyle: ButtonStyle {
         return colorScheme == .dark
             ? Color.white.opacity(0.14)
             : MLXtraDesignSystem.Surface.hairline
-    }
-}
-
-private struct FirstRunGuideView: View {
-    let modelName: String
-    let onOpenModels: () -> Void
-    let onDeepResearch: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 30, height: 30)
-                .designTintSurface(Color.accentColor, cornerRadius: MLXtraDesignSystem.Radius.control)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Start with \(modelName)")
-                    .font(MLXtraDesignSystem.Typography.compactBodySemibold)
-                Text("Download once, then chat locally. Research uses live web results when selected.")
-                    .font(MLXtraDesignSystem.Typography.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 12)
-
-            Button {
-                onOpenModels()
-            } label: {
-                Label("Open Models", systemImage: "square.grid.2x2")
-            }
-            .buttonStyle(.borderedProminent)
-
-            Button {
-                onDeepResearch()
-            } label: {
-                Label("Research", systemImage: "magnifyingglass")
-            }
-            .buttonStyle(.bordered)
-
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .frame(width: 24, height: 24)
-            }
-            .buttonStyle(.borderless)
-            .help("Dismiss")
-        }
-        .padding(12)
-        .designPanelSurface(cornerRadius: MLXtraDesignSystem.Radius.card)
     }
 }
 

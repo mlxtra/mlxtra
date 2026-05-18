@@ -70,6 +70,10 @@
 		8A0500010000000000000008 /* ComposerToolSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001008 /* ComposerToolSelector.swift */; };
 		8A0500010000000000000009 /* ComposerInputViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001009 /* ComposerInputViews.swift */; };
 		8A0600010000000000000001 /* QuickStudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0600010000000000001001 /* QuickStudioView.swift */; };
+		8A0800010000000000000001 /* FirstRunExperienceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0800010000000000001001 /* FirstRunExperienceView.swift */; };
+		8A0800010000000000000002 /* FirstRunExperienceComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0800010000000000001002 /* FirstRunExperienceComponents.swift */; };
+		8A0800010000000000000003 /* RuntimeSetupStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0800010000000000001003 /* RuntimeSetupStatusView.swift */; };
+		8A0800010000000000000004 /* FirstRunStarterModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0800010000000000001004 /* FirstRunStarterModel.swift */; };
 		8A050001000000000000000A /* SettingsModelSorting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100A /* SettingsModelSorting.swift */; };
 		8A050001000000000000000B /* SettingsModelTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100B /* SettingsModelTypes.swift */; };
 		8A050001000000000000000C /* SettingsRuntimeSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A050001000000000000100C /* SettingsRuntimeSections.swift */; };
@@ -161,6 +165,10 @@
 		8A0500010000000000001008 /* ComposerToolSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerToolSelector.swift; sourceTree = "<group>"; };
 		8A0500010000000000001009 /* ComposerInputViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerInputViews.swift; sourceTree = "<group>"; };
 		8A0600010000000000001001 /* QuickStudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickStudioView.swift; sourceTree = "<group>"; };
+		8A0800010000000000001001 /* FirstRunExperienceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstRunExperienceView.swift; sourceTree = "<group>"; };
+		8A0800010000000000001002 /* FirstRunExperienceComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstRunExperienceComponents.swift; sourceTree = "<group>"; };
+		8A0800010000000000001003 /* RuntimeSetupStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeSetupStatusView.swift; sourceTree = "<group>"; };
+		8A0800010000000000001004 /* FirstRunStarterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstRunStarterModel.swift; sourceTree = "<group>"; };
 		8A050001000000000000100A /* SettingsModelSorting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelSorting.swift; sourceTree = "<group>"; };
 		8A050001000000000000100B /* SettingsModelTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModelTypes.swift; sourceTree = "<group>"; };
 		8A050001000000000000100C /* SettingsRuntimeSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRuntimeSections.swift; sourceTree = "<group>"; };
@@ -235,6 +243,10 @@
 				8A0100010000000000001003 /* SidebarView.swift */,
 				8A0100010000000000001004 /* MainContentView.swift */,
 				8A0100010000000000001005 /* WelcomeView.swift */,
+				8A0800010000000000001001 /* FirstRunExperienceView.swift */,
+				8A0800010000000000001002 /* FirstRunExperienceComponents.swift */,
+				8A0800010000000000001003 /* RuntimeSetupStatusView.swift */,
+				8A0800010000000000001004 /* FirstRunStarterModel.swift */,
 				8A0100010000000000001006 /* ChatView.swift */,
 				8A0100010000000000001019 /* ComposerView.swift */,
 				8A0500010000000000001006 /* ComposerDraftControls.swift */,
@@ -534,6 +546,10 @@
 				8A0100010000000000000003 /* SidebarView.swift in Sources */,
 				8A0100010000000000000004 /* MainContentView.swift in Sources */,
 				8A0100010000000000000005 /* WelcomeView.swift in Sources */,
+				8A0800010000000000000001 /* FirstRunExperienceView.swift in Sources */,
+				8A0800010000000000000002 /* FirstRunExperienceComponents.swift in Sources */,
+				8A0800010000000000000003 /* RuntimeSetupStatusView.swift in Sources */,
+				8A0800010000000000000004 /* FirstRunStarterModel.swift in Sources */,
 				8A0100010000000000000006 /* ChatView.swift in Sources */,
 				8A0100010000000000000019 /* ComposerView.swift in Sources */,
 				8A0100010000000000000008 /* MessageBubbleView.swift in Sources */,

@@ -5,9 +5,12 @@ import AppKit
 
 struct ContentView: View {
     @ObservedObject private var viewModel: ChatViewModel
+    @StateObject private var runtimeUpdateManager = RuntimeUpdateManager.shared
+    @StateObject private var downloadManager = ModelDownloadManager.shared
     @State private var columnVisibility: NavigationSplitViewVisibility
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(PromptConfiguration.hasSeenFirstRunGuideKey) private var hasSeenFirstRunGuide = false
     @AppStorage("MLXtra.pendingDownloadModelId") private var pendingDownloadModelId = ""
 
     init(viewModel: ChatViewModel = ChatViewModel()) {
@@ -41,42 +44,7 @@ struct ContentView: View {
         GeometryReader { proxy in
             content(sidebarColumn: sidebarColumnMetrics(for: proxy.size.width))
         }
-    }
-
-    @ViewBuilder
-    private func content(sidebarColumn: SidebarColumnMetrics) -> some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(viewModel: viewModel)
-                .navigationSplitViewColumnWidth(
-                    min: sidebarColumn.minWidth,
-                    ideal: sidebarColumn.idealWidth,
-                    max: sidebarColumn.maxWidth
-                )
-        } detail: {
-            MainContentView(viewModel: viewModel)
-                .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        if columnVisibility == .detailOnly {
-                            Button(action: viewModel.createNewChat) {
-                                Image(systemName: "square.and.pencil")
-                                    .font(.system(size: MLXtraDesignSystem.Icon.large, weight: .regular))
-                                    .foregroundStyle(.secondary)
-                                    .frame(
-                                        width: MLXtraDesignSystem.Icon.toolbarButton,
-                                        height: MLXtraDesignSystem.Icon.toolbarButton
-                                    )
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .help("New chat")
-                            .accessibilityLabel("New chat")
-                            .accessibilityIdentifier("toolbar.newChat")
-                        }
-                    }
-                }
-        }
-        .navigationSplitViewStyle(.balanced)
-        .navigationTitle(windowTitle)
+        .navigationTitle(shouldShowFirstRunExperience ? "MLXtra" : windowTitle)
         .focusedSceneValue(\.chatCommandActions, chatCommandActions)
         .onChange(of: viewModel.modelDownloadRequest) { _, requestedModel in
             guard let requestedModel else { return }
@@ -89,11 +57,107 @@ struct ContentView: View {
             applyUITestWindowSizeIfNeeded()
 #endif
             viewModel.refreshLocalEngineDownloadStatus()
+            startPendingModelDownloadIfReady()
+        }
+        .onChange(of: pendingDownloadModelId) { _, _ in
+            startPendingModelDownloadIfReady()
+        }
+        .onChange(of: runtimeUpdateManager.state) { _, _ in
+            startPendingModelDownloadIfReady()
+        }
+        .onChange(of: downloadManager.states) { _, _ in
+            startPendingModelDownloadIfReady()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 viewModel.refreshLocalEngineDownloadStatus()
+                startPendingModelDownloadIfReady()
             }
+        }
+    }
+
+    @ViewBuilder
+    private func content(sidebarColumn: SidebarColumnMetrics) -> some View {
+        if shouldShowFirstRunExperience {
+            FirstRunExperienceView(
+                runtimeUpdateManager: runtimeUpdateManager,
+                starterModels: FirstRunStarterModel.recommended(),
+                onOpenModel: openModelSetup,
+                onOpenModels: openActiveModelSetup,
+                onContinue: {
+                    hasSeenFirstRunGuide = true
+                }
+            )
+        } else {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                SidebarView(viewModel: viewModel)
+                    .navigationSplitViewColumnWidth(
+                        min: sidebarColumn.minWidth,
+                        ideal: sidebarColumn.idealWidth,
+                        max: sidebarColumn.maxWidth
+                    )
+            } detail: {
+                MainContentView(viewModel: viewModel)
+                    .toolbar {
+                        ToolbarItem(placement: .navigation) {
+                            if columnVisibility == .detailOnly {
+                                Button(action: viewModel.createNewChat) {
+                                    Image(systemName: "square.and.pencil")
+                                        .font(.system(size: MLXtraDesignSystem.Icon.large, weight: .regular))
+                                        .foregroundStyle(.secondary)
+                                        .frame(
+                                            width: MLXtraDesignSystem.Icon.toolbarButton,
+                                            height: MLXtraDesignSystem.Icon.toolbarButton
+                                        )
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("New chat")
+                                .accessibilityLabel("New chat")
+                                .accessibilityIdentifier("toolbar.newChat")
+                            }
+                        }
+                    }
+            }
+            .navigationSplitViewStyle(.balanced)
+        }
+    }
+
+    private var shouldShowFirstRunExperience: Bool {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["MLXTRA_UI_TEST_MODE"] == "1" {
+            return false
+        }
+#endif
+        return !hasSeenFirstRunGuide
+    }
+
+    private func openActiveModelSetup() {
+        pendingDownloadModelId = viewModel.activeModelProfile.modelId
+        openSettings()
+    }
+
+    private func openModelSetup(_ model: DownloadableModel) {
+        pendingDownloadModelId = model.modelId
+        openSettings()
+    }
+
+    private func startPendingModelDownloadIfReady() {
+        guard !pendingDownloadModelId.isEmpty else { return }
+        guard let model = DownloadableModel.embeddedModel(modelId: pendingDownloadModelId) else {
+            return
+        }
+
+        switch downloadManager.state(for: model) {
+        case .downloaded:
+            pendingDownloadModelId = ""
+        case .notDownloaded, .failed:
+            guard model.isRuntimeCompatible else {
+                return
+            }
+            downloadManager.download(model)
+        case .downloading, .paused:
+            return
         }
     }
 

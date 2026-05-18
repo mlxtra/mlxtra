@@ -126,7 +126,7 @@ struct ModelManagerRow: View {
     private var actionView: some View {
         if !model.isRuntimeCompatible {
             VStack(alignment: .trailing, spacing: 6) {
-                Label("Runtime update required", systemImage: "arrow.triangle.2.circlepath")
+                Label("Setup required", systemImage: "arrow.triangle.2.circlepath")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
 
@@ -142,38 +142,52 @@ struct ModelManagerRow: View {
     private var runtimeAction: some View {
         switch runtimeUpdateManager.state {
         case .available(let asset):
-            runtimeInstallingStatus("Installing")
+            runtimeSetupStatus(isPendingDownload ? "Queued" : "Setting up")
                 .task(id: asset.version) {
-                    await runtimeUpdateManager.installRuntime(asset)
+                    runtimeUpdateManager.installRuntimeInBackground(asset)
                 }
         case .installing:
-            runtimeInstallingStatus("Installing")
+            if isPendingDownload {
+                runtimeSetupStatus("Queued")
+            } else {
+                queueDownloadButton
+            }
         case .checking:
-            runtimeInstallingStatus("Checking")
+            if isPendingDownload {
+                runtimeSetupStatus("Queued")
+            } else {
+                queueDownloadButton
+            }
         case .failed:
             Button {
-                Task {
-                    await runtimeUpdateManager.bootstrapStableRuntimeIfNeeded(reportFailures: true)
-                }
+                runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
             } label: {
-                Label("Retry Runtime", systemImage: "arrow.clockwise")
+                Label("Retry Setup", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
         case .idle, .installed:
             Button {
-                Task {
-                    await runtimeUpdateManager.bootstrapStableRuntimeIfNeeded(reportFailures: true)
-                }
+                onDownload()
             } label: {
-                Label("Check Runtime", systemImage: "arrow.clockwise")
+                Label("Queue Download", systemImage: "arrow.down.circle")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
     }
 
-    private func runtimeInstallingStatus(_ text: String) -> some View {
+    private var queueDownloadButton: some View {
+        Button {
+            onDownload()
+        } label: {
+            Label("Queue Download", systemImage: "arrow.down.circle")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    private func runtimeSetupStatus(_ text: String) -> some View {
         HStack(spacing: 6) {
             ProgressView()
                 .controlSize(.small)

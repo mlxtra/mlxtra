@@ -100,6 +100,28 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertTrue(embedded.contains { $0.modality == .music })
     }
 
+    func testFirstRunStarterModelsIncludeAllModalities() {
+        let starterModels = FirstRunStarterModel.recommended()
+        let modalities = Set(starterModels.map { $0.model.modality })
+        let ids = starterModels.map(\.id)
+
+        XCTAssertEqual(modalities, Set(ModelModality.allCases))
+        XCTAssertEqual(ids.count, Set(ids).count)
+    }
+
+    func testFirstRunBestChatModelUsesHardwareRecommendation() {
+        let hardwareMemoryGB = 8.0
+        let starterModel = FirstRunStarterModel.bestChatForThisMac(hardwareMemoryGB: hardwareMemoryGB)
+        let expectedProfile = ModelCapabilityProfile.bestProfile(
+            for: .vision,
+            hardwareMemoryGB: hardwareMemoryGB
+        )
+
+        XCTAssertEqual(starterModel?.title, "Chat")
+        XCTAssertEqual(starterModel?.badge, "Best for this Mac")
+        XCTAssertEqual(starterModel?.model.modelId, expectedProfile?.modelId)
+    }
+
     func testEmbeddedModelsHaveUniqueIds() {
         let embedded = DownloadableModel.embedded
         let ids = embedded.map { $0.id }

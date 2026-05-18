@@ -64,16 +64,19 @@ struct SettingsView: View {
         .onAppear {
             clearInitialFocus()
             downloadManager.refreshStatuses()
-            clearPendingDownloadIfReady()
+            startPendingDownloadIfReady()
         }
         .onChange(of: downloadManager.states) { _, _ in
-            clearPendingDownloadIfReady()
+            startPendingDownloadIfReady()
+        }
+        .onChange(of: runtimeUpdateManager.state) { _, _ in
+            startPendingDownloadIfReady()
         }
         .task {
             await catalogService.refreshFromStableChannel()
-            await runtimeUpdateManager.bootstrapStableRuntimeIfNeeded(reportFailures: false)
+            runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: false)
             downloadManager.refreshStatuses()
-            clearPendingDownloadIfReady()
+            startPendingDownloadIfReady()
         }
         .alert(item: $removalCandidate) { model in
             Alert(
@@ -215,7 +218,7 @@ struct SettingsView: View {
                                 setDefaultModel(model, for: selectedModelMode)
                             },
                             onDownload: {
-                                downloadManager.download(model)
+                                requestModelDownload(model)
                             },
                             onPause: {
                                 downloadManager.pause(model)
@@ -336,7 +339,11 @@ struct SettingsView: View {
 
             VStack(spacing: 0) {
                 ForEach(models) { model in
-                    ModelDownloadRow(model: model, downloadManager: downloadManager)
+                    ModelDownloadRow(
+                        model: model,
+                        downloadManager: downloadManager,
+                        runtimeUpdateManager: runtimeUpdateManager
+                    )
                         .id(model.modelId)
 
                     if model.id != models.last?.id {
@@ -392,14 +399,38 @@ struct SettingsView: View {
         return model
     }
 
-    private func clearPendingDownloadIfReady() {
-        guard !pendingDownloadModelId.isEmpty,
-              let model = catalogModels.first(where: { $0.modelId == pendingDownloadModelId })
-                ?? DownloadableModel.embeddedModel(modelId: pendingDownloadModelId),
-              downloadManager.state(for: model) == .downloaded else {
+    private func requestModelDownload(_ model: DownloadableModel) {
+        guard model.isRuntimeCompatible else {
+            pendingDownloadModelId = model.modelId
+            runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
             return
         }
-        pendingDownloadModelId = ""
+
+        if pendingDownloadModelId == model.modelId {
+            pendingDownloadModelId = ""
+        }
+        downloadManager.download(model)
+    }
+
+    private func startPendingDownloadIfReady() {
+        guard !pendingDownloadModelId.isEmpty else { return }
+        guard let model = catalogModels.first(where: { $0.modelId == pendingDownloadModelId })
+                ?? DownloadableModel.embeddedModel(modelId: pendingDownloadModelId) else {
+            pendingDownloadModelId = ""
+            return
+        }
+
+        switch downloadManager.state(for: model) {
+        case .downloaded:
+            pendingDownloadModelId = ""
+        case .notDownloaded, .failed:
+            guard model.isRuntimeCompatible else {
+                return
+            }
+            downloadManager.download(model)
+        case .downloading, .paused:
+            return
+        }
     }
 
     private func clearInitialFocus() {

@@ -179,6 +179,7 @@ struct ToolDefinitionsEditorSection: View {
 struct ModelDownloadRow: View {
     let model: DownloadableModel
     @ObservedObject var downloadManager: ModelDownloadManager
+    @ObservedObject var runtimeUpdateManager: RuntimeUpdateManager
     @AppStorage("MLXtra.pendingDownloadModelId") private var pendingDownloadModelId = ""
 
     private var isPendingDownload: Bool {
@@ -240,12 +241,23 @@ struct ModelDownloadRow: View {
     private var statusView: some View {
         if !model.isRuntimeCompatible {
             VStack(alignment: .trailing, spacing: 6) {
-                Label("Runtime update required", systemImage: "arrow.triangle.2.circlepath")
+                Label("Setup required", systemImage: "arrow.triangle.2.circlepath")
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
-                Text("Requires runtime \(model.runtime.minVersion)+")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+
+                if isPendingDownload {
+                    Label("Queued", systemImage: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button {
+                        requestDownload()
+                    } label: {
+                        Label("Queue Download", systemImage: "arrow.down.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
             .accessibilityIdentifier("settings.modelState.runtimeRequired")
         } else {
@@ -259,7 +271,7 @@ struct ModelDownloadRow: View {
                     }
 
                     Button {
-                        downloadManager.download(model)
+                        requestDownload()
                     } label: {
                         Label("Download", systemImage: "arrow.down.circle")
                     }
@@ -367,7 +379,7 @@ struct ModelDownloadRow: View {
                         .lineLimit(3)
 
                     Button {
-                        downloadManager.download(model)
+                        requestDownload()
                     } label: {
                         Label(failedState.recoveryActionTitle, systemImage: failedState.recoveryActionIcon)
                     }
@@ -389,6 +401,19 @@ struct ModelDownloadRow: View {
     private var modelFit: ModelFit {
         ModelCapabilityProfile.embeddedProfile(modelId: model.modelId)?.fit()
             ?? ModelFit.classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: AIModel.currentHardwareMemoryGB)
+    }
+
+    private func requestDownload() {
+        guard model.isRuntimeCompatible else {
+            pendingDownloadModelId = model.modelId
+            runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
+            return
+        }
+
+        if pendingDownloadModelId == model.modelId {
+            pendingDownloadModelId = ""
+        }
+        downloadManager.download(model)
     }
 }
 

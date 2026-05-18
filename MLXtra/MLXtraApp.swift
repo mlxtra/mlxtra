@@ -37,7 +37,7 @@ struct MLXtraApp: App {
             return CGSize(width: width, height: height)
         }
 #endif
-        return CGSize(width: 1200, height: 700)
+        return CGSize(width: 1040, height: 660)
     }
 
 }
@@ -85,9 +85,7 @@ private final class MLXtraApplicationDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        Task {
-            await RuntimeUpdateManager.shared.bootstrapStableRuntimeIfNeeded(reportFailures: false)
-        }
+        RuntimeUpdateManager.shared.bootstrapStableRuntimeInBackground(reportFailures: false)
     }
 }
 

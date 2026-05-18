@@ -9,7 +9,7 @@ struct RuntimeUpdateSection: View {
             Color.clear
                 .frame(height: 0)
                 .task(id: asset.version) {
-                    await manager.installRuntime(asset)
+                    manager.installRuntimeInBackground(asset)
                 }
         case .installing:
             updateCard(
@@ -38,9 +38,7 @@ struct RuntimeUpdateSection: View {
                 tint: .orange
             ) {
                 Button {
-                    Task {
-                        await manager.bootstrapStableRuntimeIfNeeded(reportFailures: true)
-                    }
+                    manager.bootstrapStableRuntimeInBackground(reportFailures: true)
                 } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
                 }
