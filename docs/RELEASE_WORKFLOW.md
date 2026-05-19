@@ -305,11 +305,12 @@ internal private-repository test, pass `--allow-private`; do not use that for
 public app updates because the app downloads updates with unauthenticated HTTPS.
 
 The release script archives the Release build, embeds the Sparkle public key,
-signs nested code if present, re-signs and verifies the app, creates and signs
-the DMG container, notarizes and staples both the app and DMG, validates the
-final DMG with Gatekeeper, generates `appcast.xml` from the final DMG bytes,
-uploads the DMG to `app-<version>`, and replaces `appcast.xml` plus its release
-notes on `appcast-stable`.
+removes the local development runtime from `Contents/Resources/runtime`, signs
+nested code if present, re-signs and verifies the app, creates and signs the DMG
+container, notarizes and staples both the app and DMG, validates the final DMG
+with Gatekeeper, generates `appcast.xml` from the final DMG bytes, uploads the
+DMG to `app-<version>`, and replaces `appcast.xml` plus its release notes on
+`appcast-stable`.
 
 5. Install the previous public version and use `Check for Updates...` to verify
    Sparkle can discover and install the new release.

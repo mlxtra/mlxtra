@@ -191,7 +191,18 @@ build_setting() {
         -scheme MLXtra \
         -configuration Release \
         -showBuildSettings 2>/dev/null \
-        | awk -F '=' -v wanted="${key}" '$1 ~ wanted { gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit }'
+        | awk -F '=' -v wanted="${key}" '
+            $1 ~ wanted && !found {
+                value = $2
+                gsub(/^[ \t]+|[ \t]+$/, "", value)
+                found = 1
+            }
+            END {
+                if (found) {
+                    print value
+                }
+            }
+        '
 }
 
 file_size() {
@@ -303,6 +314,18 @@ prune_packaging_artifacts() {
 
     echo "Pruning ${artifact_count} static/object artifact(s) from packaged app resources."
     find "${root}" -type f \( -name '*.a' -o -name '*.o' \) -print -delete
+}
+
+prune_embedded_runtime() {
+    local app_path="$1"
+    local runtime_path="${app_path}/Contents/Resources/runtime"
+
+    if [ ! -d "${runtime_path}" ]; then
+        return
+    fi
+
+    echo "Removing embedded runtime from release app; runtime is delivered through the stable runtime channel."
+    rm -rf "${runtime_path}"
 }
 
 codesign_path() {
@@ -683,6 +706,7 @@ if [ "${ACTUAL_PUBLIC_KEY}" != "${SPARKLE_PUBLIC_KEY}" ]; then
 fi
 
 codesign -d --entitlements :- "${APP_PATH}" > "${ENTITLEMENTS_PATH}" 2>/dev/null || true
+prune_embedded_runtime "${APP_PATH}"
 prune_broken_symlinks "${APP_PATH}"
 prune_packaging_artifacts "${APP_PATH}"
 sign_nested_code "${APP_PATH}"
