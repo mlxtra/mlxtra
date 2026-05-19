@@ -56,7 +56,7 @@ final class AceStepBridgeModelReadinessIntegrationTests: XCTestCase {
         try? mockScript.write(to: scriptPath, atomically: true, encoding: .utf8)
 
         let startTime = Date()
-        let stdout = runProcessBridge(path: scriptPath.path)
+        let stdout = runProcessBridge(path: scriptPath.path, expectedOutput: "model.loaded")
         let elapsed = Date().timeIntervalSince(startTime)
 
         XCTAssertTrue(elapsed >= 0.3, "Should have waited for delay, took \(elapsed)s")
@@ -84,7 +84,7 @@ final class AceStepBridgeModelReadinessIntegrationTests: XCTestCase {
         let scriptPath = tempDirectory.appendingPathComponent("mock_waiting_status.py")
         try? mockScript.write(to: scriptPath, atomically: true, encoding: .utf8)
 
-        let stdout = runProcessBridge(path: scriptPath.path)
+        let stdout = runProcessBridge(path: scriptPath.path, expectedOutput: "model.loaded")
 
         let loadingIdx = stdout.range(of: "model.loading")
         let waitingIdx = stdout.range(of: "waiting_for_models")
@@ -122,7 +122,7 @@ final class AceStepBridgeModelReadinessIntegrationTests: XCTestCase {
         let scriptPath = tempDirectory.appendingPathComponent("mock_components_ready.py")
         try? mockScript.write(to: scriptPath, atomically: true, encoding: .utf8)
 
-        let stdout = runProcessBridge(path: scriptPath.path)
+        let stdout = runProcessBridge(path: scriptPath.path, expectedOutput: "model.loaded")
 
         XCTAssertTrue(stdout.contains("components_ready"),
                      "Should show components_ready status before model.loaded, got: \(stdout)")
@@ -144,13 +144,13 @@ final class AceStepBridgeModelReadinessIntegrationTests: XCTestCase {
         let scriptPath = tempDirectory.appendingPathComponent("mock_error.py")
         try? mockScript.write(to: scriptPath, atomically: true, encoding: .utf8)
 
-        let stdout = runProcessBridge(path: scriptPath.path)
+        let stdout = runProcessBridge(path: scriptPath.path, expectedOutput: "Timeout waiting for model components to load")
 
         XCTAssertTrue(stdout.contains("error"), "Should have error message, got: \(stdout)")
         XCTAssertTrue(stdout.contains("Timeout"), "Should have specific error message, got: \(stdout)")
     }
 
-    private func runProcessBridge(path: String) -> String {
+    private func runProcessBridge(path: String, expectedOutput: String? = nil) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [path]
@@ -195,6 +195,47 @@ final class AceStepBridgeModelReadinessIntegrationTests: XCTestCase {
             group.leave()
         }
 
+        if let expectedOutput {
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline {
+                if stdout.string().contains(expectedOutput) {
+                    if process.isRunning {
+                        process.terminate()
+                        guard group.wait(timeout: .now() + 2) == .success else {
+                            outputPipe.fileHandleForReading.readabilityHandler = nil
+                            errorPipe.fileHandleForReading.readabilityHandler = nil
+                            XCTFail("Timed out stopping bridge process after expected output. stderr: \(stderr.string())")
+                            return stdout.string().trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                    return collectBridgeOutput(
+                        stdout: stdout,
+                        stderr: stderr,
+                        outputPipe: outputPipe,
+                        errorPipe: errorPipe
+                    )
+                }
+
+                if group.wait(timeout: .now()) == .success {
+                    return collectBridgeOutput(
+                        stdout: stdout,
+                        stderr: stderr,
+                        outputPipe: outputPipe,
+                        errorPipe: errorPipe
+                    )
+                }
+
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+
+            process.terminate()
+            _ = group.wait(timeout: .now() + 2)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            XCTFail("Timed out waiting for bridge output '\(expectedOutput)'. stdout: \(stdout.string()) stderr: \(stderr.string())")
+            return stdout.string().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         let timeout = group.wait(timeout: .now() + 10)
         if timeout == .timedOut {
             process.terminate()
@@ -205,6 +246,20 @@ final class AceStepBridgeModelReadinessIntegrationTests: XCTestCase {
             return "TIMEOUT"
         }
 
+        return collectBridgeOutput(
+            stdout: stdout,
+            stderr: stderr,
+            outputPipe: outputPipe,
+            errorPipe: errorPipe
+        )
+    }
+
+    private func collectBridgeOutput(
+        stdout: LockedOutput,
+        stderr: LockedOutput,
+        outputPipe: Pipe,
+        errorPipe: Pipe
+    ) -> String {
         outputPipe.fileHandleForReading.readabilityHandler = nil
         errorPipe.fileHandleForReading.readabilityHandler = nil
         stdout.append(outputPipe.fileHandleForReading.readDataToEndOfFile())

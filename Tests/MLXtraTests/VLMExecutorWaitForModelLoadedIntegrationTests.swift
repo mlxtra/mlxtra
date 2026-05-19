@@ -61,7 +61,10 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
         try? mockScript.write(to: mockBridgePath, atomically: true, encoding: .utf8)
 
         let startTime = Date()
-        let stdout = runProcessBridge(path: mockBridgePath.path)
+        let stdout = runProcessBridge(
+            path: mockBridgePath.path,
+            expectedOutput: "model.loaded"
+        )
         let elapsed = Date().timeIntervalSince(startTime)
 
         XCTAssertTrue(elapsed >= 0.5, "Should have waited for the delay in mock script, took \(elapsed)s")
@@ -83,7 +86,10 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
 
         try? mockScript.write(to: mockBridgePath, atomically: true, encoding: .utf8)
 
-        let stdout = runProcessBridge(path: mockBridgePath.path)
+        let stdout = runProcessBridge(
+            path: mockBridgePath.path,
+            expectedOutput: "model.initialized"
+        )
 
         XCTAssertTrue(stdout.contains("model.initialized"), "Should accept model.initialized message")
     }
@@ -102,7 +108,10 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
 
         try? mockScript.write(to: mockBridgePath, atomically: true, encoding: .utf8)
 
-        let stdout = runProcessBridge(path: mockBridgePath.path)
+        let stdout = runProcessBridge(
+            path: mockBridgePath.path,
+            expectedOutput: "Model loading failed"
+        )
 
         XCTAssertTrue(stdout.contains("error"), "Should have error message")
         XCTAssertTrue(stdout.contains("Model loading failed"), "Should have specific error message")
@@ -129,7 +138,10 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
         try? mockScript.write(to: mockBridgePath, atomically: true, encoding: .utf8)
 
         let startTime = Date()
-        let stdout = runProcessBridge(path: mockBridgePath.path)
+        let stdout = runProcessBridge(
+            path: mockBridgePath.path,
+            expectedOutput: "model.loaded"
+        )
         let elapsed = Date().timeIntervalSince(startTime)
 
         XCTAssertTrue(elapsed >= 0.6, "Should have waited for both delays, took \(elapsed)s")
@@ -154,13 +166,18 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
 
         let stdout = runProcessBridge(
             path: mockBridgePath.path,
-            input: #"{"type":"init","model_id":"test-model","request_id":"req-456"}"#
+            input: #"{"type":"init","model_id":"test-model","request_id":"req-456"}"#,
+            expectedOutput: #""request_id": "req-456""#
         )
 
         XCTAssertTrue(stdout.contains(#""request_id": "req-456""#))
     }
 
-    private func runProcessBridge(path: String, input: String = "done") -> String {
+    private func runProcessBridge(
+        path: String,
+        input: String = "done",
+        expectedOutput: String? = nil
+    ) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [path]
@@ -205,6 +222,47 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
             group.leave()
         }
 
+        if let expectedOutput {
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline {
+                if stdout.string().contains(expectedOutput) {
+                    if process.isRunning {
+                        process.terminate()
+                        guard group.wait(timeout: .now() + 2) == .success else {
+                            outputPipe.fileHandleForReading.readabilityHandler = nil
+                            errorPipe.fileHandleForReading.readabilityHandler = nil
+                            XCTFail("Timed out stopping bridge process after expected output. stderr: \(stderr.string())")
+                            return stdout.string().trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                    return collectBridgeOutput(
+                        stdout: stdout,
+                        stderr: stderr,
+                        outputPipe: outputPipe,
+                        errorPipe: errorPipe
+                    )
+                }
+
+                if group.wait(timeout: .now()) == .success {
+                    return collectBridgeOutput(
+                        stdout: stdout,
+                        stderr: stderr,
+                        outputPipe: outputPipe,
+                        errorPipe: errorPipe
+                    )
+                }
+
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+
+            process.terminate()
+            _ = group.wait(timeout: .now() + 2)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            XCTFail("Timed out waiting for bridge output '\(expectedOutput)'. stdout: \(stdout.string()) stderr: \(stderr.string())")
+            return stdout.string().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         let timeout = group.wait(timeout: .now() + 10)
         if timeout == .timedOut {
             process.terminate()
@@ -215,6 +273,20 @@ final class VLMExecutorWaitForModelLoadedIntegrationTests: XCTestCase {
             return "TIMEOUT"
         }
 
+        return collectBridgeOutput(
+            stdout: stdout,
+            stderr: stderr,
+            outputPipe: outputPipe,
+            errorPipe: errorPipe
+        )
+    }
+
+    private func collectBridgeOutput(
+        stdout: LockedOutput,
+        stderr: LockedOutput,
+        outputPipe: Pipe,
+        errorPipe: Pipe
+    ) -> String {
         outputPipe.fileHandleForReading.readabilityHandler = nil
         errorPipe.fileHandleForReading.readabilityHandler = nil
         let trailingOutput = outputPipe.fileHandleForReading.readDataToEndOfFile()
