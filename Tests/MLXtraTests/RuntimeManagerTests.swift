@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import MLXtra
 
 final class RuntimeManagerTests: XCTestCase {
@@ -664,7 +665,7 @@ final class RuntimeManagerTests: XCTestCase {
         )
         let manager = RuntimeUpdateManager(
             currentManifestProvider: { self.makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1) },
-            runtimeArchiveInstaller: { archive in
+            runtimeArchiveInstaller: { archive, _ in
                 try RuntimeManager.installRuntimeArchive(archive, installRoot: installRoot)
             }
         )
@@ -690,6 +691,145 @@ final class RuntimeManagerTests: XCTestCase {
         try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
 
         XCTAssertTrue(RuntimeManager.isRuntimeBundleStructurallyValid(runtimeRoot))
+    }
+
+    func testRuntimeDownloadProgressCalculatesRemainingTime() {
+        let progress = RuntimeDownloadProgress(
+            downloadedBytes: 512,
+            totalBytes: 1_024,
+            bytesPerSecond: 256
+        )
+
+        XCTAssertEqual(progress.fractionCompleted, 0.5)
+        XCTAssertEqual(progress.estimatedSecondsRemaining, 2)
+    }
+
+    @MainActor
+    func testRuntimeInstallReportsRemoteArchiveDownloadProgress() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("installed-runtime")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveData = Data((0..<4096).map { UInt8($0 % 255) })
+        let archiveURL = directory.appendingPathComponent("runtime.zip")
+        try archiveData.write(to: archiveURL)
+        let archiveSHA256 = try SHA256Checksum.hexDigest(for: archiveURL)
+
+        RuntimeArchiveURLProtocol.reset(data: archiveData)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RuntimeArchiveURLProtocol.self]
+
+        let recorder = RuntimeUpdateStateRecorder()
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { archive, _ in
+                guard (try? Data(contentsOf: archive)) == archiveData else {
+                    throw RuntimeUpdateError.invalidRuntime
+                }
+                return runtimeRoot
+            },
+            runtimeArchiveDownloadConfiguration: configuration,
+            runtimeArchiveCacheDirectory: directory.appendingPathComponent("runtime-cache")
+        )
+        let cancellable = manager.$state.sink { state in
+            recorder.append(state)
+        }
+        let progressExpectation = expectation(description: "Runtime download progress is published")
+        progressExpectation.assertForOverFulfill = false
+        var didReceiveExpectedProgress = false
+        let progressCancellable = manager.$runtimeDownloadProgress.sink { progress in
+            guard !didReceiveExpectedProgress,
+                  let progress,
+                  progress.downloadedBytes > 0,
+                  progress.downloadedBytes <= Int64(archiveData.count),
+                  progress.totalBytes == Int64(archiveData.count) else {
+                return
+            }
+            didReceiveExpectedProgress = true
+            progressExpectation.fulfill()
+        }
+        defer {
+            cancellable.cancel()
+            progressCancellable.cancel()
+        }
+
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: URL(string: "https://runtime.test/runtime.zip")!,
+            sha256: archiveSHA256,
+            sizeBytes: Int64(archiveData.count),
+            compatibilityApi: 1
+        )
+
+        let installTask = Task { @MainActor in
+            await manager.installRuntime(asset)
+        }
+        await fulfillment(of: [progressExpectation], timeout: 3)
+        await installTask.value
+
+        XCTAssertEqual(manager.state, .installed("0.1.1"))
+        XCTAssertTrue(
+            recorder.states().contains { state in
+                if case .installing(let progress) = state, let progress {
+                    return progress > 0 && progress <= 1
+                }
+                return false
+            },
+            "Expected runtime installer to publish determinate archive download progress"
+        )
+        XCTAssertTrue(didReceiveExpectedProgress)
+    }
+
+    @MainActor
+    func testRuntimeInstallResumesRemoteArchiveDownloadAfterTransientFailure() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("installed-runtime")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveData = Data((0..<8192).map { UInt8($0 % 255) })
+        let archiveURL = directory.appendingPathComponent("runtime.zip")
+        try archiveData.write(to: archiveURL)
+        let archiveSHA256 = try SHA256Checksum.hexDigest(for: archiveURL)
+
+        RuntimeArchiveURLProtocol.reset(data: archiveData, failFirstRequestAfterFirstChunk: true)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RuntimeArchiveURLProtocol.self]
+
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { archive, _ in
+                guard (try? Data(contentsOf: archive)) == archiveData else {
+                    throw RuntimeUpdateError.invalidRuntime
+                }
+                return runtimeRoot
+            },
+            runtimeArchiveDownloadConfiguration: configuration,
+            runtimeArchiveCacheDirectory: directory.appendingPathComponent("runtime-cache")
+        )
+
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: URL(string: "https://runtime.test/runtime.zip")!,
+            sha256: archiveSHA256,
+            sizeBytes: Int64(archiveData.count),
+            compatibilityApi: 1
+        )
+
+        await manager.installRuntime(asset)
+
+        XCTAssertEqual(manager.state, .installed("0.1.1"))
+        XCTAssertTrue(
+            RuntimeArchiveURLProtocol.recordedRangeHeaders().contains { range in
+                range?.hasPrefix("bytes=") == true
+            },
+            "Expected retry to resume the runtime archive download with a Range request"
+        )
     }
 
     @MainActor
@@ -718,7 +858,7 @@ final class RuntimeManagerTests: XCTestCase {
         )
         let manager = RuntimeUpdateManager(
             currentManifestProvider: { nil },
-            runtimeArchiveInstaller: { archive in
+            runtimeArchiveInstaller: { archive, _ in
                 try RuntimeManager.installRuntimeArchive(archive, installRoot: installRoot)
             }
         )
@@ -759,7 +899,7 @@ final class RuntimeManagerTests: XCTestCase {
         )
         let manager = RuntimeUpdateManager(
             currentManifestProvider: { nil },
-            runtimeArchiveInstaller: { archive in
+            runtimeArchiveInstaller: { archive, _ in
                 try RuntimeManager.installRuntimeArchive(archive, installRoot: installRoot)
             }
         )
@@ -792,7 +932,7 @@ final class RuntimeManagerTests: XCTestCase {
         let recorder = InstallerCallRecorder()
         let manager = RuntimeUpdateManager(
             currentManifestProvider: { self.makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1) },
-            runtimeArchiveInstaller: { _ in
+            runtimeArchiveInstaller: { _, _ in
                 recorder.wasCalled = true
                 return directory
             }
@@ -822,7 +962,7 @@ final class RuntimeManagerTests: XCTestCase {
             compatibilityApi: 1
         )
         let manager = RuntimeUpdateManager(
-            runtimeArchiveInstaller: { _ in
+            runtimeArchiveInstaller: { _, _ in
                 recorder.wasCalled = true
                 return directory
             }
@@ -975,10 +1115,131 @@ final class RuntimeManagerTests: XCTestCase {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes[.size] as? NSNumber)?.int64Value ?? 0
     }
+
 }
 
 private final class InstallerCallRecorder {
     var wasCalled = false
+}
+
+private final class RuntimeUpdateStateRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedStates: [RuntimeUpdateManager.InstallState] = []
+
+    func append(_ state: RuntimeUpdateManager.InstallState) {
+        lock.lock()
+        recordedStates.append(state)
+        lock.unlock()
+    }
+
+    func states() -> [RuntimeUpdateManager.InstallState] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedStates
+    }
+}
+
+private final class RuntimeArchiveURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var responseData = Data()
+    private static var shouldFailFirstRequestAfterFirstChunk = false
+    private static var hasFailedFirstRequest = false
+    private static var rangeHeaders: [String?] = []
+
+    static func reset(data: Data, failFirstRequestAfterFirstChunk: Bool = false) {
+        lock.lock()
+        responseData = data
+        shouldFailFirstRequestAfterFirstChunk = failFirstRequestAfterFirstChunk
+        hasFailedFirstRequest = false
+        rangeHeaders = []
+        lock.unlock()
+    }
+
+    static func recordedRangeHeaders() -> [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rangeHeaders
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "runtime.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        let rangeHeader = request.value(forHTTPHeaderField: "Range")
+        Self.lock.lock()
+        let data = Self.responseData
+        let shouldFail = Self.shouldFailFirstRequestAfterFirstChunk
+            && !Self.hasFailedFirstRequest
+            && rangeHeader == nil
+        if shouldFail {
+            Self.hasFailedFirstRequest = true
+        }
+        Self.rangeHeaders.append(rangeHeader)
+        Self.lock.unlock()
+
+        let startOffset: Int
+        if let rangeHeader,
+           rangeHeader.hasPrefix("bytes="),
+           let rangeStart = rangeHeader
+            .dropFirst("bytes=".count)
+            .split(separator: "-")
+            .first
+            .flatMap({ Int($0) }) {
+            startOffset = min(max(rangeStart, 0), data.count)
+        } else {
+            startOffset = 0
+        }
+
+        let responseData = Data(data[startOffset...])
+        let statusCode = startOffset > 0 ? 206 : 200
+        var headers = ["Content-Length": "\(responseData.count)"]
+        if startOffset > 0 {
+            headers["Content-Range"] = "bytes \(startOffset)-\(data.count - 1)/\(data.count)"
+        }
+
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: headers
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        let firstEnd = responseData.count / 3
+        let secondEnd = responseData.count * 2 / 3
+        client?.urlProtocol(self, didLoad: Data(responseData.prefix(firstEnd)))
+        if shouldFail {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                guard let self else { return }
+                self.client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            }
+            return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            guard let self else { return }
+            self.client?.urlProtocol(self, didLoad: Data(responseData[firstEnd..<secondEnd]))
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                guard let self else { return }
+                self.client?.urlProtocol(self, didLoad: Data(responseData.suffix(responseData.count - secondEnd)))
+                self.client?.urlProtocolDidFinishLoading(self)
+            }
+        }
+    }
+
+    override func stopLoading() {}
 }
 
 

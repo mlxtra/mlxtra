@@ -246,9 +246,24 @@ struct ModelDownloadRow: View {
                     .foregroundStyle(.orange)
 
                 if isPendingDownload {
-                    Label("Queued", systemImage: "clock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Label("Queued", systemImage: "clock")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Button(role: .cancel) {
+                            pendingDownloadModelId = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .frame(width: 24, height: 22)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.red)
+                        .help("Remove from Queue")
+                        .accessibilityLabel("Remove from Queue")
+                    }
                 } else {
                     Button {
                         requestDownload()

@@ -226,7 +226,7 @@ struct SettingsView: View {
                                 downloadManager.pause(model)
                             },
                             onCancel: {
-                                downloadManager.cancel(model)
+                                cancelModelDownload(model)
                             },
                             onRemove: {
                                 removalCandidate = model
@@ -449,6 +449,15 @@ struct SettingsView: View {
             pendingDownloadModelId = ""
         }
         downloadManager.download(model)
+    }
+
+    private func cancelModelDownload(_ model: DownloadableModel) {
+        if pendingDownloadModelId == model.modelId {
+            pendingDownloadModelId = ""
+            return
+        }
+
+        downloadManager.cancel(model)
     }
 
     private func startPendingDownloadIfReady() {

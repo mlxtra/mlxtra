@@ -164,36 +164,263 @@ enum SHA256Checksum {
     }
 }
 
-private final class RuntimeArchiveDownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    private let expectedBytes: Int64?
-    private let progressHandler: @Sendable (Double) -> Void
+struct RuntimeDownloadProgress: Equatable {
+    let downloadedBytes: Int64
+    let totalBytes: Int64?
+    let bytesPerSecond: Double?
+    let estimatedSecondsRemaining: TimeInterval?
 
-    init(expectedBytes: Int64?, progressHandler: @escaping @Sendable (Double) -> Void) {
+    init(downloadedBytes: Int64, totalBytes: Int64?, bytesPerSecond: Double? = nil) {
+        self.downloadedBytes = downloadedBytes
+        self.totalBytes = totalBytes
+        self.bytesPerSecond = bytesPerSecond
+
+        if let totalBytes,
+           let bytesPerSecond,
+           bytesPerSecond > 0,
+           totalBytes > downloadedBytes {
+            estimatedSecondsRemaining = Double(totalBytes - downloadedBytes) / bytesPerSecond
+        } else {
+            estimatedSecondsRemaining = nil
+        }
+    }
+
+    var fractionCompleted: Double? {
+        guard let totalBytes, totalBytes > 0 else {
+            return nil
+        }
+        return min(max(Double(downloadedBytes) / Double(totalBytes), 0), 1)
+    }
+}
+
+struct RuntimeActivationProgress: Equatable {
+    let title: String
+    let detail: String?
+    let completedStep: Int
+    let totalSteps: Int
+
+    var fractionCompleted: Double {
+        guard totalSteps > 0 else { return 0 }
+        return min(max(Double(completedStep) / Double(totalSteps), 0), 1)
+    }
+
+    var stepText: String {
+        "Step \(completedStep) of \(totalSteps)"
+    }
+}
+
+typealias RuntimeArchiveInstaller = @Sendable (
+    _ archiveURL: URL,
+    _ progressHandler: @escaping @Sendable (RuntimeActivationProgress) -> Void
+) throws -> URL
+
+private struct RuntimeArchiveDownloadResult {
+    let response: URLResponse
+    let downloadedBytes: Int64
+}
+
+private final class RuntimeArchiveDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let sourceURL: URL
+    private let destinationURL: URL
+    private let partialURL: URL
+    private let resumeOffset: Int64
+    private let expectedBytes: Int64?
+    private let configuration: URLSessionConfiguration
+    private let progressHandler: @Sendable (RuntimeDownloadProgress) -> Void
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<RuntimeArchiveDownloadResult, Error>?
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var fileHandle: FileHandle?
+    private var response: URLResponse?
+    private var downloadedBytes: Int64 = 0
+    private var didComplete = false
+
+    init(
+        sourceURL: URL,
+        destinationURL: URL,
+        partialURL: URL,
+        resumeOffset: Int64,
+        expectedBytes: Int64?,
+        configuration: URLSessionConfiguration,
+        progressHandler: @escaping @Sendable (RuntimeDownloadProgress) -> Void
+    ) {
+        self.sourceURL = sourceURL
+        self.destinationURL = destinationURL
+        self.partialURL = partialURL
+        self.resumeOffset = max(0, resumeOffset)
         self.expectedBytes = expectedBytes
+        self.configuration = configuration
         self.progressHandler = progressHandler
     }
 
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedBytes ?? 0
-        guard expected > 0 else {
-            return
-        }
+    func start() async throws -> URL {
+        try preparePartialFile()
 
-        let progress = min(max(Double(totalBytesWritten) / Double(expected), 0), 1)
-        progressHandler(progress)
+        return try await withTaskCancellationHandler {
+            let result = try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                self.continuation = continuation
+                let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+                let task = session.dataTask(with: request())
+                self.session = session
+                self.task = task
+                lock.unlock()
+
+                task.resume()
+            }
+            try validateHTTPResponse(result.response)
+            try finalizePartialDownload()
+            return destinationURL
+        } onCancel: {
+            self.cancel()
+        }
+    }
+
+    private func preparePartialFile() throws {
+        try FileManager.default.createDirectory(
+            at: partialURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if resumeOffset == 0 || !FileManager.default.fileExists(atPath: partialURL.path) {
+            try Data().write(to: partialURL, options: [.atomic])
+        }
+        fileHandle = try FileHandle(forWritingTo: partialURL)
+        try fileHandle?.seekToEnd()
+        downloadedBytes = resumeOffset
+        if resumeOffset > 0 {
+            progressHandler(RuntimeDownloadProgress(downloadedBytes: resumeOffset, totalBytes: expectedBytes))
+        }
+    }
+
+    private func request() -> URLRequest {
+        var request = URLRequest(url: sourceURL)
+        if resumeOffset > 0 {
+            request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+        }
+        return request
+    }
+
+    func cancel() {
+        lock.lock()
+        let task = task
+        lock.unlock()
+        task?.cancel()
     }
 
     func urlSession(
         _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {}
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        lock.lock()
+        self.response = response
+        let shouldRestartFromZero = resumeOffset > 0
+            && (response as? HTTPURLResponse)?.statusCode == 200
+        if shouldRestartFromZero {
+            downloadedBytes = 0
+        }
+        let fileHandle = self.fileHandle
+        lock.unlock()
+
+        if shouldRestartFromZero {
+            try? fileHandle?.truncate(atOffset: 0)
+            try? fileHandle?.seek(toOffset: 0)
+            progressHandler(RuntimeDownloadProgress(downloadedBytes: 0, totalBytes: expectedBytes))
+        }
+
+        completionHandler(.allow)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        do {
+            try fileHandle?.write(contentsOf: data)
+            lock.lock()
+            downloadedBytes += Int64(data.count)
+            let bytes = downloadedBytes
+            lock.unlock()
+            progressHandler(RuntimeDownloadProgress(downloadedBytes: bytes, totalBytes: expectedBytes))
+        } catch {
+            complete(.failure(error))
+            dataTask.cancel()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        if let error {
+            complete(.failure(error))
+            return
+        }
+
+        lock.lock()
+        let response = self.response
+        let downloadedBytes = self.downloadedBytes
+        lock.unlock()
+
+        guard let response else {
+            complete(.failure(URLError(.badServerResponse)))
+            return
+        }
+
+        complete(.success(RuntimeArchiveDownloadResult(response: response, downloadedBytes: downloadedBytes)))
+    }
+
+    private func validateHTTPResponse(_ response: URLResponse) throws {
+        guard let httpResponse = response as? HTTPURLResponse else { return }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    private func finalizePartialDownload() throws {
+        try fileHandle?.close()
+        fileHandle = nil
+
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+        try FileManager.default.moveItem(at: partialURL, to: destinationURL)
+        if let expectedBytes {
+            progressHandler(RuntimeDownloadProgress(downloadedBytes: expectedBytes, totalBytes: expectedBytes))
+        }
+    }
+
+    private func complete(_ result: Result<RuntimeArchiveDownloadResult, Error>) {
+        lock.lock()
+        guard !didComplete else {
+            lock.unlock()
+            return
+        }
+        didComplete = true
+        let continuation = continuation
+        self.continuation = nil
+        task = nil
+        let session = session
+        self.session = nil
+        let fileHandle = fileHandle
+        self.fileHandle = nil
+        lock.unlock()
+
+        try? fileHandle?.close()
+        session?.finishTasksAndInvalidate()
+        continuation?.resume(with: result)
+    }
+}
+
+enum RuntimeInstallPhase: Equatable {
+    case idle
+    case downloading
+    case verifying
+    case activating
 }
 
 @MainActor
@@ -211,17 +438,31 @@ final class RuntimeUpdateManager: ObservableObject {
 
     @Published private(set) var state: InstallState = .idle
     @Published private(set) var channel: ReleaseChannelManifest?
+    @Published private(set) var installPhase: RuntimeInstallPhase = .idle
+    @Published private(set) var runtimeDownloadProgress: RuntimeDownloadProgress?
+    @Published private(set) var runtimeActivationProgress: RuntimeActivationProgress?
 
     private let currentManifestProvider: () -> RuntimeManifest?
-    private let runtimeArchiveInstaller: @Sendable (URL) throws -> URL
+    private let runtimeArchiveInstaller: RuntimeArchiveInstaller
+    private let runtimeArchiveDownloadConfiguration: URLSessionConfiguration
+    private let runtimeArchiveCacheDirectory: URL
     private var backgroundTask: Task<Void, Never>?
+    private var runtimeDownloadSpeedSamples: [(date: Date, bytes: Int64)] = []
 
     init(
         currentManifestProvider: @escaping () -> RuntimeManifest? = { RuntimeManager.activeRuntimeManifest() },
-        runtimeArchiveInstaller: @escaping @Sendable (URL) throws -> URL = { try RuntimeManager.installRuntimeArchive($0) }
+        runtimeArchiveInstaller: @escaping RuntimeArchiveInstaller = { archiveURL, progressHandler in
+            try RuntimeManager.installRuntimeArchive(archiveURL, progressHandler: progressHandler)
+        },
+        runtimeArchiveDownloadConfiguration: URLSessionConfiguration = .default,
+        runtimeArchiveCacheDirectory: URL = RuntimeManager.appSupportURL()
+            .appendingPathComponent("downloads")
+            .appendingPathComponent("runtime")
     ) {
         self.currentManifestProvider = currentManifestProvider
         self.runtimeArchiveInstaller = runtimeArchiveInstaller
+        self.runtimeArchiveDownloadConfiguration = runtimeArchiveDownloadConfiguration
+        self.runtimeArchiveCacheDirectory = runtimeArchiveCacheDirectory
     }
 
     var availableRuntime: RuntimeReleaseAsset? {
@@ -295,31 +536,123 @@ final class RuntimeUpdateManager: ObservableObject {
             return
         }
 
+        installPhase = .downloading
+        resetRuntimeDownloadMetrics()
+        runtimeDownloadProgress = asset.url.isFileURL
+            ? nil
+            : RuntimeDownloadProgress(downloadedBytes: 0, totalBytes: asset.sizeBytes)
         state = asset.url.isFileURL || asset.sizeBytes == nil ? .installing(nil) : .installing(0)
         do {
             let archiveURL = try await fetchRuntimeArchive(asset)
             let expectedSHA256 = asset.sha256
-            let installer = runtimeArchiveInstaller
-            let runtimeVersion = try await Task.detached(priority: .utility) {
-                try Self.validateAndInstallRuntimeArchive(
-                    archiveURL,
-                    expectedSHA256: expectedSHA256,
-                    installer: installer
-                )
+            installPhase = .verifying
+            state = .installing(nil)
+            let actualChecksum = try await Task.detached(priority: .utility) {
+                try SHA256Checksum.hexDigest(for: archiveURL)
             }.value
+            guard actualChecksum.caseInsensitiveCompare(expectedSHA256) == .orderedSame else {
+                try? FileManager.default.removeItem(at: archiveURL)
+                throw RuntimeUpdateError.checksumMismatch
+            }
+
+            installPhase = .activating
+            runtimeActivationProgress = RuntimeActivationProgress(
+                title: "Preparing local files",
+                detail: "Staging the runtime installer.",
+                completedStep: 1,
+                totalSteps: 5
+            )
+            let installer = runtimeArchiveInstaller
+            let installedURL = try await Task.detached(priority: .utility) {
+                try installer(archiveURL) { progress in
+                    Task { @MainActor [weak self] in
+                        self?.updateRuntimeActivationProgress(progress)
+                    }
+                }
+            }.value
+            guard let manifest = RuntimeManager.runtimeManifest(at: installedURL) else {
+                throw RuntimeUpdateError.invalidRuntime
+            }
+            let runtimeVersion = manifest.runtimeVersion
+            installPhase = .idle
+            runtimeDownloadProgress = nil
+            runtimeActivationProgress = nil
+            resetRuntimeDownloadMetrics()
             state = .installed(runtimeVersion)
         } catch is CancellationError {
+            installPhase = .idle
+            runtimeDownloadProgress = nil
+            runtimeActivationProgress = nil
+            resetRuntimeDownloadMetrics()
             state = .idle
         } catch {
+            installPhase = .idle
+            runtimeDownloadProgress = nil
+            runtimeActivationProgress = nil
+            resetRuntimeDownloadMetrics()
             state = .failed(error.localizedDescription)
         }
     }
 
-    private func updateRuntimeDownloadProgress(_ progress: Double) {
-        guard case .installing = state else {
+    private func updateRuntimeActivationProgress(_ progress: RuntimeActivationProgress) {
+        guard case .installing = state, installPhase == .activating else {
             return
         }
-        state = .installing(progress)
+        runtimeActivationProgress = progress
+        state = .installing(progress.fractionCompleted)
+    }
+
+    private func updateRuntimeDownloadProgress(_ progress: RuntimeDownloadProgress) {
+        guard case .installing = state, installPhase == .downloading else {
+            return
+        }
+
+        let now = Date()
+        let bytesPerSecond = measuredRuntimeDownloadSpeed(for: progress, at: now)
+        let measuredProgress = RuntimeDownloadProgress(
+            downloadedBytes: progress.downloadedBytes,
+            totalBytes: progress.totalBytes,
+            bytesPerSecond: bytesPerSecond
+        )
+        runtimeDownloadProgress = measuredProgress
+        state = .installing(measuredProgress.fractionCompleted)
+    }
+
+    private func measuredRuntimeDownloadSpeed(
+        for progress: RuntimeDownloadProgress,
+        at date: Date
+    ) -> Double? {
+        let downloadedBytes = progress.downloadedBytes
+        if let lastSample = runtimeDownloadSpeedSamples.last {
+            if downloadedBytes < lastSample.bytes || date.timeIntervalSince(lastSample.date) > 12 {
+                runtimeDownloadSpeedSamples.removeAll()
+            }
+        }
+
+        if runtimeDownloadSpeedSamples.last?.bytes != downloadedBytes {
+            runtimeDownloadSpeedSamples.append((date, downloadedBytes))
+        }
+
+        let cutoff = date.addingTimeInterval(-8)
+        while runtimeDownloadSpeedSamples.count > 2,
+              let secondSample = runtimeDownloadSpeedSamples.dropFirst().first,
+              secondSample.date < cutoff {
+            runtimeDownloadSpeedSamples.removeFirst()
+        }
+
+        guard let firstSample = runtimeDownloadSpeedSamples.first,
+              let lastSample = runtimeDownloadSpeedSamples.last,
+              lastSample.bytes > firstSample.bytes else {
+            return nil
+        }
+
+        let seconds = lastSample.date.timeIntervalSince(firstSample.date)
+        guard seconds >= 0.05 else { return nil }
+        return Double(lastSample.bytes - firstSample.bytes) / seconds
+    }
+
+    private func resetRuntimeDownloadMetrics() {
+        runtimeDownloadSpeedSamples.removeAll()
     }
 
     private func startBackgroundTask(_ operation: @escaping @MainActor (RuntimeUpdateManager) async -> Void) {
@@ -341,23 +674,6 @@ final class RuntimeUpdateManager: ObservableObject {
         }
     }
 
-    private nonisolated static func validateAndInstallRuntimeArchive(
-        _ archiveURL: URL,
-        expectedSHA256: String,
-        installer: @Sendable (URL) throws -> URL
-    ) throws -> String {
-        let actualChecksum = try SHA256Checksum.hexDigest(for: archiveURL)
-        guard actualChecksum.caseInsensitiveCompare(expectedSHA256) == .orderedSame else {
-            throw RuntimeUpdateError.checksumMismatch
-        }
-
-        let installedURL = try installer(archiveURL)
-        guard let manifest = RuntimeManager.runtimeManifest(at: installedURL) else {
-            throw RuntimeUpdateError.invalidRuntime
-        }
-        return manifest.runtimeVersion
-    }
-
     private func bestRuntimeAsset(in manifest: ReleaseChannelManifest) -> RuntimeReleaseAsset? {
         let current = currentManifestProvider()
         return manifest.runtimes
@@ -376,19 +692,88 @@ final class RuntimeUpdateManager: ObservableObject {
             return asset.url
         }
 
-        let progressDelegate = RuntimeArchiveDownloadProgressDelegate(expectedBytes: asset.sizeBytes) { [weak self] progress in
-            Task { @MainActor in
-                self?.updateRuntimeDownloadProgress(progress)
+        try FileManager.default.createDirectory(at: runtimeArchiveCacheDirectory, withIntermediateDirectories: true)
+
+        let archiveExtension = asset.url.pathExtension.isEmpty ? "zip" : asset.url.pathExtension
+        let archiveName = "runtime-\(asset.sha256.lowercased())"
+        let destination = runtimeArchiveCacheDirectory
+            .appendingPathComponent(archiveName)
+            .appendingPathExtension(archiveExtension)
+        let partial = runtimeArchiveCacheDirectory
+            .appendingPathComponent(".\(archiveName)")
+            .appendingPathExtension("\(archiveExtension).download")
+
+        if let expectedBytes = asset.sizeBytes,
+           fileSize(destination) == expectedBytes {
+            return destination
+        }
+
+        var attempt = 0
+        var lastError: Error?
+        while attempt < 4 {
+            attempt += 1
+            let resumeOffset = resumableRuntimeArchiveSize(at: partial, expectedBytes: asset.sizeBytes)
+            let downloader = RuntimeArchiveDownloader(
+                sourceURL: asset.url,
+                destinationURL: destination,
+                partialURL: partial,
+                resumeOffset: resumeOffset,
+                expectedBytes: asset.sizeBytes,
+                configuration: runtimeArchiveDownloadConfiguration
+            ) { [weak self] progress in
+                Task { @MainActor in
+                    self?.updateRuntimeDownloadProgress(progress)
+                }
+            }
+
+            do {
+                return try await downloader.start()
+            } catch {
+                lastError = error
+                guard shouldRetryRuntimeArchiveDownload(after: error), attempt < 4 else {
+                    throw error
+                }
+
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
             }
         }
-        let (downloadURL, _) = try await URLSession.shared.download(from: asset.url, delegate: progressDelegate)
-        updateRuntimeDownloadProgress(1)
 
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MLXtra-runtime-\(UUID().uuidString)")
-            .appendingPathExtension(asset.url.pathExtension.isEmpty ? "zip" : asset.url.pathExtension)
-        try FileManager.default.moveItem(at: downloadURL, to: destination)
-        return destination
+        throw lastError ?? URLError(.unknown)
+    }
+
+    private func fileSize(_ url: URL) -> Int64? {
+        guard let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber else {
+            return nil
+        }
+        return size.int64Value
+    }
+
+    private func resumableRuntimeArchiveSize(at partialURL: URL, expectedBytes: Int64?) -> Int64 {
+        guard let partialSize = fileSize(partialURL), partialSize > 0 else {
+            return 0
+        }
+
+        if let expectedBytes, partialSize >= expectedBytes {
+            try? FileManager.default.removeItem(at: partialURL)
+            return 0
+        }
+
+        return partialSize
+    }
+
+    private func shouldRetryRuntimeArchiveDownload(after error: Error) -> Bool {
+        guard let urlError = error as? URLError else {
+            return false
+        }
+        return [
+            .cancelled,
+            .networkConnectionLost,
+            .timedOut,
+            .notConnectedToInternet,
+            .cannotConnectToHost,
+            .cannotFindHost,
+            .dnsLookupFailed
+        ].contains(urlError.code)
     }
 }
 
@@ -492,7 +877,7 @@ class RuntimeManager: ObservableObject {
             return installed
         }
 
-        for path in candidates where fileManager.fileExists(atPath: path.path) {
+        for path in candidates where isRuntimeBundleStructurallyValid(path, fileManager: fileManager) {
             RuntimeDiagnostics.log("[RuntimeManager] Found bundled runtime bundle at: \(path.path)")
             return path
         }
@@ -502,7 +887,11 @@ class RuntimeManager: ObservableObject {
     }
 
     nonisolated static func activeRuntimeManifest() -> RuntimeManifest? {
-        runtimeManifest(at: activeRuntimeBundleURL())
+        let runtimeURL = activeRuntimeBundleURL()
+        guard isRuntimeBundleStructurallyValid(runtimeURL) else {
+            return nil
+        }
+        return runtimeManifest(at: runtimeURL)
     }
 
     nonisolated static func runtimeManifest(at runtimeURL: URL) -> RuntimeManifest? {
@@ -546,36 +935,74 @@ class RuntimeManager: ObservableObject {
 
     nonisolated static func installRuntimeArchive(
         _ archiveURL: URL,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        progressHandler: @escaping @Sendable (RuntimeActivationProgress) -> Void = { _ in }
     ) throws -> URL {
         let installRoot = installedRuntimeURL(fileManager: fileManager).deletingLastPathComponent()
-        return try installRuntimeArchive(archiveURL, installRoot: installRoot, fileManager: fileManager)
+        return try installRuntimeArchive(
+            archiveURL,
+            installRoot: installRoot,
+            fileManager: fileManager,
+            progressHandler: progressHandler
+        )
     }
 
     nonisolated static func installRuntimeArchive(
         _ archiveURL: URL,
         installRoot: URL,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        progressHandler: @escaping @Sendable (RuntimeActivationProgress) -> Void = { _ in }
     ) throws -> URL {
+        progressHandler(RuntimeActivationProgress(
+            title: "Preparing local files",
+            detail: "Creating a temporary install area.",
+            completedStep: 1,
+            totalSteps: 5
+        ))
         let stagingURL = installRoot.appendingPathComponent("staging-\(UUID().uuidString)")
         let extractedURL = stagingURL.appendingPathComponent("extract")
         try fileManager.createDirectory(at: extractedURL, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: stagingURL) }
 
         if archiveURL.hasDirectoryPath {
+            progressHandler(RuntimeActivationProgress(
+                title: "Copying local files",
+                detail: "Preparing the runtime directory.",
+                completedStep: 2,
+                totalSteps: 5
+            ))
             try fileManager.copyItem(at: archiveURL, to: extractedURL.appendingPathComponent(archiveURL.lastPathComponent))
         } else if archiveURL.pathExtension.lowercased() == "zip" {
+            let archiveSize = formattedFileSize(archiveURL, fileManager: fileManager)
+            progressHandler(RuntimeActivationProgress(
+                title: "Extracting archive",
+                detail: archiveSize.map { "Unpacking \($0) of runtime files." } ?? "Unpacking runtime files.",
+                completedStep: 2,
+                totalSteps: 5
+            ))
             try extractZipArchive(archiveURL, to: extractedURL)
         } else {
             throw RuntimeUpdateError.unsupportedArchive
         }
 
+        progressHandler(RuntimeActivationProgress(
+            title: "Validating files",
+            detail: "Checking Python runtimes and required components.",
+            completedStep: 3,
+            totalSteps: 5
+        ))
         let runtimeRoot = try normalizedRuntimeRoot(in: extractedURL, fileManager: fileManager)
         try validateExtractedRuntimeTree(runtimeRoot, fileManager: fileManager)
         guard isRuntimeBundleStructurallyValid(runtimeRoot, fileManager: fileManager) else {
             throw RuntimeUpdateError.invalidRuntime
         }
 
+        progressHandler(RuntimeActivationProgress(
+            title: "Moving into place",
+            detail: "Replacing the active runtime atomically.",
+            completedStep: 4,
+            totalSteps: 5
+        ))
         let currentURL = installRoot.appendingPathComponent("current")
         let nextURL = installRoot.appendingPathComponent("next-\(UUID().uuidString)")
         try fileManager.createDirectory(at: installRoot, withIntermediateDirectories: true)
@@ -594,7 +1021,23 @@ class RuntimeManager: ObservableObject {
             }
             throw error
         }
+        progressHandler(RuntimeActivationProgress(
+            title: "Finishing setup",
+            detail: "Runtime is ready for local models.",
+            completedStep: 5,
+            totalSteps: 5
+        ))
         return currentURL
+    }
+
+    private nonisolated static func formattedFileSize(_ url: URL, fileManager: FileManager) -> String? {
+        guard let size = try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber else {
+            return nil
+        }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: size.int64Value)
     }
 
     private nonisolated static func extractZipArchive(_ archiveURL: URL, to destinationURL: URL) throws {

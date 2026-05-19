@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct AppUpdateSettingsSection: View {
@@ -13,6 +14,7 @@ struct AppUpdateSettingsSection: View {
             tint: statusTint,
             badge: statusBadge,
             progress: nil,
+            progressStats: nil,
             accessibilityIdentifier: "settings.appUpdates"
         ) {
             Button {
@@ -121,6 +123,7 @@ struct RuntimeUpdateSettingsSection: View {
             tint: statusTint,
             badge: statusBadge,
             progress: runtimeProgress,
+            progressStats: runtimeProgressStats,
             accessibilityIdentifier: "settings.runtimeUpdates"
         ) {
             actionView
@@ -172,10 +175,19 @@ struct RuntimeUpdateSettingsSection: View {
         case .available(let asset):
             return "Runtime \(asset.version) is ready to download."
         case .installing(let progress):
-            if progress == nil {
+            switch manager.installPhase {
+            case .verifying:
+                return "Verifying runtime files."
+            case .activating:
+                if let activationProgress = manager.runtimeActivationProgress {
+                    return activationProgress.detail ?? activationProgress.title
+                }
+                return "Activating runtime files."
+            case .downloading where progress != nil:
+                return "Downloading runtime files. Setup will finish in the background."
+            default:
                 return "Downloading, verifying, and activating the runtime."
             }
-            return "Downloading runtime files. Setup will finish in the background."
         case .installed(let version):
             return "Runtime \(version) is ready for local models."
         case .failed(let message):
@@ -241,12 +253,65 @@ struct RuntimeUpdateSettingsSection: View {
         }
         return nil
     }
+
+    private var runtimeProgressStats: RuntimeProgressStats? {
+        guard case .installing = manager.state,
+              manager.installPhase == .downloading,
+              let progress = manager.runtimeDownloadProgress else {
+            return nil
+        }
+
+        let downloaded = Self.formattedBytes(progress.downloadedBytes)
+        let transferred: String
+        if let totalBytes = progress.totalBytes {
+            transferred = "\(downloaded) / \(Self.formattedBytes(totalBytes))"
+        } else {
+            transferred = downloaded
+        }
+
+        var speed: String?
+        if let bytesPerSecond = progress.bytesPerSecond, bytesPerSecond > 0 {
+            speed = "\(Self.formattedBytes(Int64(bytesPerSecond)))/s"
+        }
+
+        var remaining: String?
+        if let estimatedSecondsRemaining = progress.estimatedSecondsRemaining {
+            remaining = Self.formattedDuration(estimatedSecondsRemaining)
+        }
+
+        return RuntimeProgressStats(
+            transferred: transferred,
+            speed: speed,
+            remaining: remaining
+        )
+    }
+
+    private static func formattedBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    private static func formattedDuration(_ seconds: TimeInterval) -> String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = seconds >= 3600 ? [.hour, .minute] : [.minute, .second]
+        formatter.maximumUnitCount = 2
+        formatter.unitsStyle = .abbreviated
+        return formatter.string(from: max(seconds, 1)) ?? "calculating"
+    }
 }
 
 struct UpdateStatusBadge {
     let title: String
     let icon: String
     let tint: Color
+}
+
+private struct RuntimeProgressStats {
+    let transferred: String
+    let speed: String?
+    let remaining: String?
 }
 
 private struct UpdateSettingsCard<Action: View>: View {
@@ -257,6 +322,7 @@ private struct UpdateSettingsCard<Action: View>: View {
     let tint: Color
     let badge: UpdateStatusBadge
     let progress: Double?
+    let progressStats: RuntimeProgressStats?
     let accessibilityIdentifier: String
     @ViewBuilder var action: () -> Action
 
@@ -299,9 +365,19 @@ private struct UpdateSettingsCard<Action: View>: View {
                     ProgressView(value: progress)
                         .progressViewStyle(.linear)
 
-                    Text("\(Int((progress * 100).rounded()))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: MLXtraDesignSystem.Spacing.md) {
+                        Text("\(Int((progress * 100).rounded()))%")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .frame(width: 44, alignment: .leading)
+
+                        Spacer(minLength: MLXtraDesignSystem.Spacing.lg)
+
+                        if let progressStats {
+                            RuntimeProgressStatsView(stats: progressStats)
+                        }
+                    }
                 }
             }
         }
@@ -309,6 +385,35 @@ private struct UpdateSettingsCard<Action: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .designContentSurface(cornerRadius: MLXtraDesignSystem.Radius.card)
         .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+private struct RuntimeProgressStatsView: View {
+    let stats: RuntimeProgressStats
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            metric(title: "Downloaded", value: stats.transferred, width: 156)
+            metric(title: "Speed", value: stats.speed ?? "-", width: 84)
+            metric(title: "Remaining", value: stats.remaining ?? "-", width: 88)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func metric(title: String, value: String, width: CGFloat) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.86)
+        }
+        .frame(width: width, alignment: .trailing)
     }
 }
 

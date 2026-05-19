@@ -142,19 +142,25 @@ struct ModelManagerRow: View {
     private var runtimeAction: some View {
         switch runtimeUpdateManager.state {
         case .available(let asset):
-            runtimeSetupStatus(isPendingDownload ? "Queued" : "Setting up")
+            if isPendingDownload {
+                queuedRuntimeAction
+            } else {
+                runtimeSetupStatus("Setting up")
+            }
+            Color.clear
+                .frame(width: 0, height: 0)
                 .task(id: asset.version) {
                     runtimeUpdateManager.installRuntimeInBackground(asset)
                 }
         case .installing:
             if isPendingDownload {
-                runtimeSetupStatus("Queued")
+                queuedRuntimeAction
             } else {
                 queueDownloadButton
             }
         case .checking:
             if isPendingDownload {
-                runtimeSetupStatus("Queued")
+                queuedRuntimeAction
             } else {
                 queueDownloadButton
             }
@@ -185,6 +191,26 @@ struct ModelManagerRow: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+    }
+
+    private var queuedRuntimeAction: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            runtimeSetupStatus("Queued")
+
+            Button(role: .cancel) {
+                onCancel()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 24, height: 22)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.red)
+            .help("Remove from Queue")
+            .accessibilityLabel("Remove from Queue")
+            .accessibilityIdentifier("settings.modelState.queued.cancel")
+        }
     }
 
     private func runtimeSetupStatus(_ text: String) -> some View {
