@@ -445,6 +445,7 @@ final class RuntimeUpdateManager: ObservableObject {
     private let currentManifestProvider: () -> RuntimeManifest?
     private let runtimeArchiveInstaller: RuntimeArchiveInstaller
     private let runtimeArchiveDownloadConfiguration: URLSessionConfiguration
+    private let runtimeArchiveCacheDirectory: URL
     private var backgroundTask: Task<Void, Never>?
     private var runtimeDownloadSpeedSamples: [(date: Date, bytes: Int64)] = []
 
@@ -453,11 +454,15 @@ final class RuntimeUpdateManager: ObservableObject {
         runtimeArchiveInstaller: @escaping RuntimeArchiveInstaller = { archiveURL, progressHandler in
             try RuntimeManager.installRuntimeArchive(archiveURL, progressHandler: progressHandler)
         },
-        runtimeArchiveDownloadConfiguration: URLSessionConfiguration = .default
+        runtimeArchiveDownloadConfiguration: URLSessionConfiguration = .default,
+        runtimeArchiveCacheDirectory: URL = RuntimeManager.appSupportURL()
+            .appendingPathComponent("downloads")
+            .appendingPathComponent("runtime")
     ) {
         self.currentManifestProvider = currentManifestProvider
         self.runtimeArchiveInstaller = runtimeArchiveInstaller
         self.runtimeArchiveDownloadConfiguration = runtimeArchiveDownloadConfiguration
+        self.runtimeArchiveCacheDirectory = runtimeArchiveCacheDirectory
     }
 
     var availableRuntime: RuntimeReleaseAsset? {
@@ -687,17 +692,14 @@ final class RuntimeUpdateManager: ObservableObject {
             return asset.url
         }
 
-        let cacheDirectory = RuntimeManager.appSupportURL()
-            .appendingPathComponent("downloads")
-            .appendingPathComponent("runtime")
-        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runtimeArchiveCacheDirectory, withIntermediateDirectories: true)
 
         let archiveExtension = asset.url.pathExtension.isEmpty ? "zip" : asset.url.pathExtension
         let archiveName = "runtime-\(asset.sha256.lowercased())"
-        let destination = cacheDirectory
+        let destination = runtimeArchiveCacheDirectory
             .appendingPathComponent(archiveName)
             .appendingPathExtension(archiveExtension)
-        let partial = cacheDirectory
+        let partial = runtimeArchiveCacheDirectory
             .appendingPathComponent(".\(archiveName)")
             .appendingPathExtension("\(archiveExtension).download")
 

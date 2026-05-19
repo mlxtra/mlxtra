@@ -704,7 +704,6 @@ final class RuntimeManagerTests: XCTestCase {
         let archiveURL = directory.appendingPathComponent("runtime.zip")
         try archiveData.write(to: archiveURL)
         let archiveSHA256 = try SHA256Checksum.hexDigest(for: archiveURL)
-        removeRuntimeArchiveCache(sha256: archiveSHA256)
 
         RuntimeArchiveURLProtocol.reset(data: archiveData)
         let configuration = URLSessionConfiguration.ephemeral
@@ -719,7 +718,8 @@ final class RuntimeManagerTests: XCTestCase {
                 }
                 return runtimeRoot
             },
-            runtimeArchiveDownloadConfiguration: configuration
+            runtimeArchiveDownloadConfiguration: configuration,
+            runtimeArchiveCacheDirectory: directory.appendingPathComponent("runtime-cache")
         )
         let cancellable = manager.$state.sink { state in
             recorder.append(state)
@@ -785,7 +785,6 @@ final class RuntimeManagerTests: XCTestCase {
         let archiveURL = directory.appendingPathComponent("runtime.zip")
         try archiveData.write(to: archiveURL)
         let archiveSHA256 = try SHA256Checksum.hexDigest(for: archiveURL)
-        removeRuntimeArchiveCache(sha256: archiveSHA256)
 
         RuntimeArchiveURLProtocol.reset(data: archiveData, failFirstRequestAfterFirstChunk: true)
         let configuration = URLSessionConfiguration.ephemeral
@@ -799,7 +798,8 @@ final class RuntimeManagerTests: XCTestCase {
                 }
                 return runtimeRoot
             },
-            runtimeArchiveDownloadConfiguration: configuration
+            runtimeArchiveDownloadConfiguration: configuration,
+            runtimeArchiveCacheDirectory: directory.appendingPathComponent("runtime-cache")
         )
 
         let asset = RuntimeReleaseAsset(
@@ -1107,20 +1107,6 @@ final class RuntimeManagerTests: XCTestCase {
         return (attributes[.size] as? NSNumber)?.int64Value ?? 0
     }
 
-    private func removeRuntimeArchiveCache(sha256: String, pathExtension: String = "zip") {
-        let cacheDirectory = RuntimeManager.appSupportURL()
-            .appendingPathComponent("downloads")
-            .appendingPathComponent("runtime")
-        let archiveName = "runtime-\(sha256.lowercased())"
-        let finalURL = cacheDirectory
-            .appendingPathComponent(archiveName)
-            .appendingPathExtension(pathExtension)
-        let partialURL = cacheDirectory
-            .appendingPathComponent(".\(archiveName)")
-            .appendingPathExtension("\(pathExtension).download")
-        try? FileManager.default.removeItem(at: finalURL)
-        try? FileManager.default.removeItem(at: partialURL)
-    }
 }
 
 private final class InstallerCallRecorder {
