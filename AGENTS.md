@@ -203,6 +203,16 @@ cd ../..
 python3 Tests/IntegrationTests/test_music_integration.py  # or Tests/IntegrationTests/test_all_models_integration.py
 ```
 
+### Before Completing Work
+
+Before submitting a CR or saying the work is complete, run the shared CI script:
+
+```bash
+Scripts/ci.sh
+```
+
+If the full CI script is not practical to run, run the relevant subcommands from `Scripts/ci.sh` and explicitly tell the user which checks were run. If CI checks cannot be run locally, remind or ask the user to run `Scripts/ci.sh` before submitting.
+
 ### Simplicity First
 
 - Minimum code that solves the problem

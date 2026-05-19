@@ -16,35 +16,23 @@ jobs:
         uses: actions/checkout@v6.0.2
 
       - name: Show Xcode version
-        run: xcodebuild -version
+        run: Scripts/ci.sh xcode-version
 
       - name: Validate release metadata
-        run: python3 Scripts/validate-release-metadata.py
+        run: Scripts/ci.sh metadata
 
       - name: Compile Python bridge scripts
-        run: >
-          python3 -m py_compile
-          MLXtra/Resources/python_bridge.py
-          MLXtra/Resources/acestep_bridge.py
-          MLXtra/Resources/bridge_utils.py
-          MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py
-          Scripts/validate-release-metadata.py
-          Tests/IntegrationTests/test_all_models_integration.py
-          Tests/IntegrationTests/test_bridge.py
-          Tests/IntegrationTests/test_music_bridge.py
-          Tests/IntegrationTests/test_music_generation.py
-          Tests/IntegrationTests/test_music_integration.py
+        run: Scripts/ci.sh py-compile
 
       - name: Run Python bridge tests
-        working-directory: Tests/PythonTests
-        run: PYTHONPATH=../../../MLXtra/Resources python3 -m unittest discover -v
+        run: Scripts/ci.sh python-tests
 
       - name: Run Swift tests with core coverage gate
-        run: Scripts/check-swift-coverage.sh
+        run: Scripts/ci.sh swift-coverage
         env:
           MLXTRA_CORE_COVERAGE_MIN: "80"
 
       - name: Build app shell
-        run: xcodebuild -project MLXtra.xcodeproj -scheme MLXtra -configuration Debug CODE_SIGNING_ALLOWED=NO build
+        run: Scripts/ci.sh build-app
         env:
           MLXTRA_SKIP_RUNTIME_VALIDATION: "1"
