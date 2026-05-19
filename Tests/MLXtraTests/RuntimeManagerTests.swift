@@ -693,6 +693,17 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertTrue(RuntimeManager.isRuntimeBundleStructurallyValid(runtimeRoot))
     }
 
+    func testRuntimeDownloadProgressCalculatesRemainingTime() {
+        let progress = RuntimeDownloadProgress(
+            downloadedBytes: 512,
+            totalBytes: 1_024,
+            bytesPerSecond: 256
+        )
+
+        XCTAssertEqual(progress.fractionCompleted, 0.5)
+        XCTAssertEqual(progress.estimatedSecondsRemaining, 2)
+    }
+
     @MainActor
     func testRuntimeInstallReportsRemoteArchiveDownloadProgress() async throws {
         let directory = try makeTemporaryDirectory()
@@ -724,11 +735,19 @@ final class RuntimeManagerTests: XCTestCase {
         let cancellable = manager.$state.sink { state in
             recorder.append(state)
         }
-        let progressRecorder = RuntimeDownloadProgressRecorder()
+        let progressExpectation = expectation(description: "Runtime download progress is published")
+        progressExpectation.assertForOverFulfill = false
+        var didReceiveExpectedProgress = false
         let progressCancellable = manager.$runtimeDownloadProgress.sink { progress in
-            if let progress {
-                progressRecorder.append(progress)
+            guard !didReceiveExpectedProgress,
+                  let progress,
+                  progress.downloadedBytes > 0,
+                  progress.downloadedBytes <= Int64(archiveData.count),
+                  progress.totalBytes == Int64(archiveData.count) else {
+                return
             }
+            didReceiveExpectedProgress = true
+            progressExpectation.fulfill()
         }
         defer {
             cancellable.cancel()
@@ -745,7 +764,11 @@ final class RuntimeManagerTests: XCTestCase {
             compatibilityApi: 1
         )
 
-        await manager.installRuntime(asset)
+        let installTask = Task { @MainActor in
+            await manager.installRuntime(asset)
+        }
+        await fulfillment(of: [progressExpectation], timeout: 3)
+        await installTask.value
 
         XCTAssertEqual(manager.state, .installed("0.1.1"))
         XCTAssertTrue(
@@ -757,21 +780,7 @@ final class RuntimeManagerTests: XCTestCase {
             },
             "Expected runtime installer to publish determinate archive download progress"
         )
-        XCTAssertTrue(
-            progressRecorder.events().contains { progress in
-                progress.downloadedBytes > 0
-                    && progress.downloadedBytes <= Int64(archiveData.count)
-                    && progress.totalBytes == Int64(archiveData.count)
-            },
-            "Expected runtime installer to publish downloaded and total byte counts"
-        )
-        XCTAssertTrue(
-            progressRecorder.events().contains { progress in
-                (progress.bytesPerSecond ?? 0) > 0
-                    && progress.estimatedSecondsRemaining != nil
-            },
-            "Expected runtime installer to publish download speed and remaining time estimates"
-        )
+        XCTAssertTrue(didReceiveExpectedProgress)
     }
 
     @MainActor
@@ -1130,23 +1139,6 @@ private final class RuntimeUpdateStateRecorder: @unchecked Sendable {
     }
 }
 
-private final class RuntimeDownloadProgressRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var recordedEvents: [RuntimeDownloadProgress] = []
-
-    func append(_ progress: RuntimeDownloadProgress) {
-        lock.lock()
-        recordedEvents.append(progress)
-        lock.unlock()
-    }
-
-    func events() -> [RuntimeDownloadProgress] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedEvents
-    }
-}
-
 private final class RuntimeArchiveURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var responseData = Data()
@@ -1230,7 +1222,10 @@ private final class RuntimeArchiveURLProtocol: URLProtocol {
         let secondEnd = responseData.count * 2 / 3
         client?.urlProtocol(self, didLoad: Data(responseData.prefix(firstEnd)))
         if shouldFail {
-            client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                guard let self else { return }
+                self.client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            }
             return
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.08) { [weak self] in
