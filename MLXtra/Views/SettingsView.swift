@@ -101,6 +101,8 @@ struct SettingsView: View {
         switch selectedPane {
         case .models:
             modelsPane
+        case .updates:
+            updatesPane
         case .advanced:
             promptsPane
         }
@@ -159,7 +161,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 220, alignment: .leading)
+            .frame(width: 300, alignment: .leading)
 
             Spacer(minLength: 0)
         }
@@ -256,6 +258,21 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings.modelSearch")
     }
 
+    private var updatesPane: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let appUpdateController {
+                AppUpdateSettingsSection(
+                    versionText: appVersionText,
+                    controller: appUpdateController
+                )
+            }
+
+            RuntimeUpdateSettingsSection(manager: runtimeUpdateManager)
+        }
+        .frame(maxWidth: 760, alignment: .leading)
+        .padding(.bottom, 12)
+    }
+
     private var promptsPane: some View {
         VStack(alignment: .leading, spacing: 18) {
             AdvancedQuickControls(
@@ -290,6 +307,28 @@ struct SettingsView: View {
             }
         }
         .padding(.bottom, 12)
+    }
+
+    private var appUpdateController: AppUpdateController? {
+        (NSApp.delegate as? MLXtraApplicationDelegate)?.appUpdateController
+    }
+
+    private var appVersionText: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = (info["CFBundleShortVersionString"] as? String).flatMap(nonPlaceholderValue) ?? "Unknown"
+        let build = (info["CFBundleVersion"] as? String).flatMap(nonPlaceholderValue)
+
+        if let build {
+            return "\(version) (\(build))"
+        }
+
+        return version
+    }
+
+    private func nonPlaceholderValue(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("$(") else { return nil }
+        return trimmed
     }
 
     private var controls: some View {

@@ -256,8 +256,28 @@ published as a separate runtime asset.
 
 App release flow:
 
-1. Increment `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`, then commit and
-   push that source change before publishing:
+1. For normal app updates, run the next-version wrapper. It increments
+   `MARKETING_VERSION` by one patch version, increments `CURRENT_PROJECT_VERSION`
+   by 1, then delegates to the signed/notarized app release script:
+
+```bash
+Scripts/publish-next-app-release.sh --repo mlxtra/mlxtra
+```
+
+To set an explicit version, pass it before the publish options:
+
+```bash
+Scripts/publish-next-app-release.sh --version 1.1.0 --repo mlxtra/mlxtra
+```
+
+To preview the bump without editing files or publishing:
+
+```bash
+Scripts/publish-next-app-release.sh --dry-run --repo mlxtra/mlxtra
+```
+
+After a successful release, commit and push the `project.pbxproj` version bump so
+the source tree reflects the published app:
 
 ```bash
 git status --short
@@ -270,10 +290,10 @@ git push
    Store Connect notarization credentials:
 
 ```bash
-Scripts/publish-app-release.sh --repo mlxtra/mlxtra --setup-notary --apple-id "<apple-id>"
+Scripts/publish-next-app-release.sh --repo mlxtra/mlxtra --setup-notary --apple-id "<apple-id>"
 ```
 
-The script auto-detects a single installed Developer ID Application identity,
+The delegated release script auto-detects a single installed Developer ID Application identity,
 infers the Apple Developer Team ID from it, stores credentials in the
 `mlxtra-notary` keychain profile, then continues with the release. If multiple
 Developer ID Application identities are installed, pass the intended one with
@@ -282,13 +302,14 @@ Developer ID Application identities are installed, pass the intended one with
 If you already created a notary profile with a different name, pass it with
 `--notary-keychain-profile "<profile-name>"`.
 
-3. For later releases from the same machine, run:
+3. If the version/build were already bumped manually, you can run the lower-level
+   release script directly:
 
 ```bash
 Scripts/publish-app-release.sh --repo mlxtra/mlxtra
 ```
 
-4. To run a local packaging dry run:
+4. To run a local packaging dry run after applying the version bump:
 
 ```bash
 Scripts/publish-app-release.sh --skip-notarization --skip-publish

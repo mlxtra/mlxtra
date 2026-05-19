@@ -64,6 +64,7 @@ enum SettingsModelMode: String, CaseIterable, Identifiable {
 
 enum SettingsPane: String, CaseIterable, Identifiable {
     case models
+    case updates
     case advanced
 
     var id: String { rawValue }
@@ -71,6 +72,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .models: return "Models"
+        case .updates: return "Updates"
         case .advanced: return "Advanced"
         }
     }
@@ -79,6 +81,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .models:
             return "Choose what runs locally on this Mac."
+        case .updates:
+            return "Keep MLXtra current."
         case .advanced:
             return "Tune prompts and tool behavior."
         }

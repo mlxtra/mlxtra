@@ -7,6 +7,7 @@ final class AppUpdateControllerTests: XCTestCase {
         let controller = AppUpdateController(startingUpdater: false)
 
         XCTAssertFalse(controller.canCheckForUpdates)
+        XCTAssertEqual(controller.status, .unavailable)
     }
 
     func testUpdateConfigurationRequiresHTTPSFeedAndPublicKey() {

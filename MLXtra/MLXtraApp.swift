@@ -61,8 +61,8 @@ private final class MLXtraAppState: ObservableObject {
 }
 
 @MainActor
-private final class MLXtraApplicationDelegate: NSObject, NSApplicationDelegate {
-    private let appUpdateController = AppUpdateController()
+final class MLXtraApplicationDelegate: NSObject, NSApplicationDelegate {
+    let appUpdateController = AppUpdateController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
