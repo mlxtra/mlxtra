@@ -1,6 +1,6 @@
 # MLXtra
 
-**Local AI creation for Mac, not another chat-only model runner.**
+**Local AI creation for Mac, beyond chat.**
 
 MLXtra is a native Apple Silicon app for local AI creation. It runs chat,
 vision, image, speech, and music models on your Mac with
@@ -8,18 +8,19 @@ vision, image, speech, and music models on your Mac with
 server project.
 
 [Download MLXtra 1.0.9 DMG](https://github.com/mlxtra/mlxtra/releases/download/app-1.0.9/MLXtra-1.0.9.dmg)
+| [Watch demo](https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4)
 | [View releases](https://github.com/mlxtra/mlxtra/releases)
 | [Build from source](#build-from-source)
 
-![MLXtra home screen](docs/assets/screenshots/welcome.png)
+[![Watch the MLXtra demo](docs/assets/screenshots/welcome.png)](https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4)
 
 ## What's Different
 
 - **Creative modes, not just chat.** Move between conversation, image
   generation, text-to-speech, and music generation from the same composer.
 - **Mac-first runtime.** MLXtra ships a verified Apple Silicon runtime and
-  keeps model downloads inside the app instead of asking you to assemble Python
-  environments by hand.
+  keeps model downloads inside the app instead of asking you to use terminal
+  commands or manage model-server setup.
 - **Curated local models.** The catalog favors models that are practical on
   Macs, including lightweight starters and larger options that appear only when
   the hardware fit makes sense.
@@ -30,9 +31,7 @@ server project.
 
 ## Demo
 
-<video src="docs/assets/demo/MLXtra.mp4" controls width="100%" title="MLXtra demo"></video>
-
-[Open the demo video](docs/assets/demo/MLXtra.mp4)
+[Watch the demo video](https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4)
 
 ## What You Can Do
 
@@ -57,12 +56,10 @@ larger.
 
 MLXtra ships with a curated model catalog:
 
-| Type | Included models |
-| --- | --- |
-| Chat and vision | Qwen 3.5 2B, Qwen 3.5 9B, Qwen 3.6 27B, Qwen 3.6 35B A3B, Gemma 4 E2B, Gemma 4 E4B, Gemma 4 26B A4B |
-| Image | FLUX.2-klein-4B, Z-Image Turbo |
-| Speech | KugelAudio 0 Open, Kokoro 82M 4-bit |
-| Music | ACE-Step 1.5 Turbo |
+- **Chat and vision:** Qwen 3.5, Qwen 3.6, and Gemma 4 variants
+- **Image:** FLUX.2-klein-4B and Z-Image Turbo
+- **Speech:** KugelAudio 0 Open and Kokoro 82M 4-bit
+- **Music:** ACE-Step 1.5 Turbo
 
 Large models are shown only on Macs where they are expected to fit comfortably.
 Some model providers may require accepting model terms or signing in to Hugging
@@ -137,5 +134,6 @@ separately by their respective owners. See
 
 - [MLX](https://github.com/ml-explore/mlx) by Apple
 - [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)
+- [mlx-audio](https://github.com/Blaizzy/mlx-audio)
 - [mflux](https://github.com/filipstrand/mflux)
 - [ACE-Step](https://github.com/ace-step/ACE-Step)
