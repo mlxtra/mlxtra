@@ -31,6 +31,8 @@ server project.
 
 ## Demo
 
+<video src="https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4" controls width="100%" title="MLXtra demo"></video>
+
 [Watch the demo video](https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4)
 
 ## What You Can Do
