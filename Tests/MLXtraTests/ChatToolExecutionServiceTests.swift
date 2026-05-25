@@ -953,6 +953,11 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let userMessages = viewModel.chats.first?.messages.filter(\.isUser) ?? []
         XCTAssertEqual(userMessages.count, 1)
         XCTAssertEqual(userMessages.first?.content, "Make a moody cyberpunk track")
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.toolCalls.last?.toolName, "Music generation")
+        XCTAssertEqual(
+            viewModel.chats.first?.messages.last?.toolCalls.last?.details.last,
+            ToolCallDetail(label: "Model", value: "ACE-Step 1.5 Turbo")
+        )
         let parameters = toolExecutor.mediaPlans[0].request.parameters ?? [:]
         XCTAssertEqual(parameters["instrumental"] as? Bool, true)
         XCTAssertEqual(parameters["lyrics"] as? String, "[Instrumental]")
@@ -1092,9 +1097,15 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
         let plan = toolExecutor.mediaPlans[0]
         XCTAssertEqual(plan.functionName, "generate_image")
+        XCTAssertEqual(plan.toolName, "Image generation")
         XCTAssertEqual(plan.request.backend, .image)
         XCTAssertEqual(plan.request.modelId, "black-forest-labs/FLUX.2-klein-4B")
         XCTAssertEqual(plan.request.messages.first?.content, "Draw a quiet studio desk")
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.toolCalls.last?.toolName, "Image generation")
+        XCTAssertEqual(
+            viewModel.chats.first?.messages.last?.toolCalls.last?.details.last,
+            ToolCallDetail(label: "Model", value: "FLUX.2-klein-4B")
+        )
         XCTAssertFalse(viewModel.chats.first?.messages.contains { $0.content.contains("create_image(") } ?? true)
     }
 

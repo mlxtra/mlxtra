@@ -19,7 +19,7 @@ struct ToolCallView: View {
                         .foregroundStyle(iconTint)
                 }
 
-                Text(toolCall.toolName)
+                Text(toolCall.displayTitle)
                     .font(MLXtraDesignSystem.Typography.captionMedium)
 
                 Spacer()
@@ -48,9 +48,9 @@ struct ToolCallView: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if !toolCall.details.isEmpty {
+                    if !toolCall.displayDetails.isEmpty {
                         VStack(alignment: .leading, spacing: 7) {
-                            ForEach(Array(toolCall.details.enumerated()), id: \.offset) { _, detail in
+                            ForEach(Array(toolCall.displayDetails.enumerated()), id: \.offset) { _, detail in
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(detail.label)
                                         .font(MLXtraDesignSystem.Typography.microMedium)
@@ -100,7 +100,7 @@ struct ToolCallView: View {
     }
 
     private var shouldShowDetails: Bool {
-        !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !toolCall.details.isEmpty
+        !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !toolCall.displayDetails.isEmpty
     }
 
     private var isComplete: Bool {

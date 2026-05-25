@@ -226,4 +226,42 @@ struct ToolCall: Identifiable, Codable {
         icon = try container.decode(String.self, forKey: .icon)
         details = try container.decodeIfPresent([ToolCallDetail].self, forKey: .details) ?? []
     }
+
+    var displayTitle: String {
+        legacyGenerationTitle?.title ?? toolName
+    }
+
+    var displayDetails: [ToolCallDetail] {
+        guard let modelName = legacyGenerationTitle?.modelName,
+              !hasModelDetail else {
+            return details
+        }
+
+        return details + [ToolCallDetail(label: "Model", value: modelName)]
+    }
+
+    private var hasModelDetail: Bool {
+        details.contains { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Model") == .orderedSame }
+    }
+
+    private var legacyGenerationTitle: (title: String, modelName: String)? {
+        let trimmedName = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidates: [(suffix: String, icon: String, title: String)] = [
+            (" image generation", "photo", "Image generation"),
+            (" speech generation", "waveform", "Speech generation"),
+            (" music generation", "music.note", "Music generation")
+        ]
+
+        for candidate in candidates where icon == candidate.icon {
+            guard trimmedName.lowercased().hasSuffix(candidate.suffix) else { continue }
+
+            let modelNameEnd = trimmedName.index(trimmedName.endIndex, offsetBy: -candidate.suffix.count)
+            let modelName = String(trimmedName[..<modelNameEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !modelName.isEmpty else { continue }
+
+            return (candidate.title, modelName)
+        }
+
+        return nil
+    }
 }

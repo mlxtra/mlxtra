@@ -291,6 +291,23 @@ final class ChatAndMessageTests: XCTestCase {
         ])
     }
 
+    func testToolCallDisplayMovesLegacyModelNameIntoDetails() {
+        let toolCall = ToolCall(
+            toolName: "FLUX.2-klein-4B image generation",
+            status: "Draw a quiet studio desk",
+            icon: "photo",
+            details: [
+                ToolCallDetail(label: "Prompt", value: "Draw a quiet studio desk")
+            ]
+        )
+
+        XCTAssertEqual(toolCall.displayTitle, "Image generation")
+        XCTAssertEqual(toolCall.displayDetails, [
+            ToolCallDetail(label: "Prompt", value: "Draw a quiet studio desk"),
+            ToolCallDetail(label: "Model", value: "FLUX.2-klein-4B")
+        ])
+    }
+
     func testToolCallIdentifiable() {
         let id = UUID()
         let toolCall = ToolCall(

@@ -638,9 +638,19 @@ class ChatViewModel: ObservableObject {
             } else {
                 let initialToolCall: ToolCall?
                 if isImageGeneration {
-                    initialToolCall = ToolCall(toolName: "\(executionProfile.name) image generation", status: prompt, icon: "photo")
+                    initialToolCall = ToolCall(
+                        toolName: "Image generation",
+                        status: prompt,
+                        icon: "photo",
+                        details: toolCallDetails([], includingModel: executionProfile.name)
+                    )
                 } else if isSpeechGeneration {
-                    initialToolCall = ToolCall(toolName: "\(executionProfile.name) speech generation", status: prompt, icon: "waveform")
+                    initialToolCall = ToolCall(
+                        toolName: "Speech generation",
+                        status: prompt,
+                        icon: "waveform",
+                        details: toolCallDetails([], includingModel: executionProfile.name)
+                    )
                 } else {
                     initialToolCall = nil
                 }
@@ -815,7 +825,7 @@ class ChatViewModel: ObservableObject {
             messages: &messages,
             plan: ChatMediaToolExecutionPlan(
                 functionName: "generate_image",
-                toolName: "\(imageProfile.name) image generation",
+                toolName: "Image generation",
                 status: imagePrompt,
                 icon: "photo",
                 details: [],
@@ -855,7 +865,7 @@ class ChatViewModel: ObservableObject {
             messages: &messages,
             plan: ChatMediaToolExecutionPlan(
                 functionName: "create_speech",
-                toolName: "\(speechProfile.name) speech generation",
+                toolName: "Speech generation",
                 status: speechText,
                 icon: "waveform",
                 details: [],
@@ -935,7 +945,7 @@ class ChatViewModel: ObservableObject {
             messages: &messages,
             plan: ChatMediaToolExecutionPlan(
                 functionName: "generate_music",
-                toolName: "\(musicProfile.name) music generation",
+                toolName: "Music generation",
                 status: musicPrompt,
                 icon: "music.note",
                 details: musicToolCallDetails(parameters),

@@ -30,6 +30,16 @@ extension ChatViewModel {
         clearMessageContent(messageId)
     }
 
+    func toolCallDetails(_ details: [ToolCallDetail], includingModel modelName: String) -> [ToolCallDetail] {
+        let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModelName.isEmpty,
+              !details.contains(where: { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Model") == .orderedSame }) else {
+            return details
+        }
+
+        return details + [ToolCallDetail(label: "Model", value: trimmedModelName)]
+    }
+
     func executeMediaToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], plan: ChatMediaToolExecutionPlan) async {
         loadingMessage = plan.loadingStatus
         setActiveEngineModel(name: plan.model.name, role: localEngineModelRole(for: plan))
@@ -37,7 +47,7 @@ extension ChatViewModel {
             toolName: plan.toolName,
             status: plan.status,
             icon: plan.icon,
-            details: plan.details
+            details: toolCallDetails(plan.details, includingModel: plan.model.name)
         )
 
         let outcome = await toolExecutor.executeMediaTool(plan: plan) { [weak self] update in
