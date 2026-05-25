@@ -220,49 +220,18 @@ binary app, archive with a Developer ID Application identity and notarize the
 exported `.app` or `.dmg`; the checked-in project uses ad-hoc signing for local
 source builds unless those signing values are supplied at archive time.
 
-### One-Time App Release Setup
+### App Release
 
-Install or resolve Sparkle's command-line tools:
-
-```bash
-swift package resolve
-```
-
-Generate the Sparkle EdDSA key pair on the release machine:
-
-```bash
-.build/artifacts/sparkle/Sparkle/bin/generate_keys --account mlxtra
-```
-
-The private key is stored in the macOS login Keychain. The command prints the
-public key; put that value in the Release configuration's
-`MLXTRA_SPARKLE_PUBLIC_ED_KEY` build setting, or pass it to
-`Scripts/publish-app-release.sh` with `--public-key`. Never export or commit the
-private key.
-
-For notarization, create an Apple app-specific password for the Apple ID in the
-Apple Account security settings. The first `--setup-notary` run stores it in the
-local Keychain as the `mlxtra-notary` notarytool profile.
-
-Release tags:
-
-- `app-<version>`: immutable release containing notarized `MLXtra-<version>.dmg`
-- `appcast-stable`: moving release containing the current `appcast.xml` and
-  release notes referenced by the appcast
-
-Check the printed DMG size before upload. GitHub release assets must stay under
-2 GiB per file. The app DMG should remain small because the Python/MLX runtime is
-published as a separate runtime asset.
-
-App release flow:
-
-1. For normal app updates, run the next-version wrapper. It increments
-   `MARKETING_VERSION` by one patch version, increments `CURRENT_PROJECT_VERSION`
-   by 1, then delegates to the signed/notarized app release script:
+On a configured release machine, one command publishes the next app version:
 
 ```bash
 Scripts/publish-next-app-release.sh --repo mlxtra/mlxtra
 ```
+
+This increments `MARKETING_VERSION` by one patch version, increments
+`CURRENT_PROJECT_VERSION` by 1, archives the Release app, signs and notarizes the
+app and DMG, publishes the `app-<version>` GitHub release, and updates the
+`appcast-stable` release for Sparkle.
 
 To set an explicit version, pass it before the publish options:
 
@@ -286,30 +255,24 @@ git commit -m "Bump app version to <version>"
 git push
 ```
 
-2. For the first app release on a machine, let the release script store App
-   Store Connect notarization credentials:
+Release tags:
 
-```bash
-Scripts/publish-next-app-release.sh --repo mlxtra/mlxtra --setup-notary --apple-id "<apple-id>"
-```
+- `app-<version>`: immutable release containing notarized `MLXtra-<version>.dmg`
+- `appcast-stable`: moving release containing the current `appcast.xml` and
+  release notes referenced by the appcast
 
-The delegated release script auto-detects a single installed Developer ID Application identity,
-infers the Apple Developer Team ID from it, stores credentials in the
-`mlxtra-notary` keychain profile, then continues with the release. If multiple
-Developer ID Application identities are installed, pass the intended one with
-`--signing-identity`.
+Check the printed DMG size before upload. GitHub release assets must stay under
+2 GiB per file. The app DMG should remain small because the Python/MLX runtime is
+published as a separate runtime asset.
 
-If you already created a notary profile with a different name, pass it with
-`--notary-keychain-profile "<profile-name>"`.
-
-3. If the version/build were already bumped manually, you can run the lower-level
-   release script directly:
+If the version/build were already bumped manually, you can run the lower-level
+release script directly:
 
 ```bash
 Scripts/publish-app-release.sh --repo mlxtra/mlxtra
 ```
 
-4. To run a local packaging dry run after applying the version bump:
+To run a local packaging dry run after applying the version bump:
 
 ```bash
 Scripts/publish-app-release.sh --skip-notarization --skip-publish
@@ -333,10 +296,11 @@ with Gatekeeper, generates `appcast.xml` from the final DMG bytes, uploads the
 DMG to `app-<version>`, and replaces `appcast.xml` plus its release notes on
 `appcast-stable`.
 
-5. Install the previous public version and use `Check for Updates...` to verify
-   Sparkle can discover and install the new release.
+Install the previous public version and use `Check for Updates...` to verify
+Sparkle can discover and install the new release.
 
-Minimum signing validation before upload:
+The script performs signing, notarization, stapling, and Gatekeeper validation
+before upload. To inspect generated artifacts manually, use:
 
 ```bash
 codesign -dvvv --entitlements :- .build/app-release/app/MLXtra.app
@@ -344,6 +308,46 @@ codesign -dvvv .build/app-release/assets/MLXtra-<version>.dmg
 xcrun stapler validate .build/app-release/assets/MLXtra-<version>.dmg
 spctl -a -vv -t open --context context:primary-signature .build/app-release/assets/MLXtra-<version>.dmg
 ```
+
+### One-Time App Release Setup
+
+These setup steps are only needed on a new or repaired release machine. They are
+not part of the normal app update command.
+
+Install or resolve Sparkle's command-line tools:
+
+```bash
+swift package resolve
+```
+
+Generate the Sparkle EdDSA key pair on the release machine:
+
+```bash
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account mlxtra
+```
+
+The private key is stored in the macOS login Keychain. The command prints the
+public key; put that value in the Release configuration's
+`MLXTRA_SPARKLE_PUBLIC_ED_KEY` build setting, or pass it to
+`Scripts/publish-app-release.sh` with `--public-key`. Never export or commit the
+private key.
+
+For notarization, create an Apple app-specific password for the Apple ID in the
+Apple Account security settings. Use `--setup-notary` only when creating or
+updating the local `mlxtra-notary` notarytool profile:
+
+```bash
+Scripts/publish-next-app-release.sh --repo mlxtra/mlxtra --setup-notary --apple-id "<apple-id>"
+```
+
+The delegated release script auto-detects a single installed Developer ID
+Application identity, infers the Apple Developer Team ID from it, stores
+credentials in the `mlxtra-notary` keychain profile, then continues with the
+release. If multiple Developer ID Application identities are installed, pass the
+intended one with `--signing-identity`.
+
+If you already created a notary profile with a different name, pass it with
+`--notary-keychain-profile "<profile-name>"`.
 
 ## Rollback
 
