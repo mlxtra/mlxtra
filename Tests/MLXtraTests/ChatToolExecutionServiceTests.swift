@@ -16,6 +16,11 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             PromptConfiguration.systemPromptKey: UserDefaults.standard.object(forKey: PromptConfiguration.systemPromptKey),
             PromptConfiguration.deepResearchSystemPromptKey: UserDefaults.standard.object(forKey: PromptConfiguration.deepResearchSystemPromptKey),
             PromptConfiguration.toolDefinitionsKey: UserDefaults.standard.object(forKey: PromptConfiguration.toolDefinitionsKey),
+            ModelSelectionStore.chatKey: UserDefaults.standard.object(forKey: ModelSelectionStore.chatKey),
+            ModelSelectionStore.imageKey: UserDefaults.standard.object(forKey: ModelSelectionStore.imageKey),
+            ModelSelectionStore.speechKey: UserDefaults.standard.object(forKey: ModelSelectionStore.speechKey),
+            ModelSelectionStore.musicKey: UserDefaults.standard.object(forKey: ModelSelectionStore.musicKey),
+            ModelParameterStore.storageKey: UserDefaults.standard.object(forKey: ModelParameterStore.storageKey),
         ]
     }
 
@@ -440,19 +445,22 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedTool, .auto)
     }
 
-    func testSendMessageBuildsSpeechGenerationRequestThroughInjectedExecutor() async {
+    func testSendMessageBuildsSpeechGenerationRequestThroughInjectedExecutor() async throws {
+        let userDefaults = isolatedUserDefaults()
+        let speechProfile = try XCTUnwrap(ModelCapabilityProfile.bestProfile(for: .audio))
         let assetURL = URL(fileURLWithPath: "/tmp/generated.wav")
         let executor = MockChatModelExecutor(events: [
             .audio(assetURL),
             .complete("Generated speech.", usage: TokenUsage(promptTokens: 0, completionTokens: 0))
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["kugelaudio/kugelaudio-0-open"])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [speechProfile.modelId])
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
             chatPersistence: persistence,
             vlmExecutor: executor,
             runtimeManager: runtimeManager,
-            toolExecutor: MockChatToolExecutionService()
+            toolExecutor: MockChatToolExecutionService(),
+            userDefaults: userDefaults
         )
         viewModel.selectTool(.tts)
         viewModel.inputText = "Superman is here"
@@ -460,10 +468,14 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.sendMessage()
         await waitUntil { executor.receivedRequests.count == 1 }
         await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+        guard executor.receivedRequests.count == 1 else {
+            let messageContents = viewModel.chats.first?.messages.map { $0.content } ?? []
+            XCTFail("Expected one speech request, got \(executor.receivedRequests.count). Messages: \(messageContents)")
+            return
+        }
 
-        XCTAssertEqual(executor.receivedRequests.count, 1)
         XCTAssertEqual(executor.receivedRequests[0].backend, .audio)
-        XCTAssertEqual(executor.receivedRequests[0].modelId, "kugelaudio/kugelaudio-0-open")
+        XCTAssertEqual(executor.receivedRequests[0].modelId, speechProfile.modelId)
         XCTAssertEqual(executor.receivedRequests[0].messages.first?.content, "Superman is here")
         XCTAssertEqual(viewModel.chats.first?.messages.last?.audioURLs, [assetURL])
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
@@ -1112,8 +1124,10 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertFalse(viewModel.chats.first?.messages.contains { $0.content.contains("create_image(") } ?? true)
     }
 
-    func testAutoModeExecutesPlainTextSpeechFunctionCallAlias() async {
+    func testAutoModeExecutesPlainTextSpeechFunctionCallAlias() async throws {
         resetPromptConfigurationDefaults()
+        let userDefaults = isolatedUserDefaults()
+        let speechProfile = try XCTUnwrap(ModelCapabilityProfile.bestProfile(for: .audio))
         let executor = MockChatModelExecutor(events: [
             .complete(
                 #"generate_speech(text="Superman is here")"#,
@@ -1127,7 +1141,8 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             chatPersistence: persistence,
             vlmExecutor: executor,
             runtimeManager: runtimeManager,
-            toolExecutor: toolExecutor
+            toolExecutor: toolExecutor,
+            userDefaults: userDefaults
         )
         viewModel.selectTool(.auto)
         viewModel.inputText = "Say Superman is here"
@@ -1143,7 +1158,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let plan = toolExecutor.mediaPlans[0]
         XCTAssertEqual(plan.functionName, "create_speech")
         XCTAssertEqual(plan.request.backend, .audio)
-        XCTAssertEqual(plan.request.modelId, "kugelaudio/kugelaudio-0-open")
+        XCTAssertEqual(plan.request.modelId, speechProfile.modelId)
         XCTAssertEqual(plan.request.messages.first?.content, "Superman is here")
         XCTAssertFalse(viewModel.chats.first?.messages.contains { $0.content.contains("generate_speech(") } ?? true)
     }
