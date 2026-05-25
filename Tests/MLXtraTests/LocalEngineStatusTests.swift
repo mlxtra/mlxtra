@@ -84,6 +84,42 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertEqual(status.detail, "Loading model weights")
     }
 
+    func testPreloadingStateUsesBackgroundCopyAndDoesNotExposeMemoryAction() {
+        let progress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-4B",
+            backend: .vlm,
+            phase: .warming,
+            detail: "Preparing Qwen 3.5 in the background"
+        )
+
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .startingPython,
+            isPythonLoading: false,
+            isModelLoading: false,
+            isPreloadingLocalModel: true,
+            isGenerating: false,
+            loadingMessage: "Preparing Qwen 3.5...",
+            loadProgress: progress,
+            isExecutorReady: true,
+            isModelLoaded: false,
+            selectedModelName: "Qwen 3.5",
+            activeModelName: "Qwen 3.5",
+            activeModelRole: .chat,
+            pendingDownloadModelId: nil,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: nil
+        )
+
+        XCTAssertEqual(status.state, .preloading)
+        XCTAssertEqual(status.title, "Preparing in background")
+        XCTAssertEqual(status.detail, "Preparing Qwen 3.5 in the background")
+        XCTAssertEqual(status.systemImage, "bolt")
+        XCTAssertFalse(status.canFreeMemory)
+        XCTAssertTrue(status.isVisibleInComposer)
+        XCTAssertEqual(status.loadProgress, progress)
+    }
+
     func testBridgePercentIsClampedForDeterminateProgress() {
         let progress = ModelLoadProgress.bridgeEvent(
             [

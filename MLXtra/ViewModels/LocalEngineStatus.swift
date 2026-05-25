@@ -202,6 +202,7 @@ struct LocalEngineStatus: Equatable {
     enum State: Equatable {
         case idle
         case preparing
+        case preloading
         case loadingModel
         case generating
         case ready
@@ -238,6 +239,7 @@ struct LocalEngineStatus: Equatable {
         runtimeState: RuntimeManager.RuntimeState,
         isPythonLoading: Bool,
         isModelLoading: Bool,
+        isPreloadingLocalModel: Bool = false,
         isGenerating: Bool,
         loadingMessage: String,
         loadProgress: ModelLoadProgress? = nil,
@@ -266,6 +268,21 @@ struct LocalEngineStatus: Equatable {
                 canFreeMemory: false,
                 isVisibleInComposer: true,
                 loadProgress: nil
+            )
+        }
+
+        if isPreloadingLocalModel {
+            return LocalEngineStatus(
+                state: .preloading,
+                title: "Preparing in background",
+                detail: loadProgress?.detail ?? (trimmedLoadingMessage.isEmpty ? "\(modelName) will be ready faster." : trimmedLoadingMessage),
+                systemImage: "bolt",
+                tone: .neutral,
+                primaryAction: nil,
+                primaryActionModelId: nil,
+                canFreeMemory: false,
+                isVisibleInComposer: true,
+                loadProgress: loadProgress
             )
         }
 

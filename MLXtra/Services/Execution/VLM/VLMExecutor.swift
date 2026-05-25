@@ -134,6 +134,23 @@ class VLMExecutor: NSObject, ModelExecutor {
         }
     }
 
+    func preload(modelId: String, backend: RuntimeBackend) async throws {
+        if !isReady {
+            try await initialize()
+        }
+
+        let modelCacheKey = "\(backend.rawValue):\(modelId)"
+        guard currentModelCacheKey != modelCacheKey || !isModelLoaded else {
+            return
+        }
+
+        isModelLoaded = false
+        try await loadModel(modelId, backend: backend)
+        currentModelCacheKey = modelCacheKey
+        currentModelId = modelId
+        currentModelBackend = backend
+    }
+
     func terminate() async {
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         stdoutDispatcher.handleEOF()

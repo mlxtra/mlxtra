@@ -1,5 +1,44 @@
 import SwiftUI
 
+struct PerformanceSettingsSection: View {
+    @Binding var preloadLocalChatModelOnLaunch: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "bolt.horizontal.circle")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 34, height: 34)
+                .designTintSurface(Color.accentColor, cornerRadius: MLXtraDesignSystem.Radius.control)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Performance")
+                    .font(.headline)
+
+                Text("Prepare the selected downloaded chat model shortly after launch.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("No downloads start automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 16)
+
+            Toggle("Prepare chat model at launch", isOn: $preloadLocalChatModelOnLaunch)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .help("Prepare the selected downloaded chat model after launch.")
+                .accessibilityIdentifier("settings.performance.preloadChatModel")
+        }
+        .padding(14)
+        .designPanelSurface(cornerRadius: MLXtraDesignSystem.Radius.card)
+    }
+}
+
 struct AdvancedQuickControls: View {
     @Binding var systemPrompt: String
     @Binding var deepResearchSystemPrompt: String

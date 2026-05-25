@@ -22,6 +22,13 @@ enum ChatStreamDiagnostics {
 @MainActor
 class ChatViewModel: ObservableObject {
     static var generationTimeout: TimeInterval = 300.0
+    static let launchModelPreloadEnabledKey = "MLXtra.preloadLocalVLMOnLaunch"
+    static let defaultLaunchModelPreloadDelayNanoseconds: UInt64 = 2_500_000_000
+
+    nonisolated static func defaultLaunchModelPreloadPressureCheck() -> Bool {
+        let thermalState = ProcessInfo.processInfo.thermalState
+        return thermalState == .serious || thermalState == .critical
+    }
 
     private var cachedRecentChats: [Chat] = []
     private var _cachedRecentChatsRevision: UInt = 0
@@ -50,6 +57,7 @@ class ChatViewModel: ObservableObject {
 
     @Published var isPythonLoading: Bool = false
     @Published var isModelLoading: Bool = false
+    @Published var isPreloadingLocalModel: Bool = false
     @Published var isGenerating: Bool = false
     @Published var isDraftingMusicLyrics: Bool = false
     @Published var loadingMessage: String = ""
@@ -82,8 +90,11 @@ class ChatViewModel: ObservableObject {
     let toolExecutor: ChatToolExecutionServicing
     let modelSelectionStore: ModelSelectionStore
     let modelParameterStore: ModelParameterStore
+    let userDefaults: UserDefaults
+    let launchModelPreloadPressureCheck: () -> Bool
     let streamingContentStore = StreamingMessageContentStore()
     var generationTask: Task<Void, Never>?
+    var launchModelPreloadTask: Task<Void, Never>?
     let maxAutoToolDepth = 4
     var pendingDownloadMonitorTask: Task<Void, Never>?
     var pendingEngineDownloadReason: PendingEngineDownloadReason?
@@ -192,7 +203,8 @@ class ChatViewModel: ObservableObject {
         vlmExecutor: ChatModelExecuting? = nil,
         runtimeManager: ChatRuntimeManaging? = nil,
         toolExecutor: ChatToolExecutionServicing? = nil,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        launchModelPreloadPressureCheck: @escaping () -> Bool = ChatViewModel.defaultLaunchModelPreloadPressureCheck
     ) {
         let resolvedChatPersistence = chatPersistence ?? LocalChatPersistenceService()
         let resolvedRuntimeManager = runtimeManager ?? RuntimeManager()
@@ -201,6 +213,8 @@ class ChatViewModel: ObservableObject {
         self.chatPersistence = resolvedChatPersistence
         self.runtimeManager = resolvedRuntimeManager
         self.vlmExecutor = resolvedExecutor
+        self.userDefaults = userDefaults
+        self.launchModelPreloadPressureCheck = launchModelPreloadPressureCheck
         self.modelSelectionStore = ModelSelectionStore(userDefaults: userDefaults)
         self.modelParameterStore = ModelParameterStore(userDefaults: userDefaults)
         self.toolExecutor = toolExecutor ?? DefaultChatToolExecutionService(
@@ -215,6 +229,10 @@ class ChatViewModel: ObservableObject {
 
         loadConversationHistory()
         self.vlmExecutor.delegate = self
+    }
+
+    deinit {
+        launchModelPreloadTask?.cancel()
     }
 
     private func loadConversationHistory() {
@@ -408,6 +426,7 @@ class ChatViewModel: ObservableObject {
         ChatStreamDiagnostics.log("generation.start promptChars=\(request.prompt.count)")
 #endif
         generationTask = Task {
+            await cancelLaunchModelPreloadForForegroundUse()
             if request.isMusicGeneration {
                 await generateMusicDirectly(for: request)
             } else {
@@ -432,6 +451,7 @@ class ChatViewModel: ObservableObject {
         isGenerating = false
         streamingMessageId = nil
         isModelLoading = false
+        cancelLaunchModelPreload()
         loadingMessage = ""
 
         Task {

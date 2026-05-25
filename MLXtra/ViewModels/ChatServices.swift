@@ -27,6 +27,12 @@ protocol ChatModelExecuting: ModelExecutor {
     var currentModelId: String? { get }
     var currentModelBackend: RuntimeBackend? { get }
     var delegate: VLMExecutionDelegate? { get set }
+    func preload(modelId: String, backend: RuntimeBackend) async throws
+}
+
+extension ChatModelExecuting {
+    func preload(modelId: String, backend: RuntimeBackend) async throws {
+    }
 }
 
 @MainActor

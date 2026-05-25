@@ -8,6 +8,7 @@ struct ContentView: View {
     @StateObject private var runtimeUpdateManager = RuntimeUpdateManager.shared
     @StateObject private var downloadManager = ModelDownloadManager.shared
     @State private var columnVisibility: NavigationSplitViewVisibility
+    @State private var didScheduleLaunchModelPreload = false
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(PromptConfiguration.hasSeenFirstRunGuideKey) private var hasSeenFirstRunGuide = false
@@ -57,6 +58,7 @@ struct ContentView: View {
             applyUITestWindowSizeIfNeeded()
 #endif
             viewModel.refreshLocalEngineDownloadStatus()
+            scheduleLaunchModelPreloadIfNeeded()
             startPendingModelDownloadIfReady()
         }
         .onChange(of: pendingDownloadModelId) { _, _ in
@@ -159,6 +161,17 @@ struct ContentView: View {
         case .downloading, .paused:
             return
         }
+    }
+
+    private func scheduleLaunchModelPreloadIfNeeded() {
+#if DEBUG
+        guard ProcessInfo.processInfo.environment["MLXTRA_UI_TEST_MODE"] != "1" else {
+            return
+        }
+#endif
+        guard !didScheduleLaunchModelPreload else { return }
+        didScheduleLaunchModelPreload = true
+        viewModel.scheduleLaunchModelPreload()
     }
 
     private func sidebarColumnMetrics(for windowWidth: CGFloat) -> SidebarColumnMetrics {

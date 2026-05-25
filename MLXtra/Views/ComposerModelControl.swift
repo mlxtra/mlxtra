@@ -24,6 +24,13 @@ struct ComposerModelControl: View {
 
     private var isLoading: Bool {
         status.state == .preparing
+            || status.state == .preloading
+            || status.state == .loadingModel
+            || (status.loadProgress != nil && (viewModel.isGenerating || viewModel.isModelLoading || viewModel.isPythonLoading))
+    }
+
+    private var isForegroundLoading: Bool {
+        status.state == .preparing
             || status.state == .loadingModel
             || (status.loadProgress != nil && (viewModel.isGenerating || viewModel.isModelLoading || viewModel.isPythonLoading))
     }
@@ -40,7 +47,7 @@ struct ComposerModelControl: View {
                 HStack(spacing: 6) {
                     Image(systemName: profile.icon)
                         .font(.system(size: MLXtraDesignSystem.Icon.small, weight: .medium))
-                        .foregroundStyle(isLoading ? Color.accentColor : MLXtraDesignSystem.Palette.secondaryLabel)
+                        .foregroundStyle(isForegroundLoading ? Color.accentColor : MLXtraDesignSystem.Palette.secondaryLabel)
                         .frame(width: 16)
 
                     Text(compactModelTitle)
@@ -140,11 +147,11 @@ struct ComposerModelControl: View {
             if showsLoadingLine {
                 ZStack {
                     ComposerModelLoadProgressLine(progress: status.loadProgress)
-                    Text("Model loading")
+                    Text(status.state == .preloading ? "Model preparing in background" : "Model loading")
                         .font(.system(size: 1))
                         .foregroundStyle(.clear)
                         .frame(height: 2)
-                        .accessibilityLabel("Model loading")
+                        .accessibilityLabel(status.state == .preloading ? "Model preparing in background" : "Model loading")
                         .accessibilityIdentifier("composer.modelLoadingIndicator")
                 }
                 .padding(.horizontal, 8)
@@ -161,6 +168,10 @@ struct ComposerModelControl: View {
     }
 
     private var compactModelTitle: String {
+        if status.state == .preloading {
+            return profile.name
+        }
+
         if let progress = status.loadProgress {
             return progress.compactTitle(modelName: profile.name)
         }
@@ -174,7 +185,7 @@ struct ComposerModelControl: View {
 
     private var statusIconTint: Color {
         switch status.state {
-        case .ready, .idle, .memoryFreed:
+        case .ready, .idle, .memoryFreed, .preloading:
             return MLXtraDesignSystem.Palette.secondaryLabel
         default:
             return status.tone.color
@@ -182,7 +193,7 @@ struct ComposerModelControl: View {
     }
 
     private var borderColor: Color {
-        isLoading ? Color.accentColor.opacity(0.20) : MLXtraDesignSystem.Surface.quietHairline
+        isForegroundLoading ? Color.accentColor.opacity(0.20) : MLXtraDesignSystem.Surface.quietHairline
     }
 
     private var segmentDivider: some View {

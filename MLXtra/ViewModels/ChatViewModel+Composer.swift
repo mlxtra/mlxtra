@@ -176,6 +176,7 @@ extension ChatViewModel {
         lyricsDraftTask?.cancel()
         lyricsDraftTask = Task { [weak self] in
             guard let self else { return }
+            await self.cancelLaunchModelPreloadForForegroundUse()
             await self.generateMusicLyricsDraft(for: brief)
         }
     }

@@ -7,6 +7,7 @@ extension ChatViewModel {
             runtimeState: runtimeManager.state,
             isPythonLoading: isPythonLoading,
             isModelLoading: isModelLoading,
+            isPreloadingLocalModel: isPreloadingLocalModel,
             isGenerating: isGenerating,
             loadingMessage: loadingMessage,
             loadProgress: modelLoadProgress,
@@ -37,6 +38,7 @@ extension ChatViewModel {
     func freeLocalEngineMemory() {
         guard canFreeLocalEngineMemory else { return }
 
+        cancelLaunchModelPreload()
         let freedModelName = loadedEngineModelName ?? activeEngineModelName ?? activeModelProfile.name
         isPythonLoading = false
         isModelLoading = false
@@ -56,6 +58,7 @@ extension ChatViewModel {
     func restartLocalEngine() {
         guard !isInputDisabled else { return }
 
+        cancelLaunchModelPreload()
         isPythonLoading = true
         loadingMessage = "Preparing local engine..."
         modelLoadProgress = nil
@@ -97,6 +100,128 @@ extension ChatViewModel {
             }
 
             await refreshSelectedDownloadRequirement(selectionRequirement)
+        }
+    }
+
+    func scheduleLaunchModelPreload(
+        delayNanoseconds: UInt64 = ChatViewModel.defaultLaunchModelPreloadDelayNanoseconds
+    ) {
+        guard launchModelPreloadTask == nil,
+              !isPreloadingLocalModel,
+              isLaunchModelPreloadEnabled else {
+            return
+        }
+
+        launchModelPreloadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            do {
+                if delayNanoseconds > 0 {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                }
+                try Task.checkCancellation()
+                await self.preloadSelectedLaunchModelIfEligible()
+            } catch is CancellationError {
+                self.finishLaunchModelPreload()
+            } catch {
+                self.finishLaunchModelPreload()
+            }
+        }
+    }
+
+    func cancelLaunchModelPreload() {
+        guard launchModelPreloadTask != nil || isPreloadingLocalModel else { return }
+
+        launchModelPreloadTask?.cancel()
+        launchModelPreloadTask = nil
+        let shouldTerminateEngine = isPreloadingLocalModel
+        finishLaunchModelPreload()
+
+        guard shouldTerminateEngine else { return }
+        Task { @MainActor in
+            await vlmExecutor.terminate()
+        }
+    }
+
+    func cancelLaunchModelPreloadForForegroundUse() async {
+        guard launchModelPreloadTask != nil || isPreloadingLocalModel else { return }
+
+        let task = launchModelPreloadTask
+        task?.cancel()
+        launchModelPreloadTask = nil
+        let shouldTerminateEngine = isPreloadingLocalModel
+        finishLaunchModelPreload()
+
+        if shouldTerminateEngine {
+            await vlmExecutor.terminate()
+        }
+
+        await task?.value
+    }
+
+    private var isLaunchModelPreloadEnabled: Bool {
+        if userDefaults.object(forKey: Self.launchModelPreloadEnabledKey) == nil {
+            return true
+        }
+
+        return userDefaults.bool(forKey: Self.launchModelPreloadEnabledKey)
+    }
+
+    private var shouldSkipLaunchPreloadForSystemPressure: Bool {
+        launchModelPreloadPressureCheck()
+    }
+
+    private func preloadSelectedLaunchModelIfEligible() async {
+        guard isLaunchModelPreloadEnabled,
+              !shouldSkipLaunchPreloadForSystemPressure,
+              !isInputDisabled,
+              launchModelPreloadTask != nil else {
+            finishLaunchModelPreload()
+            return
+        }
+
+        _ = await selectDownloadedDefaultModelIfNeeded(for: .vision)
+        let profile = profile(for: .chat)
+        guard profile.modality == .vision,
+              profile.backend == .vlm || profile.backend == .llm,
+              profile.isRuntimeCompatible(),
+              !isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend),
+              await isModelDownloadedOffMain(modelId: profile.modelId) else {
+            finishLaunchModelPreload()
+            return
+        }
+
+        do {
+            try Task.checkCancellation()
+            isPreloadingLocalModel = true
+            setActiveEngineModel(name: profile.name, role: .chat)
+            loadingMessage = "Preparing \(profile.name)..."
+            modelLoadProgress = ModelLoadProgress(
+                modelId: profile.modelId,
+                backend: profile.backend,
+                phase: .warming,
+                detail: "Preparing \(profile.name) in the background"
+            )
+
+            try await runtimeManager.initialize()
+            try Task.checkCancellation()
+            try await vlmExecutor.preload(modelId: profile.modelId, backend: profile.backend)
+            finishLaunchModelPreload()
+        } catch is CancellationError {
+            finishLaunchModelPreload()
+        } catch {
+            localEngineErrorMessage = nil
+            finishLaunchModelPreload()
+        }
+    }
+
+    private func finishLaunchModelPreload() {
+        launchModelPreloadTask = nil
+        isPreloadingLocalModel = false
+
+        if !isGenerating && !isModelLoading && !isPythonLoading && !isDraftingMusicLyrics {
+            loadingMessage = ""
+            modelLoadProgress = nil
         }
     }
 
@@ -195,6 +320,7 @@ extension ChatViewModel {
 
     func selectModelProfile(_ profile: ModelCapabilityProfile) {
         guard !isInputDisabled else { return }
+        cancelLaunchModelPreload()
         modelSelectionStore.setSelectedModelId(profile.modelId, for: profile.modality)
         if let aiModel = profile.aiModel {
             selectedModel = aiModel
@@ -407,6 +533,7 @@ extension ChatViewModel {
     func selectTool(_ tool: Tool) {
         guard !isInputDisabled else { return }
 
+        cancelLaunchModelPreload()
         selectedTool = tool
         if tool == .music {
             musicIntentState = .needsInstrumentalOrVocals
@@ -422,6 +549,7 @@ extension ChatViewModel {
     func selectModel(_ model: AIModel) {
         guard !isInputDisabled else { return }
 
+        cancelLaunchModelPreload()
         selectedModel = model
         modelSelectionStore.setSelectedModelId(model.modelId, for: .vision)
         modelSelectionRevision += 1

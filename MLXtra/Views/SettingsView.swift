@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(PromptConfiguration.deepResearchSystemPromptKey) private var deepResearchSystemPrompt = PromptConfiguration.defaultDeepResearchSystemPrompt
     @AppStorage(PromptConfiguration.toolDefinitionsKey) private var toolDefinitionsJSON = PromptConfiguration.defaultToolDefinitionsJSON
     @AppStorage("MLXtra.showExpertSettings") private var showExpertSettings = false
+    @AppStorage(ChatViewModel.launchModelPreloadEnabledKey) private var preloadLocalChatModelOnLaunch = true
     @State private var searchText = ""
     @State private var selectedFilter: ModelDownloadFilter = .all
     @State private var selectedPane: SettingsPane = .models
@@ -275,6 +276,8 @@ struct SettingsView: View {
 
     private var promptsPane: some View {
         VStack(alignment: .leading, spacing: 18) {
+            PerformanceSettingsSection(preloadLocalChatModelOnLaunch: $preloadLocalChatModelOnLaunch)
+
             AdvancedQuickControls(
                 systemPrompt: $systemPrompt,
                 deepResearchSystemPrompt: $deepResearchSystemPrompt,
