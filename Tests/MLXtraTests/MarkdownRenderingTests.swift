@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import MLXtra
 
@@ -6,6 +7,14 @@ final class MarkdownRenderingTests: XCTestCase {
 
     func testAssistantTextUsesFastPlainRendererByDefault() {
         XCTAssertTrue(AIContentRenderingPolicy.shouldUseFastPlainText(for: "Short answer."))
+    }
+
+    func testMultiParagraphPlainTextUsesMarkdownSpacing() {
+        XCTAssertFalse(
+            AIContentRenderingPolicy.shouldUseFastPlainText(for: "First paragraph.\n\nSecond paragraph.")
+        )
+        XCTAssertEqual(MarkdownTextView.blockSpacing, MarkdownRenderStyle.default.paragraphSpacing)
+        XCTAssertGreaterThanOrEqual(MarkdownTextView.blockSpacing, MLXtraDesignSystem.Spacing.xxl)
     }
 
     func testMarkdownDetectionTriggersRendering() {
@@ -55,6 +64,77 @@ final class MarkdownRenderingTests: XCTestCase {
             rendered.string.contains("[Verse 1]\nMorning mist on the Cherney flow\nWhere the river bends and the willows grow"),
             "Final markdown render should keep lyric lines separated."
         )
+    }
+
+    func testAttributedRenderUsesStyledSeparatorsBetweenBlocks() {
+        let style = MarkdownRenderStyle.default
+        let rendered = MarkdownAttributedRenderer.attributedString(
+            from: [
+                .paragraph(content: "First paragraph."),
+                .paragraph(content: "Second paragraph.")
+            ],
+            style: style
+        )
+
+        XCTAssertEqual(rendered.string, "First paragraph.\nSecond paragraph.")
+
+        let trailingParagraphIndex = "First paragraph.".utf16.count - 1
+        let paragraphStyle = rendered.attribute(
+            .paragraphStyle,
+            at: trailingParagraphIndex,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(paragraphStyle?.lineSpacing, style.lineSpacing)
+        XCTAssertEqual(paragraphStyle?.paragraphSpacing, style.paragraphSpacing)
+    }
+
+    func testStreamingTailReceivesStyledSeparatorAfterStableBlock() {
+        let style = MarkdownRenderStyle.default
+        let rendered = NSMutableAttributedString()
+        rendered.append(
+            MarkdownAttributedRenderer.attributedString(
+                from: [.paragraph(content: "Stable paragraph.")],
+                style: style
+            )
+        )
+        MarkdownAttributedRenderer.appendBlockSeparatorIfNeeded(to: rendered, style: style)
+        rendered.append(
+            MarkdownAttributedRenderer.tailAttributedString(
+                from: .paragraph("Live paragraph."),
+                style: style
+            )
+        )
+
+        XCTAssertEqual(rendered.string, "Stable paragraph.\nLive paragraph.")
+
+        let trailingParagraphIndex = "Stable paragraph.".utf16.count - 1
+        let paragraphStyle = rendered.attribute(
+            .paragraphStyle,
+            at: trailingParagraphIndex,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(paragraphStyle?.paragraphSpacing, style.paragraphSpacing)
+    }
+
+    func testAttributedRenderAppliesSpacingToPreviousBlockWithoutExtraNewlines() {
+        let style = MarkdownRenderStyle.default
+        let rendered = MarkdownAttributedRenderer.attributedString(
+            from: [
+                .paragraph(content: "First paragraph."),
+                .paragraph(content: "Second paragraph.")
+            ],
+            style: style
+        )
+
+        XCTAssertEqual(rendered.string, "First paragraph.\nSecond paragraph.")
+
+        let trailingParagraphIndex = "First paragraph.".utf16.count - 1
+        let paragraphStyle = rendered.attribute(
+            .paragraphStyle,
+            at: trailingParagraphIndex,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(paragraphStyle?.paragraphSpacing, style.paragraphSpacing)
     }
 
     func testWaveformBarHeightScalesRatiosToGeometry() {

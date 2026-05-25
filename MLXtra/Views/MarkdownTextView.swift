@@ -36,6 +36,8 @@ struct ThinkingView: View {
 }
 
 struct MarkdownTextView: View {
+    static let blockSpacing = MarkdownRenderStyle.defaultParagraphSpacing
+
     let text: String
     let isStreaming: Bool
 
@@ -49,7 +51,7 @@ struct MarkdownTextView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MLXtraDesignSystem.Spacing.md + 1) {
+        VStack(alignment: .leading, spacing: Self.blockSpacing) {
             ForEach(Array(parsedBlocks.enumerated()), id: \.offset) { _, block in
                 blockView(block)
                     .accessibilityIdentifier(markdownAccessibilityIdentifier(for: block))

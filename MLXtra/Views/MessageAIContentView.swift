@@ -57,6 +57,7 @@ enum AIContentRenderingPolicy {
     static func shouldUseFastPlainText(for content: String) -> Bool {
 
         let hasHeading = content.contains("\n# ") || content.hasPrefix("# ")
+        let hasParagraphBreak = containsParagraphBreak(content)
         let hasBold = content.contains("**")
         let hasItalic = content.contains("*") && hasItalicPair(content)
         let hasCodeBlock = content.contains("```")
@@ -68,9 +69,25 @@ enum AIContentRenderingPolicy {
         let hasBlockquote = content.contains("\n> ") || content.hasPrefix("> ")
         let hasMath = content.contains("$$") || content.contains("\\[")
         let hasLink = content.contains("](")
-        return !hasHeading && !hasBold && !hasItalic && !hasCodeBlock
+        return !hasHeading && !hasParagraphBreak && !hasBold && !hasItalic && !hasCodeBlock
             && !hasUnorderedList && !hasOrderedList && !hasTable
             && !hasBlockquote && !hasMath && !hasLink
+    }
+
+    private static func containsParagraphBreak(_ text: String) -> Bool {
+        var sawNewline = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "\n" {
+                if sawNewline { return true }
+                sawNewline = true
+            } else if sawNewline, !character.isWhitespace {
+                sawNewline = false
+            }
+            index = text.index(after: index)
+        }
+        return false
     }
 
     private static func hasItalicPair(_ text: String) -> Bool {
@@ -313,9 +330,7 @@ private final class FastStreamingTextNativeView: NSView {
                 from: result.newBlocks,
                 style: renderStyle
             )
-            if storage.length > 0 {
-                storage.append(NSAttributedString(string: "\n"))
-            }
+            MarkdownAttributedRenderer.appendBlockSeparatorIfNeeded(to: storage, style: renderStyle)
             storage.append(blockAttr)
         }
 
@@ -328,6 +343,7 @@ private final class FastStreamingTextNativeView: NSView {
             style: renderStyle
         )
         if tailAttr.length > 0 {
+            MarkdownAttributedRenderer.appendBlockSeparatorIfNeeded(to: storage, style: renderStyle)
             storage.append(tailAttr)
         }
 

@@ -375,12 +375,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
@@ -406,12 +404,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
@@ -429,12 +425,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
             runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults,
             launchModelPreloadPressureCheck: { true }
         )
 
@@ -455,12 +449,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
@@ -487,12 +479,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 500_000_000)
@@ -514,12 +504,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 50_000_000)
@@ -541,12 +529,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 50_000_000)
@@ -569,12 +555,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         let executor = LaunchPreloadTestExecutor()
         executor.preloadDelayNanoseconds = 50_000_000
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
@@ -606,12 +590,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         let executor = LaunchPreloadTestExecutor()
         executor.preloadDelayNanoseconds = 50_000_000
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
@@ -636,12 +618,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
@@ -785,6 +765,23 @@ final class ChatViewModelLogicTests: XCTestCase {
             vlmExecutor: QuickPromptTestExecutor(),
             runtimeManager: QuickPromptRuntimeManager(),
             toolExecutor: QuickPromptToolExecutionService()
+        )
+    }
+
+    @MainActor
+    private func makeLaunchPreloadViewModel(
+        defaults: UserDefaults,
+        executor: LaunchPreloadTestExecutor,
+        runtimeManager: LaunchPreloadRuntimeManager,
+        launchModelPreloadPressureCheck: @escaping () -> Bool = { false }
+    ) -> ChatViewModel {
+        ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults,
+            launchModelPreloadPressureCheck: launchModelPreloadPressureCheck
         )
     }
 

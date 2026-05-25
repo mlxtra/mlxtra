@@ -10,7 +10,7 @@ struct MarkdownCacheKey: Hashable {
     let contentScale: CGFloat
     let rendererVersion: Int      // bump when renderer logic changes
 
-    static let currentRendererVersion = 3
+    static let currentRendererVersion = 4
 }
 
 

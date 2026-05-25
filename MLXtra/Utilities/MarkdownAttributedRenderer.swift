@@ -3,6 +3,8 @@ import AppKit
 
 
 struct MarkdownRenderStyle: @unchecked Sendable {
+    static let defaultParagraphSpacing: CGFloat = 14
+
     let fontSize: CGFloat
     let textColor: NSColor
     let codeFont: NSFont
@@ -22,7 +24,7 @@ struct MarkdownRenderStyle: @unchecked Sendable {
             return .systemFont(ofSize: sizes[max(0, min(level - 1, 5))], weight: weight)
         },
         lineSpacing: 5,
-        paragraphSpacing: 8
+        paragraphSpacing: MarkdownRenderStyle.defaultParagraphSpacing
     )
 }
 
@@ -55,11 +57,58 @@ struct MarkdownAttributedRenderer {
         let result = NSMutableAttributedString()
         for (index, block) in blocks.enumerated() {
             if index > 0 {
-                result.append(NSAttributedString(string: "\n"))
+                appendBlockSeparator(to: result, style: style)
             }
             result.append(attributedString(from: block, style: style))
         }
         return result
+    }
+
+    static func appendBlockSeparatorIfNeeded(
+        to result: NSMutableAttributedString,
+        style: MarkdownRenderStyle
+    ) {
+        guard result.length > 0 else { return }
+        appendBlockSeparator(to: result, style: style)
+    }
+
+    static func blockSeparator(style: MarkdownRenderStyle) -> NSAttributedString {
+        NSAttributedString(
+            string: "\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: style.fontSize),
+                .foregroundColor: style.textColor
+            ]
+        )
+    }
+
+    private static func appendBlockSeparator(
+        to result: NSMutableAttributedString,
+        style: MarkdownRenderStyle
+    ) {
+        applyTrailingParagraphSpacing(to: result, style: style)
+        result.append(blockSeparator(style: style))
+    }
+
+    private static func applyTrailingParagraphSpacing(
+        to result: NSMutableAttributedString,
+        style: MarkdownRenderStyle
+    ) {
+        guard result.length > 0 else { return }
+
+        let location = result.length - 1
+        let paragraphRange = (result.string as NSString).paragraphRange(
+            for: NSRange(location: location, length: 0)
+        )
+        let existingStyle = result.attribute(
+            .paragraphStyle,
+            at: location,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        let paragraphStyle = (existingStyle?.mutableCopy() as? NSMutableParagraphStyle)
+            ?? NSMutableParagraphStyle()
+        paragraphStyle.paragraphSpacing = style.paragraphSpacing
+        result.addAttribute(.paragraphStyle, value: paragraphStyle, range: paragraphRange)
     }
 
 
