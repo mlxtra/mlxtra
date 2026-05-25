@@ -604,7 +604,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         let profile = try XCTUnwrap(testVisionProfiles.first)
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
-        executor.preloadDelayNanoseconds = 50_000_000
+        executor.holdPreloadUntilReleased = true
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
         let viewModel = makeLaunchPreloadViewModel(
             defaults: defaults,
@@ -613,7 +613,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
-        let didStartPreloading = await waitUntil {
+        let didStartPreloading = await waitUntil(timeoutNanoseconds: 5_000_000_000) {
             executor.preloadRequests.count == 1 && viewModel.isPreloadingLocalModel
         }
         XCTAssertTrue(didStartPreloading)
@@ -621,6 +621,8 @@ final class ChatViewModelLogicTests: XCTestCase {
 
         viewModel.inputText = "Explain the image"
         viewModel.sendMessage()
+        XCTAssertTrue(executor.receivedRequests.isEmpty)
+        executor.releasePreload()
         await viewModel.generationTask?.value
 
         XCTAssertEqual(executor.terminateCount, 0)
@@ -639,7 +641,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         let profile = try XCTUnwrap(testVisionProfiles.first)
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
-        executor.preloadDelayNanoseconds = 50_000_000
+        executor.holdPreloadUntilReleased = true
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
         let viewModel = makeLaunchPreloadViewModel(
             defaults: defaults,
@@ -649,12 +651,13 @@ final class ChatViewModelLogicTests: XCTestCase {
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
         let task = try XCTUnwrap(viewModel.launchModelPreloadTask)
-        let didStartPreloading = await waitUntil {
+        let didStartPreloading = await waitUntil(timeoutNanoseconds: 5_000_000_000) {
             executor.preloadRequests.count == 1 && viewModel.isPreloadingLocalModel
         }
         XCTAssertTrue(didStartPreloading)
 
         viewModel.createNewChat()
+        executor.releasePreload()
         await task.value
 
         XCTAssertEqual(executor.terminateCount, 0)
@@ -947,9 +950,11 @@ private final class LaunchPreloadTestExecutor: ChatModelExecuting {
     var currentModelBackend: RuntimeBackend?
     weak var delegate: VLMExecutionDelegate?
     var preloadDelayNanoseconds: UInt64 = 0
+    var holdPreloadUntilReleased = false
     private(set) var preloadRequests: [(modelId: String, backend: RuntimeBackend)] = []
     private(set) var receivedRequests: [ExecutionRequest] = []
     private(set) var terminateCount = 0
+    private var preloadReleaseContinuation: CheckedContinuation<Void, Never>?
 
     func initialize() async throws {
         isReady = true
@@ -958,13 +963,24 @@ private final class LaunchPreloadTestExecutor: ChatModelExecuting {
     func preload(modelId: String, backend: RuntimeBackend) async throws {
         preloadRequests.append((modelId, backend))
         isReady = true
-        if preloadDelayNanoseconds > 0 {
+        if holdPreloadUntilReleased {
+            await withCheckedContinuation { continuation in
+                preloadReleaseContinuation = continuation
+            }
+        } else if preloadDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: preloadDelayNanoseconds)
         }
         try Task.checkCancellation()
         isModelLoaded = true
         currentModelId = modelId
         currentModelBackend = backend
+    }
+
+    func releasePreload() {
+        holdPreloadUntilReleased = false
+        guard let continuation = preloadReleaseContinuation else { return }
+        preloadReleaseContinuation = nil
+        continuation.resume()
     }
 
     func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
