@@ -19,10 +19,6 @@ struct PerformanceSettingsSection: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-
-                Text("No downloads start automatically.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
 
             Spacer(minLength: 16)
@@ -31,7 +27,7 @@ struct PerformanceSettingsSection: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
-                .help("Prepare the selected downloaded chat model after launch.")
+                .help("Prepare the selected downloaded chat model after launch. Downloads never start automatically.")
                 .accessibilityIdentifier("settings.performance.preloadChatModel")
         }
         .padding(14)
