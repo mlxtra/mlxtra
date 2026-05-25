@@ -30,6 +30,12 @@ class ChatViewModel: ObservableObject {
         return thermalState == .serious || thermalState == .critical
     }
 
+    nonisolated static func defaultLaunchModelPreloadRuntimeCompatibilityCheck(
+        _ profile: ModelCapabilityProfile
+    ) -> Bool {
+        profile.isRuntimeCompatible()
+    }
+
     private var cachedRecentChats: [Chat] = []
     private var _cachedRecentChatsRevision: UInt = 0
     private var chatsSortRevision: UInt = 0
@@ -92,6 +98,7 @@ class ChatViewModel: ObservableObject {
     let modelParameterStore: ModelParameterStore
     let userDefaults: UserDefaults
     let launchModelPreloadPressureCheck: () -> Bool
+    let launchModelPreloadRuntimeCompatibilityCheck: (ModelCapabilityProfile) -> Bool
     let streamingContentStore = StreamingMessageContentStore()
     var generationTask: Task<Void, Never>?
     var launchModelPreloadTask: Task<Void, Never>?
@@ -204,7 +211,8 @@ class ChatViewModel: ObservableObject {
         runtimeManager: ChatRuntimeManaging? = nil,
         toolExecutor: ChatToolExecutionServicing? = nil,
         userDefaults: UserDefaults = .standard,
-        launchModelPreloadPressureCheck: @escaping () -> Bool = ChatViewModel.defaultLaunchModelPreloadPressureCheck
+        launchModelPreloadPressureCheck: @escaping () -> Bool = ChatViewModel.defaultLaunchModelPreloadPressureCheck,
+        launchModelPreloadRuntimeCompatibilityCheck: @escaping (ModelCapabilityProfile) -> Bool = ChatViewModel.defaultLaunchModelPreloadRuntimeCompatibilityCheck
     ) {
         let resolvedChatPersistence = chatPersistence ?? LocalChatPersistenceService()
         let resolvedRuntimeManager = runtimeManager ?? RuntimeManager()
@@ -215,6 +223,7 @@ class ChatViewModel: ObservableObject {
         self.vlmExecutor = resolvedExecutor
         self.userDefaults = userDefaults
         self.launchModelPreloadPressureCheck = launchModelPreloadPressureCheck
+        self.launchModelPreloadRuntimeCompatibilityCheck = launchModelPreloadRuntimeCompatibilityCheck
         self.modelSelectionStore = ModelSelectionStore(userDefaults: userDefaults)
         self.modelParameterStore = ModelParameterStore(userDefaults: userDefaults)
         self.toolExecutor = toolExecutor ?? DefaultChatToolExecutionService(

@@ -442,6 +442,30 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testLaunchPreloadSkipsWhenRuntimeIsIncompatible() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let profile = try XCTUnwrap(testVisionProfiles.first)
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
+        let executor = LaunchPreloadTestExecutor()
+        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager,
+            launchModelPreloadRuntimeCompatibilityCheck: { _ in false }
+        )
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
+        await viewModel.launchModelPreloadTask?.value
+
+        XCTAssertNil(viewModel.launchModelPreloadTask)
+        XCTAssertFalse(viewModel.isPreloadingLocalModel)
+        XCTAssertEqual(runtimeManager.initializeCount, 0)
+        XCTAssertTrue(executor.preloadRequests.isEmpty)
+    }
+
+    @MainActor
     func testLaunchPreloadSkipsWhenSelectedVisionModelIsNotDownloaded() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -651,12 +675,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
-        let viewModel = ChatViewModel(
-            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
-            vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: QuickPromptToolExecutionService(),
-            userDefaults: defaults
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: executor,
+            runtimeManager: runtimeManager
         )
 
         viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
@@ -773,7 +795,8 @@ final class ChatViewModelLogicTests: XCTestCase {
         defaults: UserDefaults,
         executor: LaunchPreloadTestExecutor,
         runtimeManager: LaunchPreloadRuntimeManager,
-        launchModelPreloadPressureCheck: @escaping () -> Bool = { false }
+        launchModelPreloadPressureCheck: @escaping () -> Bool = { false },
+        launchModelPreloadRuntimeCompatibilityCheck: @escaping (ModelCapabilityProfile) -> Bool = { _ in true }
     ) -> ChatViewModel {
         ChatViewModel(
             chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
@@ -781,7 +804,8 @@ final class ChatViewModelLogicTests: XCTestCase {
             runtimeManager: runtimeManager,
             toolExecutor: QuickPromptToolExecutionService(),
             userDefaults: defaults,
-            launchModelPreloadPressureCheck: launchModelPreloadPressureCheck
+            launchModelPreloadPressureCheck: launchModelPreloadPressureCheck,
+            launchModelPreloadRuntimeCompatibilityCheck: launchModelPreloadRuntimeCompatibilityCheck
         )
     }
 

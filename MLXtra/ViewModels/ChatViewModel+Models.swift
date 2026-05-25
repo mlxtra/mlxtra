@@ -211,7 +211,7 @@ extension ChatViewModel {
         let profile = profile(for: .chat)
         guard profile.modality == .vision,
               profile.backend == .vlm || profile.backend == .llm,
-              profile.isRuntimeCompatible(),
+              launchModelPreloadRuntimeCompatibilityCheck(profile),
               !isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend),
               await isModelDownloadedOffMain(modelId: profile.modelId) else {
             finishLaunchModelPreload()
