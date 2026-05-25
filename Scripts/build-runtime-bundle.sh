@@ -11,6 +11,7 @@ source "${SCRIPT_DIR}/runtime-dependencies.sh"
 BUILD_DIR="${PROJECT_DIR}/.build/runtime"
 CACHE_DIR="${PROJECT_DIR}/.build/runtime-cache"
 OUTPUT_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
+FORCED_WHEELHOUSE="${BUILD_DIR}/forced-wheelhouse"
 FRESH_CACHE=0
 SKIP_VERIFY=0
 
@@ -90,6 +91,20 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+absolute_path() {
+    local path="$1"
+    if [[ "${path}" == /* ]]; then
+        printf '%s\n' "${path}"
+    else
+        printf '%s/%s\n' "$(pwd -P)" "${path}"
+    fi
+}
+
+BUILD_DIR="$(absolute_path "${BUILD_DIR}")"
+CACHE_DIR="$(absolute_path "${CACHE_DIR}")"
+OUTPUT_DIR="$(absolute_path "${OUTPUT_DIR}")"
+FORCED_WHEELHOUSE="${BUILD_DIR}/forced-wheelhouse"
+
 echo "=== MLX-VLM Runtime Bundle Builder v${RUNTIME_VERSION} ==="
 echo ""
 
@@ -127,7 +142,9 @@ mkdir -p "${BUILD_DIR}/python/Frameworks"
     cd "${BUILD_DIR}/python_pkg"
     for pkg in *.pkg; do
         if [[ "$pkg" == "Python"*".pkg" ]]; then
-            tar -xf "${pkg}/Payload" -C "${BUILD_DIR}/python/Frameworks" 2>/dev/null || true
+            if ! ditto -x -z "${pkg}/Payload" "${BUILD_DIR}/python/Frameworks" 2>/dev/null; then
+                tar -xf "${pkg}/Payload" -C "${BUILD_DIR}/python/Frameworks" 2>/dev/null || true
+            fi
         fi
     done
 )
@@ -226,6 +243,23 @@ VENV_PYTHON="${BUILD_DIR}/venv/bin/python"
 
 "${VENV_PIP}" install --upgrade pip
 
+mkdir -p "${FORCED_WHEELHOUSE}"
+echo "Downloading MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
+"${VENV_PIP}" download \
+    --only-binary=:all: \
+    --platform "${RUNTIME_MLX_WHEEL_PLATFORM}" \
+    --implementation cp \
+    --python-version 312 \
+    --abi cp312 \
+    --dest "${FORCED_WHEELHOUSE}" \
+    "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
+
+echo "Installing MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
+"${VENV_PIP}" install \
+    --no-index \
+    --find-links "${FORCED_WHEELHOUSE}" \
+    "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
+
 for package in "${RUNTIME_MAIN_PYPI_PACKAGES[@]}"; do
     echo "Installing ${package}..."
     "${VENV_PIP}" install "${package}"
@@ -252,6 +286,11 @@ echo "Creating isolated ACE-Step runtime..."
 create_build_venv "${BUILD_DIR}/acestep-venv"
 ACE_PIP="${BUILD_DIR}/acestep-venv/bin/pip"
 "${ACE_PIP}" install --upgrade pip
+echo "Installing ACE-Step MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
+"${ACE_PIP}" install \
+    --no-index \
+    --find-links "${FORCED_WHEELHOUSE}" \
+    "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
 "${ACE_PIP}" install "${ACE_STEP_PACKAGE}"
 cp -R "${BUILD_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep-venv"
 
@@ -380,6 +419,37 @@ relocate_venv "${OUTPUT_DIR}/acestep-venv"
 codesign_native_artifacts "${OUTPUT_DIR}/venv"
 codesign_native_artifacts "${OUTPUT_DIR}/acestep-venv"
 
+validate_mlx_wheel_platform() {
+    local site_packages="$1"
+
+    RUNTIME_MLX_WHEEL_PLATFORM="${RUNTIME_MLX_WHEEL_PLATFORM}" /usr/bin/python3 - "${site_packages}" <<'PY'
+import os
+import pathlib
+import sys
+
+site_packages = pathlib.Path(sys.argv[1])
+expected_platform = os.environ["RUNTIME_MLX_WHEEL_PLATFORM"]
+
+for wheel_stem in ("mlx", "mlx_metal"):
+    wheel_files = sorted(site_packages.glob(f"{wheel_stem}-*.dist-info/WHEEL"))
+    if not wheel_files:
+        raise SystemExit(f"{wheel_stem} WHEEL metadata not found in {site_packages}")
+
+    tags = []
+    for line in wheel_files[-1].read_text().splitlines():
+        if line.startswith("Tag: "):
+            tags.append(line.removeprefix("Tag: ").strip())
+
+    if not any(expected_platform in tag for tag in tags):
+        raise SystemExit(
+            f"{wheel_stem} is not using {expected_platform}; found tags: {tags}"
+        )
+PY
+}
+
+validate_mlx_wheel_platform "${OUTPUT_DIR}/venv/lib/python3.12/site-packages"
+validate_mlx_wheel_platform "${OUTPUT_DIR}/acestep-venv/lib/python3.12/site-packages"
+
 json_array_items() {
     local indent="$1"
     shift
@@ -466,6 +536,7 @@ if [ "${SKIP_VERIFY}" = "1" ]; then
     echo "Skipping runtime import/version verification because --skip-verify was set"
 else
 RUNTIME_EXPECTED_PACKAGES="$(printf '%s\n' "${RUNTIME_MAIN_PACKAGES[@]}")" \
+RUNTIME_MLX_METAL_VERSION="${MLX_METAL_VERSION}" \
 PYTHONHOME="${RUNTIME_PYTHONHOME}" PYTHONDONTWRITEBYTECODE=1 "${OUTPUT_DIR}/venv/bin/python" -c "
 import os
 import sys
@@ -484,14 +555,25 @@ for package, version in expected.items():
         raise RuntimeError(f'{package} version mismatch: expected {version}, got {installed}')
     print(f'{package}: {installed}')
 
+mlx_metal = metadata.version('mlx-metal')
+if mlx_metal != os.environ['RUNTIME_MLX_METAL_VERSION']:
+    raise RuntimeError(f'mlx-metal version mismatch: expected {os.environ[\"RUNTIME_MLX_METAL_VERSION\"]}, got {mlx_metal}')
+print(f'mlx-metal: {mlx_metal}')
+
 print('All dependencies verified!')
 "
 
+RUNTIME_MLX_METAL_VERSION="${MLX_METAL_VERSION}" \
 PYTHONHOME="${RUNTIME_PYTHONHOME}" PYTHONDONTWRITEBYTECODE=1 "${OUTPUT_DIR}/acestep-venv/bin/python" -c "
+import os
 import importlib.metadata as metadata
 from acestep.inference import GenerationConfig, GenerationParams, generate_music
 print('ACE-Step: OK')
 print('ace-step: ' + metadata.version('ace-step'))
+mlx_metal = metadata.version('mlx-metal')
+if mlx_metal != os.environ['RUNTIME_MLX_METAL_VERSION']:
+    raise RuntimeError(f'mlx-metal version mismatch: expected {os.environ[\"RUNTIME_MLX_METAL_VERSION\"]}, got {mlx_metal}')
+print('ACE-Step mlx-metal: ' + mlx_metal)
 "
 fi
 

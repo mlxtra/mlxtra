@@ -3,13 +3,14 @@
 # Shared runtime dependency pins for the embedded macOS Python bundle.
 # Keep runtime upgrades here so the builder, validator, and generated manifest stay in sync.
 
-RUNTIME_VERSION="0.1.2"
+RUNTIME_VERSION="0.1.3"
 PYTHON_VERSION="3.12.8"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-macos11.pkg"
 PYTHON_PKG_NAME="python-${PYTHON_VERSION}-macos11.pkg"
 PYTHON_PKG_SHA256="c411b5372d563532f5e6b589af7eb16e95613d61bd5af7bfe78563467130bbff"
 
 MLX_VERSION="0.31.2"
+MLX_METAL_VERSION="0.31.2"
 MLX_VLM_VERSION="0.5.0"
 MLX_AUDIO_VERSION="0.4.3"
 MISAKI_VERSION="0.9.4"
@@ -22,9 +23,14 @@ TORCH_VERSION="2.11.0"
 TORCHVISION_VERSION="0.26.0"
 ACE_STEP_REF="6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
 ACE_STEP_PACKAGE="git+https://github.com/ace-step/ACE-Step-1.5.git@${ACE_STEP_REF}"
+RUNTIME_MLX_WHEEL_PLATFORM="macosx_14_0_arm64"
+
+RUNTIME_FORCED_BINARY_PYPI_PACKAGES=(
+    "mlx==${MLX_VERSION}"
+    "mlx-metal==${MLX_METAL_VERSION}"
+)
 
 RUNTIME_MAIN_PYPI_PACKAGES=(
-    "mlx==${MLX_VERSION}"
     "mlx-vlm==${MLX_VLM_VERSION}"
     "mlx-audio==${MLX_AUDIO_VERSION}"
     "misaki[en]==${MISAKI_VERSION}"
@@ -41,6 +47,7 @@ RUNTIME_TORCH_PACKAGES=(
 )
 
 RUNTIME_MAIN_PACKAGES=(
+    "mlx==${MLX_VERSION}"
     "${RUNTIME_MAIN_PYPI_PACKAGES[@]}"
     "${RUNTIME_TORCH_PACKAGES[@]}"
 )
