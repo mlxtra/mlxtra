@@ -277,7 +277,9 @@ class ChatViewModel: ObservableObject {
     }
 
     func createNewChat() {
-        cancelGeneration()
+        if isInputDisabled {
+            cancelGeneration()
+        }
 
         let newChat = Chat(
             title: "",
@@ -310,7 +312,7 @@ class ChatViewModel: ObservableObject {
     }
 
     func deleteChat(_ chat: Chat) {
-        if selectedChatId == chat.id {
+        if selectedChatId == chat.id, isInputDisabled {
             cancelGeneration()
         }
 
@@ -426,7 +428,7 @@ class ChatViewModel: ObservableObject {
         ChatStreamDiagnostics.log("generation.start promptChars=\(request.prompt.count)")
 #endif
         generationTask = Task {
-            await cancelLaunchModelPreloadForForegroundUse()
+            await prepareLaunchModelPreloadForForegroundUse(request)
             if request.isMusicGeneration {
                 await generateMusicDirectly(for: request)
             } else {

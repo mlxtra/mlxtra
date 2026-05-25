@@ -8,11 +8,11 @@ struct ContentView: View {
     @StateObject private var runtimeUpdateManager = RuntimeUpdateManager.shared
     @StateObject private var downloadManager = ModelDownloadManager.shared
     @State private var columnVisibility: NavigationSplitViewVisibility
-    @State private var didScheduleLaunchModelPreload = false
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(PromptConfiguration.hasSeenFirstRunGuideKey) private var hasSeenFirstRunGuide = false
     @AppStorage("MLXtra.pendingDownloadModelId") private var pendingDownloadModelId = ""
+    @AppStorage(ChatViewModel.launchModelPreloadEnabledKey) private var preloadLocalChatModelOnLaunch = true
 
     init(viewModel: ChatViewModel = ChatViewModel()) {
         self.viewModel = viewModel
@@ -69,11 +69,17 @@ struct ContentView: View {
         }
         .onChange(of: downloadManager.states) { _, _ in
             startPendingModelDownloadIfReady()
+            scheduleLaunchModelPreloadIfNeeded()
+        }
+        .onChange(of: preloadLocalChatModelOnLaunch) { _, isEnabled in
+            guard isEnabled else { return }
+            scheduleLaunchModelPreloadIfNeeded(delayNanoseconds: 0)
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 viewModel.refreshLocalEngineDownloadStatus()
                 startPendingModelDownloadIfReady()
+                scheduleLaunchModelPreloadIfNeeded()
             }
         }
     }
@@ -88,6 +94,7 @@ struct ContentView: View {
                 onOpenModels: openActiveModelSetup,
                 onContinue: {
                     hasSeenFirstRunGuide = true
+                    scheduleLaunchModelPreloadIfNeeded(delayNanoseconds: 0)
                 }
             )
         } else {
@@ -163,15 +170,15 @@ struct ContentView: View {
         }
     }
 
-    private func scheduleLaunchModelPreloadIfNeeded() {
+    private func scheduleLaunchModelPreloadIfNeeded(
+        delayNanoseconds: UInt64 = ChatViewModel.defaultLaunchModelPreloadDelayNanoseconds
+    ) {
 #if DEBUG
         guard ProcessInfo.processInfo.environment["MLXTRA_UI_TEST_MODE"] != "1" else {
             return
         }
 #endif
-        guard !didScheduleLaunchModelPreload else { return }
-        didScheduleLaunchModelPreload = true
-        viewModel.scheduleLaunchModelPreload()
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: delayNanoseconds)
     }
 
     private func sidebarColumnMetrics(for windowWidth: CGFloat) -> SidebarColumnMetrics {

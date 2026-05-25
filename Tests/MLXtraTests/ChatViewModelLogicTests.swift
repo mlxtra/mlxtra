@@ -391,6 +391,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertEqual(executor.preloadRequests.map { $0.backend }, [profile.backend])
         XCTAssertTrue(viewModel.isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend))
         XCTAssertFalse(viewModel.isPreloadingLocalModel)
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
+        XCTAssertNil(viewModel.launchModelPreloadTask)
+        XCTAssertEqual(executor.preloadRequests.count, 1)
     }
 
     @MainActor
@@ -465,6 +469,13 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertEqual(runtimeManager.initializeCount, 0)
         XCTAssertTrue(executor.preloadRequests.isEmpty)
         XCTAssertFalse(viewModel.isPreloadingLocalModel)
+
+        runtimeManager.downloadedModelIds.insert(profile.modelId)
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
+        await viewModel.launchModelPreloadTask?.value
+
+        XCTAssertEqual(runtimeManager.initializeCount, 1)
+        XCTAssertEqual(executor.preloadRequests.map { $0.modelId }, [profile.modelId])
     }
 
     @MainActor
@@ -496,13 +507,67 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
-    func testForegroundGenerationCancelsStartedLaunchPreloadAndTakesPriority() async throws {
+    func testToolSelectionDoesNotCancelDelayedLaunchPreload() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let profile = try XCTUnwrap(testVisionProfiles.first)
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
-        executor.suspendPreloadUntilCancelled = true
+        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 50_000_000)
+        let task = try XCTUnwrap(viewModel.launchModelPreloadTask)
+        viewModel.selectTool(.chat)
+        await task.value
+
+        XCTAssertEqual(runtimeManager.initializeCount, 1)
+        XCTAssertEqual(executor.preloadRequests.map { $0.modelId }, [profile.modelId])
+        XCTAssertEqual(executor.terminateCount, 0)
+    }
+
+    @MainActor
+    func testNonChatModelSelectionDoesNotCancelDelayedLaunchPreload() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let profile = try XCTUnwrap(testVisionProfiles.first)
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.sortedProfiles(for: .image).first)
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
+        let executor = LaunchPreloadTestExecutor()
+        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 50_000_000)
+        let task = try XCTUnwrap(viewModel.launchModelPreloadTask)
+        viewModel.selectModelProfile(imageProfile)
+        await task.value
+
+        XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.imageKey), imageProfile.modelId)
+        XCTAssertEqual(runtimeManager.initializeCount, 1)
+        XCTAssertEqual(executor.preloadRequests.map { $0.modelId }, [profile.modelId])
+        XCTAssertEqual(executor.terminateCount, 0)
+    }
+
+    @MainActor
+    func testForegroundGenerationAwaitsStartedLaunchPreloadForSameChatModel() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let profile = try XCTUnwrap(testVisionProfiles.first)
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
+        let executor = LaunchPreloadTestExecutor()
+        executor.preloadDelayNanoseconds = 50_000_000
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
         let viewModel = ChatViewModel(
             chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
@@ -523,12 +588,113 @@ final class ChatViewModelLogicTests: XCTestCase {
         viewModel.sendMessage()
         await viewModel.generationTask?.value
 
-        XCTAssertEqual(executor.terminateCount, 1)
+        XCTAssertEqual(executor.terminateCount, 0)
+        XCTAssertEqual(executor.preloadRequests.count, 1)
         XCTAssertEqual(executor.receivedRequests.map(\.modelId), [profile.modelId])
         XCTAssertNil(viewModel.launchModelPreloadTask)
         XCTAssertFalse(viewModel.isPreloadingLocalModel)
         XCTAssertFalse(viewModel.isInputDisabled)
         XCTAssertEqual(viewModel.selectedChat?.messages.last?.content, "Foreground response")
+    }
+
+    @MainActor
+    func testNewChatDuringStartedLaunchPreloadKeepsWarmupAlive() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let profile = try XCTUnwrap(testVisionProfiles.first)
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
+        let executor = LaunchPreloadTestExecutor()
+        executor.preloadDelayNanoseconds = 50_000_000
+        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
+        let task = try XCTUnwrap(viewModel.launchModelPreloadTask)
+        let didStartPreloading = await waitUntil {
+            executor.preloadRequests.count == 1 && viewModel.isPreloadingLocalModel
+        }
+        XCTAssertTrue(didStartPreloading)
+
+        viewModel.createNewChat()
+        await task.value
+
+        XCTAssertEqual(executor.terminateCount, 0)
+        XCTAssertTrue(viewModel.isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend))
+    }
+
+    @MainActor
+    func testNewChatKeepsPreloadedModelReadyForFirstMessage() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let profile = try XCTUnwrap(testVisionProfiles.first)
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
+        let executor = LaunchPreloadTestExecutor()
+        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
+        await viewModel.launchModelPreloadTask?.value
+        XCTAssertTrue(executor.isModelLoaded)
+
+        viewModel.createNewChat()
+
+        XCTAssertEqual(executor.terminateCount, 0)
+        XCTAssertTrue(executor.isModelLoaded)
+        XCTAssertTrue(viewModel.isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend))
+
+        viewModel.inputText = "Hello"
+        viewModel.sendMessage()
+        await viewModel.generationTask?.value
+
+        XCTAssertEqual(executor.preloadRequests.count, 1)
+        XCTAssertEqual(executor.receivedRequests.map(\.modelId), [profile.modelId])
+        XCTAssertEqual(executor.terminateCount, 0)
+    }
+
+    @MainActor
+    func testDeletingIdleSelectedChatKeepsPreloadedModelReadyForFirstMessage() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let profile = try XCTUnwrap(testVisionProfiles.first)
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
+        let executor = LaunchPreloadTestExecutor()
+        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
+        await viewModel.launchModelPreloadTask?.value
+        let selectedChat = try XCTUnwrap(viewModel.selectedChat)
+
+        viewModel.deleteChat(selectedChat)
+
+        XCTAssertEqual(executor.terminateCount, 0)
+        XCTAssertTrue(viewModel.isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend))
+
+        viewModel.inputText = "Hello"
+        viewModel.sendMessage()
+        await viewModel.generationTask?.value
+
+        XCTAssertEqual(executor.preloadRequests.count, 1)
+        XCTAssertEqual(executor.receivedRequests.map(\.modelId), [profile.modelId])
+        XCTAssertEqual(executor.terminateCount, 0)
     }
 
     @MainActor
@@ -732,7 +898,7 @@ private final class LaunchPreloadTestExecutor: ChatModelExecuting {
     var currentModelId: String?
     var currentModelBackend: RuntimeBackend?
     weak var delegate: VLMExecutionDelegate?
-    var suspendPreloadUntilCancelled = false
+    var preloadDelayNanoseconds: UInt64 = 0
     private(set) var preloadRequests: [(modelId: String, backend: RuntimeBackend)] = []
     private(set) var receivedRequests: [ExecutionRequest] = []
     private(set) var terminateCount = 0
@@ -744,12 +910,8 @@ private final class LaunchPreloadTestExecutor: ChatModelExecuting {
     func preload(modelId: String, backend: RuntimeBackend) async throws {
         preloadRequests.append((modelId, backend))
         isReady = true
-        if suspendPreloadUntilCancelled {
-            do {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
-            } catch {
-                throw CancellationError()
-            }
+        if preloadDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: preloadDelayNanoseconds)
         }
         try Task.checkCancellation()
         isModelLoaded = true
@@ -801,7 +963,7 @@ private final class QuickPromptRuntimeManager: ChatRuntimeManaging {
 @MainActor
 private final class LaunchPreloadRuntimeManager: ChatRuntimeManaging {
     var state: RuntimeManager.RuntimeState = .notInitialized
-    let downloadedModelIds: Set<String>
+    var downloadedModelIds: Set<String>
     private(set) var initializeCount = 0
 
     init(downloadedModelIds: Set<String>) {

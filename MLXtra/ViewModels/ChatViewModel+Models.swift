@@ -106,8 +106,10 @@ extension ChatViewModel {
     func scheduleLaunchModelPreload(
         delayNanoseconds: UInt64 = ChatViewModel.defaultLaunchModelPreloadDelayNanoseconds
     ) {
+        let profile = profile(for: .chat)
         guard launchModelPreloadTask == nil,
               !isPreloadingLocalModel,
+              !isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend),
               isLaunchModelPreloadEnabled else {
             return
         }
@@ -157,6 +159,31 @@ extension ChatViewModel {
         }
 
         await task?.value
+    }
+
+    func prepareLaunchModelPreloadForForegroundUse(_ request: ChatGenerationRequest) async {
+        guard launchModelPreloadTask != nil || isPreloadingLocalModel else { return }
+
+        guard shouldAwaitLaunchModelPreload(for: request),
+              let task = launchModelPreloadTask else {
+            await cancelLaunchModelPreloadForForegroundUse()
+            return
+        }
+
+        await task.value
+    }
+
+    private func shouldAwaitLaunchModelPreload(for request: ChatGenerationRequest) -> Bool {
+        guard isPreloadingLocalModel,
+              !request.isImageGeneration,
+              !request.isSpeechGeneration,
+              !request.isMusicGeneration,
+              let progress = modelLoadProgress else {
+            return false
+        }
+
+        let profile = request.profile(for: .chat)
+        return progress.modelId == profile.modelId && progress.backend == profile.backend
     }
 
     private var isLaunchModelPreloadEnabled: Bool {
@@ -320,7 +347,9 @@ extension ChatViewModel {
 
     func selectModelProfile(_ profile: ModelCapabilityProfile) {
         guard !isInputDisabled else { return }
-        cancelLaunchModelPreload()
+        if profile.modality == .vision {
+            cancelLaunchModelPreload()
+        }
         modelSelectionStore.setSelectedModelId(profile.modelId, for: profile.modality)
         if let aiModel = profile.aiModel {
             selectedModel = aiModel
@@ -533,7 +562,6 @@ extension ChatViewModel {
     func selectTool(_ tool: Tool) {
         guard !isInputDisabled else { return }
 
-        cancelLaunchModelPreload()
         selectedTool = tool
         if tool == .music {
             musicIntentState = .needsInstrumentalOrVocals
