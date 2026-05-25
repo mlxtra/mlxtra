@@ -2,10 +2,14 @@ import XCTest
 @testable import MLXtra
 
 final class ModelCapabilityProfileTests: XCTestCase {
+    private let qwen9BModelId = "mlx-community/Qwen3.5-9B-MLX-4bit"
+    private let gemma4ModelId = "google/gemma-4-e4b-it"
+    private let qwen2BModelId = "mlx-community/Qwen3.5-2B-MLX-4bit"
+
     func testHardwareRankingForLowMediumAndHighMemoryMachines() {
-        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 4.0)?.aiModel, .mini)
-        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 8.0)?.aiModel, .gemma4)
-        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 16.0)?.aiModel, .qwen35)
+        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 4.0)?.modelId, qwen2BModelId)
+        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 8.0)?.modelId, gemma4ModelId)
+        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId, qwen9BModelId)
 
         XCTAssertEqual(ModelFit.classify(estimatedMemoryGB: 3.0, hardwareMemoryGB: 4.0), .compatible)
         XCTAssertEqual(ModelFit.classify(estimatedMemoryGB: 6.0, hardwareMemoryGB: 8.0), .compatible)
@@ -19,17 +23,17 @@ final class ModelCapabilityProfileTests: XCTestCase {
 
         let store = ModelSelectionStore(userDefaults: defaults)
 
-        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.aiModel, .qwen35)
+        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId, qwen9BModelId)
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
 
-        store.setSelectedModelId(AIModel.gemma4.modelId, for: .vision)
+        store.setSelectedModelId(gemma4ModelId, for: .vision)
         XCTAssertEqual(
             store.selectedProfile(
                 for: .vision,
                 hardwareMemoryGB: 16.0,
                 runtimeManifest: testRuntimeManifest
-            )?.aiModel,
-            .gemma4
+            )?.modelId,
+            gemma4ModelId
         )
     }
 
@@ -38,7 +42,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
         let store = ModelSelectionStore(userDefaults: defaults)
-        store.setSelectedModelId(AIModel.qwen35.modelId, for: .image)
+        store.setSelectedModelId(qwen9BModelId, for: .image)
 
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
     }
@@ -56,12 +60,72 @@ final class ModelCapabilityProfileTests: XCTestCase {
         )
     }
 
+    func testAvailableSelectionUsesReadyFallbackWhenRecommendedModelIsMissing() throws {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelSelectionStore(userDefaults: defaults)
+        let profiles = ModelCapabilityProfile.sortedProfiles(for: .image, hardwareMemoryGB: 24.0)
+        let recommendedProfile = try XCTUnwrap(profiles.first)
+        let readyFallbackProfile = try XCTUnwrap(profiles.first { $0.modelId != recommendedProfile.modelId })
+
+        let selected = store.selectedAvailableProfile(
+            for: .image,
+            hardwareMemoryGB: 24.0,
+            runtimeManifest: testRuntimeManifest
+        ) { model in
+            model.modelId == readyFallbackProfile.modelId
+        }
+
+        XCTAssertEqual(selected?.modelId, readyFallbackProfile.modelId)
+    }
+
+    func testAvailableSelectionIgnoresMissingStoredSelection() throws {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelSelectionStore(userDefaults: defaults)
+        let profiles = ModelCapabilityProfile.sortedProfiles(for: .image, hardwareMemoryGB: 24.0)
+        let storedMissingProfile = try XCTUnwrap(profiles.first)
+        let readyFallbackProfile = try XCTUnwrap(profiles.first { $0.modelId != storedMissingProfile.modelId })
+        store.setSelectedModelId(storedMissingProfile.modelId, for: .image)
+
+        let selected = store.selectedAvailableProfile(
+            for: .image,
+            hardwareMemoryGB: 24.0,
+            runtimeManifest: testRuntimeManifest
+        ) { model in
+            model.modelId == readyFallbackProfile.modelId
+        }
+
+        XCTAssertEqual(selected?.modelId, readyFallbackProfile.modelId)
+    }
+
+    func testAvailableSelectionKeepsReadyStoredSelection() throws {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelSelectionStore(userDefaults: defaults)
+        let storedProfile = try XCTUnwrap(ModelCapabilityProfile.sortedProfiles(for: .image, hardwareMemoryGB: 24.0).last)
+        store.setSelectedModelId(storedProfile.modelId, for: .image)
+
+        let selected = store.selectedAvailableProfile(
+            for: .image,
+            hardwareMemoryGB: 24.0,
+            runtimeManifest: testRuntimeManifest
+        ) { model in
+            model.modelId == storedProfile.modelId
+        }
+
+        XCTAssertEqual(selected?.modelId, storedProfile.modelId)
+    }
+
     func testVisibleProfilesHideHeavyGemmaAndQwenVariantsOnLowerMemoryHardware() {
         let visibleModelIds = Set(ModelCapabilityProfile
             .visibleProfiles(for: .vision, hardwareMemoryGB: 8.0)
             .map(\.modelId))
 
-        XCTAssertTrue(visibleModelIds.contains(AIModel.gemma4.modelId))
+        XCTAssertTrue(visibleModelIds.contains(gemma4ModelId))
         XCTAssertFalse(visibleModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
         XCTAssertFalse(visibleModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
         XCTAssertFalse(visibleModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
@@ -77,24 +141,98 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertTrue(visibleModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
     }
 
+    func testImageProfilesExposeCuratedMFluxRuntimeOptions() throws {
+        let klein4B = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B"))
+        let zImageTurbo = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "Tongyi-MAI/Z-Image-Turbo"))
+
+        XCTAssertEqual(klein4B.runtimeOptions?.mflux?.config, "flux2-klein-4b")
+        XCTAssertEqual(klein4B.runtimeOptions?.mflux?.editClass, "Flux2KleinEdit")
+        XCTAssertEqual(zImageTurbo.runtimeOptions?.mflux?.config, "z-image-turbo")
+        XCTAssertEqual(zImageTurbo.runtimeOptions?.mflux?.textToImageClass, "ZImageTurbo")
+        XCTAssertEqual(zImageTurbo.runtimeOptions?.mflux?.editClass, "ZImageTurbo")
+        XCTAssertEqual(zImageTurbo.runtimeOptions?.mflux?.quantize, 8)
+    }
+
+    func testKokoroSpeechProfileUsesFastEnglishDefaults() throws {
+        let kokoro = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "mlx-community/Kokoro-82M-4bit"))
+        let kugelAudio = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "kugelaudio/kugelaudio-0-open"))
+
+        XCTAssertEqual(kugelAudio.runtimeOptions?.audio?.adapter, "kugelaudio")
+        XCTAssertEqual(kokoro.runtimeOptions?.audio?.adapter, "kokoro")
+        XCTAssertEqual(kokoro.runtimeOptions?.audio?.defaultVoice, "af_heart")
+        XCTAssertEqual(kokoro.runtimeOptions?.audio?.languageByVoicePrefix["bf"], "b")
+        XCTAssertEqual(kokoro.runtime.minVersion, "0.1.2")
+        XCTAssertEqual(kokoro.estimatedMemoryGB, 1.0)
+        XCTAssertEqual(kokoro.parameterDefinition(key: "voice")?.defaultValue, "af_heart")
+        XCTAssertEqual(kokoro.parameterDefinition(key: "speed")?.defaultValue, "1")
+        XCTAssertEqual(kokoro.fit(hardwareMemoryGB: 16.0), .recommended)
+        XCTAssertEqual(kugelAudio.fit(hardwareMemoryGB: 16.0), .heavy)
+    }
+
+    func testQwenChatTemplateKwargsComeFromCatalogRuntimeOptions() throws {
+        let qwen = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "mlx-community/Qwen3.5-9B-MLX-4bit"))
+        let kwargs = qwen.runtimeOptions?.chatTemplateKwargs(from: ["enable_thinking": true])
+
+        XCTAssertEqual(qwen.runtimeOptions?.chatTemplate?.parameterKwargs["enable_thinking"], "enable_thinking")
+        XCTAssertEqual(kwargs?["enable_thinking"] as? Bool, true)
+    }
+
+    func testGenerationRequestIncludesRuntimeOptionsInExecutionParameters() throws {
+        let zImageTurbo = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "Tongyi-MAI/Z-Image-Turbo"))
+        let request = ChatGenerationRequest(
+            chatId: UUID(),
+            prompt: "test",
+            images: [],
+            tool: .image,
+            profilesByModality: [.image: zImageTurbo],
+            parametersByModelId: [zImageTurbo.modelId: ["steps": 10]],
+            selectionDownloadRequirement: nil,
+            selectionOperationName: "test"
+        )
+
+        let parameters = request.executionParameters(for: zImageTurbo)
+        let runtimeOptions = try XCTUnwrap(parameters["runtimeOptions"] as? [String: Any])
+        let mfluxOptions = try XCTUnwrap(runtimeOptions["mflux"] as? [String: Any])
+
+        XCTAssertEqual(parameters["steps"] as? Int, 10)
+        XCTAssertEqual(mfluxOptions["config"] as? String, "z-image-turbo")
+        XCTAssertEqual(mfluxOptions["quantize"] as? Int, 8)
+    }
+
+    func testZImageTurboIsPreferredOverKlein4BWhenComfortable() {
+        XCTAssertEqual(
+            ModelCapabilityProfile.bestProfile(for: .image, hardwareMemoryGB: 24.0)?.modelId,
+            "Tongyi-MAI/Z-Image-Turbo"
+        )
+        XCTAssertEqual(
+            ModelCapabilityProfile.bestProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId,
+            "black-forest-labs/FLUX.2-klein-4B"
+        )
+        XCTAssertEqual(
+            ModelCapabilityProfile.bestProfile(for: .image, hardwareMemoryGB: 64.0)?.modelId,
+            "Tongyi-MAI/Z-Image-Turbo"
+        )
+    }
+
     func testPerModeSelectionPersistsIndependentDefaultsForEachModality() {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
         let store = ModelSelectionStore(userDefaults: defaults)
+        let hardwareMemoryGB = 24.0
         let imageModelId = "black-forest-labs/FLUX.2-klein-4B"
         let speechModelId = "kugelaudio/kugelaudio-0-open"
         let musicModelId = "ACE-Step/acestep-v15-turbo-continuous"
 
-        store.setSelectedModelId(AIModel.gemma4.modelId, for: .vision)
+        store.setSelectedModelId(gemma4ModelId, for: .vision)
         store.setSelectedModelId(imageModelId, for: .image)
         store.setSelectedModelId(speechModelId, for: .audio)
         store.setSelectedModelId(musicModelId, for: .music)
 
-        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, AIModel.gemma4.modelId)
-        XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, imageModelId)
-        XCTAssertEqual(store.selectedProfile(for: .audio, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, speechModelId)
-        XCTAssertEqual(store.selectedProfile(for: .music, hardwareMemoryGB: 16.0, runtimeManifest: testRuntimeManifest)?.modelId, musicModelId)
+        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: hardwareMemoryGB, runtimeManifest: testRuntimeManifest)?.modelId, gemma4ModelId)
+        XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: hardwareMemoryGB, runtimeManifest: testRuntimeManifest)?.modelId, imageModelId)
+        XCTAssertEqual(store.selectedProfile(for: .audio, hardwareMemoryGB: hardwareMemoryGB, runtimeManifest: testRuntimeManifest)?.modelId, speechModelId)
+        XCTAssertEqual(store.selectedProfile(for: .music, hardwareMemoryGB: hardwareMemoryGB, runtimeManifest: testRuntimeManifest)?.modelId, musicModelId)
     }
 
     func testModelSettingsSorterOrdersDefaultsRecommendationsReadinessFitAndSize() {
@@ -131,7 +269,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
 
         XCTAssertEqual(
             sorted.map(\.id),
-            ["selected", "recommended", "ready-small", "missing", "incompatible"]
+            ["recommended", "ready-small", "missing", "selected", "incompatible"]
         )
     }
 
@@ -140,8 +278,8 @@ final class ModelCapabilityProfileTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
         let store = ModelParameterStore(userDefaults: defaults)
-        let qwen = ModelCapabilityProfile.embeddedProfile(modelId: AIModel.qwen35.modelId)!
-        let gemma = ModelCapabilityProfile.embeddedProfile(modelId: AIModel.gemma4.modelId)!
+        let qwen = ModelCapabilityProfile.embeddedProfile(modelId: qwen9BModelId)!
+        let gemma = ModelCapabilityProfile.embeddedProfile(modelId: gemma4ModelId)!
 
         store.setValue("0.2", for: "temperature", modelId: qwen.modelId)
 
@@ -154,7 +292,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
-        let qwen = ModelCapabilityProfile.embeddedProfile(modelId: AIModel.qwen35.modelId)!
+        let qwen = ModelCapabilityProfile.embeddedProfile(modelId: qwen9BModelId)!
         let encoded = try JSONEncoder().encode([
             qwen.modelId: [
                 "temperature": "0.4",
@@ -198,8 +336,8 @@ final class ModelCapabilityProfileTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
         let store = ModelParameterStore(userDefaults: defaults)
-        let qwen = ModelCapabilityProfile.embeddedProfile(modelId: AIModel.qwen35.modelId)!
-        let gemma = ModelCapabilityProfile.embeddedProfile(modelId: AIModel.gemma4.modelId)!
+        let qwen = ModelCapabilityProfile.embeddedProfile(modelId: qwen9BModelId)!
+        let gemma = ModelCapabilityProfile.embeddedProfile(modelId: gemma4ModelId)!
 
         store.setValue("0.2", for: "temperature", modelId: qwen.modelId)
         store.setValue("0.4", for: "temperature", modelId: gemma.modelId)
@@ -257,6 +395,23 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(profile.ranking.quality, 90)
     }
 
+    func testBundledModelCatalogFileDecodes() throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: "MLXtra/Resources/model-catalog.json"))
+
+        XCTAssertNoThrow(try ModelCatalogService.decodeCatalog(data: data, appVersion: nil))
+    }
+
+    func testBundledCatalogNamesExposeVariantSizes() throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: "MLXtra/Resources/model-catalog.json"))
+        let catalog = try ModelCatalogService.decodeCatalog(data: data, appVersion: nil)
+        let namesByModelId = Dictionary(uniqueKeysWithValues: catalog.profiles.map { ($0.modelId, $0.name) })
+
+        XCTAssertEqual(namesByModelId["mlx-community/Qwen3.5-2B-MLX-4bit"], "Qwen 3.5 2B")
+        XCTAssertEqual(namesByModelId["mlx-community/Qwen3.5-9B-MLX-4bit"], "Qwen 3.5 9B")
+        XCTAssertEqual(namesByModelId["google/gemma-4-e4b-it"], "Gemma 4 E4B")
+        XCTAssertEqual(namesByModelId["mlx-community/Kokoro-82M-4bit"], "Kokoro 82M 4-bit")
+    }
+
     func testCatalogRejectsChecksumMismatch() throws {
         let data = try makeCatalogJSON(modelId: "org/example-vlm")
 
@@ -277,11 +432,38 @@ final class ModelCapabilityProfileTests: XCTestCase {
         }
     }
 
+    func testCatalogIgnoresUnresolvedAppVersionPlaceholders() throws {
+        let data = try makeCatalogJSON(modelId: "org/example-vlm", minAppVersion: "1.0.6")
+
+        XCTAssertNoThrow(
+            try ModelCatalogService.decodeCatalog(data: data, appVersion: "$(MARKETING_VERSION)")
+        )
+    }
+
+    func testCatalogRefreshVersionGuardRejectsDowngrades() throws {
+        let current = try ModelCatalogService.decodeCatalog(
+            data: makeCatalogJSON(modelId: "org/current", catalogVersion: "2026.05.25.8"),
+            appVersion: "1.0.6"
+        )
+        let older = try ModelCatalogService.decodeCatalog(
+            data: makeCatalogJSON(modelId: "org/older", catalogVersion: "2026.05.19"),
+            appVersion: "1.0.6"
+        )
+        let newer = try ModelCatalogService.decodeCatalog(
+            data: makeCatalogJSON(modelId: "org/newer", catalogVersion: "2026.05.26"),
+            appVersion: "1.0.6"
+        )
+
+        XCTAssertFalse(ModelCatalogService.shouldReplaceCatalog(current: current, with: older))
+        XCTAssertTrue(ModelCatalogService.shouldReplaceCatalog(current: current, with: current))
+        XCTAssertTrue(ModelCatalogService.shouldReplaceCatalog(current: current, with: newer))
+    }
+
     func testCatalogServiceFallsBackWhenNoCacheOrBundleIsAvailable() {
         let service = ModelCatalogService(loadCachedCatalog: false, loadBundledCatalog: false)
 
-        XCTAssertEqual(service.profiles.count, ModelCapabilityProfile.embedded.count)
-        XCTAssertNotNil(service.profile(legacyModel: .mini))
+        XCTAssertEqual(service.profiles.count, 1)
+        XCTAssertNotNil(service.profile(modelId: qwen2BModelId))
     }
 
     func testRuntimeCompatibilityUsesManifestVersionAndBackend() throws {
@@ -310,6 +492,37 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertFalse(oldRuntime.supports(profile: profile))
         XCTAssertTrue(newRuntime.supports(profile: profile))
         XCTAssertFalse(wrongBackendRuntime.supports(profile: profile))
+    }
+
+    func testRuntimeCompatibilityUsesMFluxCapabilities() throws {
+        let zImageTurbo = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "Tongyi-MAI/Z-Image-Turbo"))
+        let fluxOnlyRuntime = RuntimeManifest(
+            runtimeVersion: "9.0.0",
+            compatibilityApi: 1,
+            supportedBackends: [.image],
+            imageRuntimes: RuntimeImageRuntimes(
+                mflux: RuntimeMFluxCapabilities(
+                    configs: ["flux2-klein-4b"],
+                    classes: ["Flux2Klein", "Flux2KleinEdit"],
+                    quantizeBits: []
+                )
+            )
+        )
+        let zImageRuntime = RuntimeManifest(
+            runtimeVersion: "9.0.0",
+            compatibilityApi: 1,
+            supportedBackends: [.image],
+            imageRuntimes: RuntimeImageRuntimes(
+                mflux: RuntimeMFluxCapabilities(
+                    configs: ["z-image-turbo"],
+                    classes: ["ZImageTurbo"],
+                    quantizeBits: [8]
+                )
+            )
+        )
+
+        XCTAssertFalse(fluxOnlyRuntime.supports(profile: zImageTurbo))
+        XCTAssertTrue(zImageRuntime.supports(profile: zImageTurbo))
     }
 
     func testVersionComparatorOrdersPrereleasesBeforeFinalReleases() {
@@ -488,9 +701,10 @@ final class ModelCapabilityProfileTests: XCTestCase {
     }
 
     func testModelSourceDefaultsAndRuntimeRequirements() {
-        let aceSource = ModelSource.defaultSource(modelId: "ACE-Step/acestep-v15-turbo-continuous")
+        let aceSource = ModelCapabilityProfile.embeddedProfile(modelId: "ACE-Step/acestep-v15-turbo-continuous")!.source
         XCTAssertEqual(aceSource.type, .componentBundle)
-        XCTAssertEqual(aceSource.downloadRepository, "ACE-Step/acestep-v15-turbo-continuous")
+        XCTAssertEqual(aceSource.downloadRepository, "ACE-Step/Ace-Step1.5")
+        XCTAssertEqual(aceSource.helper, .aceStep)
         XCTAssertTrue(aceSource.usesComponentBundle)
         XCTAssertEqual(aceSource.components, ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"])
 
@@ -515,7 +729,14 @@ final class ModelCapabilityProfileTests: XCTestCase {
         RuntimeManifest(
             runtimeVersion: "9.0.0",
             compatibilityApi: 1,
-            supportedBackends: RuntimeBackend.allCases
+            supportedBackends: RuntimeBackend.allCases,
+            imageRuntimes: RuntimeImageRuntimes(
+                mflux: RuntimeMFluxCapabilities(
+                    configs: ["flux2-klein-4b", "z-image-turbo"],
+                    classes: ["Flux2Klein", "Flux2KleinEdit", "ZImage", "ZImageTurbo"],
+                    quantizeBits: [3, 4, 5, 6, 8]
+                )
+            )
         )
     }
 
@@ -550,6 +771,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
         memoryGB: Double = 4.0,
         minRuntimeVersion: String = "0.1.0",
         minAppVersion: String = "0.1.0",
+        catalogVersion: String = "test",
         duplicateModel: Bool = false,
         duplicateModelIdWithDifferentProfileId: Bool = false,
         parameters: String = "[]"
@@ -602,7 +824,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
         return Data("""
         {
           "schemaVersion": 1,
-          "catalogVersion": "test",
+          "catalogVersion": "\(catalogVersion)",
           "minAppVersion": "\(minAppVersion)",
           "models": [
         \(models)

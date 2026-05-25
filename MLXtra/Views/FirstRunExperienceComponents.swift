@@ -69,7 +69,7 @@ struct FirstRunBestChatModelView: View {
     }
 
     private var hardwareLabel: String {
-        "\(formatSize(AIModel.currentHardwareMemoryGB)) unified memory"
+        "\(formatSize(SystemHardware.currentMemoryGB)) unified memory"
     }
 
     private var memoryEstimateLabel: String {

@@ -94,7 +94,7 @@ extension ChatViewModel {
             let selectionRequirement = downloadRequirement(for: currentTool)
 
             if let currentPendingModel,
-               await isModelDownloadedOffMain(modelId: currentPendingModel.modelId),
+               await isModelDownloadedOffMain(model: currentPendingModel),
                self.pendingEngineDownloadModel?.modelId == currentPendingModel.modelId {
                 self.clearPendingEngineDownloadModel(matching: currentPendingModel.modelId)
             }
@@ -213,7 +213,7 @@ extension ChatViewModel {
               profile.backend == .vlm || profile.backend == .llm,
               launchModelPreloadRuntimeCompatibilityCheck(profile),
               !isLoadedEngineModel(modelId: profile.modelId, backend: profile.backend),
-              await isModelDownloadedOffMain(modelId: profile.modelId) else {
+              await isModelDownloadedOffMain(model: profile.downloadableModel) else {
             finishLaunchModelPreload()
             return
         }
@@ -254,7 +254,8 @@ extension ChatViewModel {
 
     @discardableResult
     func selectDownloadedDefaultModelIfNeeded(for modality: ModelModality) async -> Bool {
-        guard modelSelectionStore.storedProfile(for: modality) == nil else {
+        if let storedProfile = modelSelectionStore.storedProfile(for: modality),
+           await isModelDownloadedOffMain(model: storedProfile.downloadableModel) {
             return false
         }
 
@@ -263,14 +264,11 @@ extension ChatViewModel {
         let candidateProfiles = compatibleProfiles.isEmpty ? sortedProfiles : compatibleProfiles
 
         for profile in candidateProfiles {
-            guard await isModelDownloadedOffMain(modelId: profile.modelId) else {
+            guard await isModelDownloadedOffMain(model: profile.downloadableModel) else {
                 continue
             }
 
             modelSelectionStore.setSelectedModelId(profile.modelId, for: modality)
-            if modality == .vision, let aiModel = profile.aiModel {
-                selectedModel = aiModel
-            }
             modelSelectionRevision += 1
             return true
         }
@@ -286,7 +284,7 @@ extension ChatViewModel {
             return
         }
 
-        if await isModelDownloadedOffMain(modelId: requirement.modelId) {
+        if await isModelDownloadedOffMain(model: requirement) {
             if pendingEngineDownloadReason == .preflight {
                 clearPendingEngineDownloadModel()
             }
@@ -351,9 +349,6 @@ extension ChatViewModel {
             cancelLaunchModelPreload()
         }
         modelSelectionStore.setSelectedModelId(profile.modelId, for: profile.modality)
-        if let aiModel = profile.aiModel {
-            selectedModel = aiModel
-        }
         modelSelectionRevision += 1
         isModelMenuOpen = false
         refreshLocalEngineDownloadStatus()
@@ -419,12 +414,12 @@ extension ChatViewModel {
         "Model download required: \(operation) needs \(model.name) (\(String(format: "%.1f", model.downloadSizeGB)) GB)."
     }
 
-    func isModelDownloadedOffMain(modelId: String) async -> Bool {
-        await runtimeManager.isModelDownloadedOffMain(modelId: modelId)
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
+        await runtimeManager.isModelDownloadedOffMain(model: model)
     }
 
     func requireDownloadedModel(model: DownloadableModel, operation: String) async -> Bool {
-        guard !(await isModelDownloadedOffMain(modelId: model.modelId)) else {
+        guard !(await isModelDownloadedOffMain(model: model)) else {
             clearPendingEngineDownloadModel(matching: model.modelId)
             return true
         }
@@ -518,7 +513,6 @@ extension ChatViewModel {
 
     private func downloadableModelName(modelId: String) -> String {
         DownloadableModel.embeddedModel(modelId: modelId)?.name
-            ?? AIModel.allCases.first { $0.modelId == modelId }?.displayName
             ?? modelId
     }
 
@@ -544,7 +538,7 @@ extension ChatViewModel {
                     return
                 }
 
-                if await self.isModelDownloadedOffMain(modelId: model.modelId) {
+                if await self.isModelDownloadedOffMain(model: model) {
                     self.clearPendingEngineDownloadModel(matching: model.modelId)
                     return
                 }
@@ -571,17 +565,6 @@ extension ChatViewModel {
             isMusicLyricsEditorVisible = false
         }
         isToolMenuOpen = false
-        refreshLocalEngineDownloadStatus()
-    }
-
-    func selectModel(_ model: AIModel) {
-        guard !isInputDisabled else { return }
-
-        cancelLaunchModelPreload()
-        selectedModel = model
-        modelSelectionStore.setSelectedModelId(model.modelId, for: .vision)
-        modelSelectionRevision += 1
-        isModelMenuOpen = false
         refreshLocalEngineDownloadStatus()
     }
 

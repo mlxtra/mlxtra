@@ -183,6 +183,7 @@ done
 if [ -z "${CATALOG_VERSION}" ]; then
     CATALOG_VERSION="$(json_value "${CATALOG_PATH}" "catalogVersion")"
 fi
+CATALOG_MIN_APP_VERSION="$(optional_json_value "${CATALOG_PATH}" "minAppVersion")"
 
 if [ -z "${RUNTIME_VERSION}" ]; then
     RUNTIME_VERSION="$(json_value "${RUNTIME_MANIFEST}" "runtimeVersion")"
@@ -249,7 +250,8 @@ CATALOG_URL="https://github.com/${REPOSITORY}/releases/download/${CATALOG_TAG}/m
     "${RUNTIME_SHA}" \
     "${RUNTIME_SIZE}" \
     "${RUNTIME_COMPATIBILITY_API}" \
-    "${INCLUDE_RUNTIME}" <<'PY'
+    "${INCLUDE_RUNTIME}" \
+    "${CATALOG_MIN_APP_VERSION}" <<'PY'
 import json
 import sys
 
@@ -265,6 +267,7 @@ runtime_sha = sys.argv[9]
 runtime_size = int(sys.argv[10]) if sys.argv[10] else None
 runtime_compatibility_api = int(sys.argv[11]) if sys.argv[11] else None
 include_runtime = sys.argv[12] == "1"
+catalog_min_app_version = sys.argv[13]
 
 manifest = {
     "schemaVersion": 1,
@@ -279,17 +282,18 @@ manifest = {
 }
 
 if include_runtime:
-    manifest["runtimes"].append(
-        {
-            "version": runtime_version,
-            "platform": "macos",
-            "arch": "arm64",
-            "url": runtime_url,
-            "sha256": runtime_sha,
-            "sizeBytes": runtime_size,
-            "compatibilityApi": runtime_compatibility_api,
-        }
-    )
+    runtime_asset = {
+        "version": runtime_version,
+        "platform": "macos",
+        "arch": "arm64",
+        "url": runtime_url,
+        "sha256": runtime_sha,
+        "sizeBytes": runtime_size,
+        "compatibilityApi": runtime_compatibility_api,
+    }
+    if catalog_min_app_version:
+        runtime_asset["minAppVersion"] = catalog_min_app_version
+    manifest["runtimes"].append(runtime_asset)
 
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2)

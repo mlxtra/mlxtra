@@ -20,7 +20,9 @@ struct SettingsView: View {
     @State private var removalCandidate: DownloadableModel?
 
     private var allModels: [DownloadableModel] {
-        ModelCapabilityProfile.visibleProfiles().map(\.downloadableModel)
+        catalogService.profiles
+            .filter(\.isCatalogVisible)
+            .map(\.downloadableModel)
     }
 
     private var catalogModels: [DownloadableModel] {
@@ -442,7 +444,7 @@ struct SettingsView: View {
     }
 
     private func requestModelDownload(_ model: DownloadableModel) {
-        guard model.isRuntimeCompatible else {
+        guard !model.source.usesComponentBundle || model.isRuntimeCompatible else {
             pendingDownloadModelId = model.modelId
             runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
             return
@@ -475,7 +477,7 @@ struct SettingsView: View {
         case .downloaded:
             pendingDownloadModelId = ""
         case .notDownloaded, .failed:
-            guard model.isRuntimeCompatible else {
+            guard !model.source.usesComponentBundle || model.isRuntimeCompatible else {
                 return
             }
             downloadManager.download(model)
@@ -519,7 +521,9 @@ struct SettingsView: View {
 
     private func defaultModelId(for mode: SettingsModelMode) -> String? {
         _ = modelSelectionRevision
-        return ModelSelectionStore().selectedProfile(for: mode.modality)?.modelId
+        return ModelSelectionStore().selectedAvailableProfile(for: mode.modality) { model in
+            downloadManager.state(for: model) == .downloaded
+        }?.modelId
     }
 
     private func recommendedModelId(for mode: SettingsModelMode) -> String? {
@@ -607,13 +611,16 @@ struct SettingsView: View {
     }
 
     private func bestProfile(for modality: ModelModality) -> ModelCapabilityProfile? {
-        ModelSelectionStore().selectedProfile(for: modality)
+        ModelSelectionStore().selectedAvailableProfile(for: modality) { model in
+            downloadManager.state(for: model) == .downloaded
+        }
+            ?? ModelSelectionStore().selectedProfile(for: modality)
             ?? ModelCapabilityProfile.bestProfile(for: modality)
     }
 
     private func modelFit(for model: DownloadableModel) -> ModelFit {
         ModelCapabilityProfile.embeddedProfile(modelId: model.modelId)?.fit()
-            ?? ModelFit.classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: AIModel.currentHardwareMemoryGB)
+            ?? ModelFit.classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: SystemHardware.currentMemoryGB)
     }
 
     private func modelSortKey(_ model: DownloadableModel) -> ModelListSortKey {

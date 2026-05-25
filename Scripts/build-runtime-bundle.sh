@@ -396,6 +396,22 @@ json_array_items() {
     done
 }
 
+json_number_array_items() {
+    local indent="$1"
+    shift
+    local index=0
+    local total="$#"
+
+    for item in "$@"; do
+        index=$((index + 1))
+        printf '%*s%s' "${indent}" "" "${item}"
+        if [ "${index}" -lt "${total}" ]; then
+            printf ','
+        fi
+        printf '\n'
+    done
+}
+
 echo "Step 6: Creating runtime manifest..."
 cat > "${OUTPUT_DIR}/runtime-manifest.json" << EOF
 {
@@ -422,9 +438,24 @@ $(json_array_items 4 "${RUNTIME_SUPPORTED_BACKENDS[@]}")
   "capabilities": [
 $(json_array_items 4 "${RUNTIME_CAPABILITIES[@]}")
   ],
-  "supportedModels": [
-$(json_array_items 4 "${RUNTIME_SUPPORTED_MODELS[@]}")
-  ]
+  "imageRuntimes": {
+    "mflux": {
+      "configs": [
+$(json_array_items 8 "${RUNTIME_MFLUX_CONFIGS[@]}")
+      ],
+      "classes": [
+$(json_array_items 8 "${RUNTIME_MFLUX_CLASSES[@]}")
+      ],
+      "quantizeBits": [
+$(json_number_array_items 8 "${RUNTIME_MFLUX_QUANTIZE_BITS[@]}")
+      ]
+    }
+  },
+  "audioRuntimes": {
+    "adapters": [
+$(json_array_items 6 "${RUNTIME_AUDIO_ADAPTERS[@]}")
+    ]
+  }
 }
 EOF
 
@@ -444,6 +475,7 @@ print(f'Python: {sys.version}')
 expected = {}
 for pinned in os.environ['RUNTIME_EXPECTED_PACKAGES'].splitlines():
     package, version = pinned.split('==', 1)
+    package = package.split('[', 1)[0]
     expected[package] = version
 
 for package, version in expected.items():

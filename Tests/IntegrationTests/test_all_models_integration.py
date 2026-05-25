@@ -3,7 +3,7 @@
 Comprehensive integration tests for all MLXtra model types:
 - Chat/VLM (Qwen3.5)
 - Image (FLUX.2-klein)
-- Audio/TTS (KugelAudio)
+- Audio/TTS (locally available catalog model)
 - Music (ACE-Step)
 
 Tests the full end-to-end pipeline using the Python bridge subprocess.
@@ -207,15 +207,85 @@ def ace_step_model_is_complete() -> bool:
 
 APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
-RUNTIME = RESOURCES / "runtime/macos-arm64"
+APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
+
+
+def runtime_is_valid(path: Path) -> bool:
+    return all(
+        (path / relative_path).exists()
+        for relative_path in [
+            "venv/bin/python",
+            "acestep-venv/bin/python",
+            "python/Frameworks/Versions/3.12",
+            "acestep_download_helper.py",
+            "runtime-manifest.json",
+        ]
+    )
+
+
+def resolve_runtime_dir() -> Path:
+    candidates = []
+    override = os.environ.get("MLXTRA_RUNTIME_DIR")
+    if override:
+        candidates.append(Path(override))
+    candidates.extend(
+        [
+            APP_SUPPORT / "runtimes/macos-arm64/current",
+            RESOURCES / "runtime/macos-arm64",
+        ]
+    )
+
+    for candidate in candidates:
+        if runtime_is_valid(candidate):
+            return candidate
+    return candidates[-1]
+
+
+RUNTIME = resolve_runtime_dir()
 VENV_PYTHON = RUNTIME / "venv/bin/python"
 ACESTEP_PYTHON = RUNTIME / "acestep-venv/bin/python"
 BRIDGE_SCRIPT = RESOURCES / "python_bridge.py"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
-APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
 GENERATED_IMAGES_DIR = APP_SUPPORT / "GeneratedImages"
 GENERATED_SPEECH_DIR = APP_SUPPORT / "GeneratedSpeech"
 GENERATED_MUSIC_DIR = APP_SUPPORT / "GeneratedMusic"
+MODEL_CATALOG_PATH = RESOURCES / "model-catalog.json"
+
+
+def bundled_catalog_models(modality: Optional[str] = None) -> list[dict]:
+    try:
+        with MODEL_CATALOG_PATH.open("r", encoding="utf-8") as handle:
+            catalog = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    models = catalog.get("models", [])
+    if not isinstance(models, list):
+        return []
+
+    result = []
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        if modality is not None and model.get("modality") != modality:
+            continue
+        result.append(model)
+    return result
+
+
+def bundled_catalog_model(model_id: str) -> Optional[dict]:
+    for model in bundled_catalog_models():
+        if model.get("modelId") == model_id:
+            return model
+    return None
+
+
+def bundled_runtime_options(model_id: str) -> dict:
+    model = bundled_catalog_model(model_id)
+    if not isinstance(model, dict):
+        return {}
+    runtime_options = model.get("runtimeOptions")
+    return runtime_options if isinstance(runtime_options, dict) else {}
 
 
 class MLXtraIntegrationTest:
@@ -264,6 +334,37 @@ class MLXtraIntegrationTest:
             test_name,
             f"{model_id} is missing or incomplete in the local Hugging Face cache.",
         )
+
+    def select_catalog_hf_model(
+        self, test_name: str, modality: str
+    ) -> tuple[Optional[str], Optional[bool]]:
+        models = bundled_catalog_models(modality)
+        model_ids = [
+            model.get("modelId")
+            for model in models
+            if isinstance(model.get("modelId"), str)
+        ]
+        if not model_ids:
+            self.log(f"✗ FAILED: No bundled catalog models for modality {modality}", "ERROR")
+            return None, False
+
+        if ALLOW_MODEL_DOWNLOADS:
+            model_id = model_ids[0]
+            self.log(
+                f"Model preflight: downloads enabled; using preferred catalog model {model_id}."
+            )
+            return model_id, True
+
+        for model_id in model_ids:
+            if hf_snapshot_is_complete(model_id):
+                self.log(f"Local Hugging Face snapshot verified: {model_id}")
+                return model_id, True
+
+        result = self.missing_model_result(
+            test_name,
+            f"No bundled {modality} catalog model is complete in the local Hugging Face cache.",
+        )
+        return None, result
 
     def ensure_music_model_downloaded(self) -> bool:
         if ace_step_model_is_complete():
@@ -354,15 +455,12 @@ class MLXtraIntegrationTest:
 
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONHOME"] = str(
-            APP_BUNDLE
-            / "Contents/Resources/runtime/macos-arm64/python/Frameworks/Versions/3.12"
-        )
+        env["PYTHONHOME"] = str(RUNTIME / "python/Frameworks/Versions/3.12")
+        env["MLXTRA_RUNTIME_DIR"] = str(RUNTIME)
         env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
         env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
-        env["ACESTEP_CHECKPOINTS_DIR"] = str(
-            Path.home() / "Library/Application Support/MLXtra/checkpoints"
-        )
+        env["ACESTEP_CHECKPOINTS_DIR"] = str(ACESTEP_CHECKPOINTS_DIR)
+        env["ACESTEP_PYTHON"] = str(ACESTEP_PYTHON)
         env["MTL_DEBUG_LAYER"] = "0"
         env["MTL_SHADER_VALIDATION"] = "0"
         env.setdefault("MLXTRA_BRIDGE_TIMING", "1")
@@ -617,6 +715,18 @@ class MLXtraIntegrationTest:
                                     )
                                     request_completed = True
                                     break
+                            elif request_type in (
+                                "audio.speech",
+                                "image.generate",
+                                "music.generate",
+                            ) and message_type == "chat.completion.complete":
+                                self.record_timing(
+                                    session_timings,
+                                    f"e2e.{request_type}_request_to_complete",
+                                    request_started_at,
+                                )
+                                request_completed = True
+                                break
                         except json.JSONDecodeError:
                             pass
 
@@ -876,10 +986,11 @@ class MLXtraIntegrationTest:
         self.log("=" * 70)
 
         test_name = "Chat/Completion (VLM)"
-        model_id = "mlx-community/Qwen3.5-9B-MLX-4bit"
-        preflight = self.require_hf_model(test_name, model_id)
+        model_id, preflight = self.select_catalog_hf_model(test_name, "vision")
         if preflight is not True:
             return preflight is None
+        if model_id is None:
+            return False
 
         # Use persistent session for chat (init + chat in same process)
         requests = [
@@ -948,6 +1059,11 @@ class MLXtraIntegrationTest:
             return preflight is None
 
         request_id = "integration-image-generate"
+        runtime_options = bundled_runtime_options(model_id)
+        if not runtime_options:
+            self.log(f"✗ FAILED: {model_id} has no catalog runtimeOptions", "ERROR")
+            return False
+
         request = {
             "type": "image.generate",
             "model": model_id,
@@ -961,6 +1077,7 @@ class MLXtraIntegrationTest:
                 "height": 512,
                 "steps": 4,
                 "seed": 42,
+                "runtimeOptions": runtime_options,
             },
         }
 
@@ -1013,18 +1130,28 @@ class MLXtraIntegrationTest:
         return "No prompt provided" in errors[0].get("message", "")
 
     def test_audio_speech(self) -> bool:
-        """Test text-to-speech with KugelAudio."""
+        """Test text-to-speech with a locally available catalog audio model."""
         self.log("\n" + "=" * 70)
         self.log("TEST 6: Audio/Speech (TTS)")
         self.log("=" * 70)
 
         test_name = "Audio/Speech (TTS)"
-        model_id = "kugelaudio/kugelaudio-0-open"
-        preflight = self.require_hf_model(test_name, model_id)
+        model_id, preflight = self.select_catalog_hf_model(test_name, "audio")
+        if not model_id:
+            return preflight is None
         if preflight is not True:
             return preflight is None
 
         request_id = "integration-audio-speech"
+        runtime_options = bundled_runtime_options(model_id)
+        if not runtime_options:
+            self.log(f"✗ FAILED: {model_id} has no catalog runtimeOptions", "ERROR")
+            return False
+        audio_options = runtime_options.get("audio", {})
+        if not isinstance(audio_options, dict):
+            audio_options = {}
+        voice = str(audio_options.get("defaultVoice") or "default")
+
         request = {
             "type": "audio.speech",
             "model": model_id,
@@ -1032,9 +1159,10 @@ class MLXtraIntegrationTest:
             "messages": [{"role": "user", "content": "Hello world. This is a test."}],
             "output_dir": str(GENERATED_SPEECH_DIR),
             "parameters": {
-                "voice": "default",
+                "voice": voice,
                 "ddpm_steps": 4,
                 "cfg_scale": 3.0,
+                "runtimeOptions": runtime_options,
             },
         }
 
@@ -1061,10 +1189,72 @@ class MLXtraIntegrationTest:
             expected_sample_rate = None
         return self.validate_wav(path, expected_sample_rate=expected_sample_rate)
 
+    def test_audio_persistent_session(self) -> bool:
+        """Test two speech turns in one bridge process."""
+        self.log("\n" + "=" * 70)
+        self.log("TEST 7: Audio Persistent Session")
+        self.log("=" * 70)
+
+        test_name = "Audio Persistent Session"
+        model_id, preflight = self.select_catalog_hf_model(test_name, "audio")
+        if not model_id:
+            return preflight is None
+        if preflight is not True:
+            return preflight is None
+
+        runtime_options = bundled_runtime_options(model_id)
+        if not runtime_options:
+            self.log(f"✗ FAILED: {model_id} has no catalog runtimeOptions", "ERROR")
+            return False
+        audio_options = runtime_options.get("audio", {})
+        if not isinstance(audio_options, dict):
+            audio_options = {}
+        voice = str(audio_options.get("defaultVoice") or "default")
+
+        requests = []
+        for index, text in enumerate(("First short speech turn.", "Second short speech turn."), start=1):
+            requests.append(
+                {
+                    "type": "audio.speech",
+                    "model": model_id,
+                    "request_id": f"integration-audio-persistent-{index}",
+                    "messages": [{"role": "user", "content": text}],
+                    "output_dir": str(GENERATED_SPEECH_DIR),
+                    "parameters": {
+                        "voice": voice,
+                        "ddpm_steps": 4,
+                        "cfg_scale": 3.0,
+                        "runtimeOptions": runtime_options,
+                    },
+                }
+            )
+
+        messages, success = self.run_bridge_session(requests, timeout=420)
+        if not success or not self.require_no_error(messages):
+            return False
+
+        for request in requests:
+            request_id = request["request_id"]
+            audio_message = self.require_message(messages, "audio.generated", request_id)
+            if not audio_message or not self.require_completion(messages, request_id):
+                return False
+            path = audio_message.get("path")
+            if not path:
+                self.log("✗ FAILED: audio.generated did not include a path", "ERROR")
+                return False
+            self.generated_files.append(path)
+            expected_sample_rate = audio_message.get("sample_rate")
+            if not isinstance(expected_sample_rate, int):
+                expected_sample_rate = None
+            if not self.validate_wav(path, expected_sample_rate=expected_sample_rate):
+                return False
+
+        return True
+
     def test_audio_missing_text_returns_error(self) -> bool:
         """Invalid speech request returns JSON error without loading a model."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 7: Audio Missing Text Error")
+        self.log("TEST 8: Audio Missing Text Error")
         self.log("=" * 70)
 
         request_id = "integration-audio-missing-text"
@@ -1219,6 +1409,7 @@ class MLXtraIntegrationTest:
                 False,
             ),
             ("Audio/Speech (TTS)", self.test_audio_speech, True),
+            ("Audio Persistent Session", self.test_audio_persistent_session, True),
             (
                 "Audio Missing Text Error",
                 self.test_audio_missing_text_returns_error,

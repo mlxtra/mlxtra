@@ -78,28 +78,15 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
 
-    func testEstimatedModelSizeLogic() {
-        let modelSizes: [String: Double] = [
-            "mlx-community/Qwen3.5-9B-MLX-4bit": 5.6,
-            "google/gemma-4-e4b-it": 3.0,
-            "mlx-community/Qwen3.5-2B-MLX-4bit": 1.5,
-            "black-forest-labs/FLUX.2-klein-4B": 15.0,
-            "kugelaudio/kugelaudio-0-open": 15.0,
-            "ACE-Step/acestep-v15-turbo-continuous": 4.8,
-            "ACE-Step/acestep-v15-xl": 19.0,
-            "ACE-Step/acestep-v15-base": 5.0,
-        ]
+    @MainActor
+    func testEstimatedModelSizeUsesCatalog() throws {
+        let runtimeManager = RuntimeManager()
+        let chatProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "mlx-community/Qwen3.5-9B-MLX-4bit"))
+        let speechProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "mlx-community/Kokoro-82M-4bit"))
 
-        XCTAssertEqual(modelSizes["mlx-community/Qwen3.5-9B-MLX-4bit"], 5.6)
-        XCTAssertEqual(modelSizes["google/gemma-4-e4b-it"], 3.0)
-        XCTAssertEqual(modelSizes["mlx-community/Qwen3.5-2B-MLX-4bit"], 1.5)
-        XCTAssertEqual(modelSizes["black-forest-labs/FLUX.2-klein-4B"], 15.0)
-        XCTAssertEqual(modelSizes["kugelaudio/kugelaudio-0-open"], 15.0)
-        XCTAssertEqual(modelSizes["ACE-Step/acestep-v15-turbo-continuous"], 4.8)
-        XCTAssertEqual(modelSizes["ACE-Step/acestep-v15-xl"], 19.0)
-        XCTAssertEqual(modelSizes["ACE-Step/acestep-v15-base"], 5.0)
-
-        XCTAssertEqual(modelSizes["unknown/model"], nil) // Not in map means default 5.0
+        XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: chatProfile.modelId), chatProfile.downloadSizeGB)
+        XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: speechProfile.modelId), speechProfile.downloadSizeGB)
+        XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: "unknown/model"), 5.0)
     }
 
 
@@ -275,7 +262,7 @@ final class RuntimeManagerTests: XCTestCase {
             XCTFail("Expected incomplete ACE-Step checkpoint status")
             return
         }
-        XCTAssertTrue(message.contains("ACE-Step checkpoints are incomplete"))
+        XCTAssertTrue(message.contains("Model components are incomplete"))
 
         for component in ["vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"] {
             let componentPath = checkpointsPath.appendingPathComponent(component)
@@ -286,6 +273,41 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(
             RuntimeManager.modelStorageStatus(modelId: modelId, checkpointsPath: checkpointsPath),
             .downloaded
+        )
+    }
+
+    func testAceStepStorageStatusMapsRuntimeAliasesToCatalogBundle() throws {
+        let checkpointsPath = try makeTemporaryDirectory()
+        let cacheRoot = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: checkpointsPath)
+            try? FileManager.default.removeItem(at: cacheRoot)
+        }
+
+        for component in ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"] {
+            let componentPath = checkpointsPath.appendingPathComponent(component)
+            try FileManager.default.createDirectory(at: componentPath, withIntermediateDirectories: true)
+            try Data([1]).write(to: componentPath.appendingPathComponent("model.safetensors"))
+        }
+
+        for alias in ["ACE-Step/acestep-v15-turbo-shift3", "acestep-v15-turbo-rl"] {
+            XCTAssertEqual(
+                RuntimeManager.modelStorageStatus(
+                    modelId: alias,
+                    checkpointsPath: checkpointsPath,
+                    huggingFaceCacheRoot: cacheRoot
+                ),
+                .downloaded
+            )
+        }
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(
+                modelId: "ACE-Step/acestep-v15-base",
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: cacheRoot
+            ),
+            .missing
         )
     }
 
@@ -324,6 +346,46 @@ final class RuntimeManagerTests: XCTestCase {
                 huggingFaceCacheRoot: cacheRoot
             ),
             .downloaded
+        )
+    }
+
+    func testModelStorageStatusForEmbeddedHuggingFaceModelDoesNotRecurse() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        let model = try XCTUnwrap(
+            DownloadableModel.embeddedModel(modelId: "mlx-community/Qwen3.5-2B-MLX-4bit")
+        )
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(
+                model: model,
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: cacheRoot
+            ),
+            .missing
+        )
+    }
+
+    func testModelStorageStatusForEmbeddedHuggingFaceModelIdDoesNotRecurse() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(
+                modelId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: cacheRoot
+            ),
+            .missing
         )
     }
 
@@ -545,8 +607,7 @@ final class RuntimeManagerTests: XCTestCase {
             estimatedMemoryGB: 1.0,
             runtime: ModelRuntimeRequirement(minVersion: "0.2.0", compatibilityApi: 1),
             parameters: [],
-            presets: [],
-            aiModel: nil
+            presets: []
         )
 
         XCTAssertTrue(manifest.supports(backend: .vlm))
@@ -615,6 +676,69 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(asset.version, "0.1.2")
         XCTAssertEqual(asset.id, "macos-arm64-0.1.2")
         XCTAssertEqual(manager.availableRuntime, asset)
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshIgnoresRuntimeRequiringNewerApp() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.2", minAppVersion: "1.0.0"),
+                makeRuntimeAsset(version: "0.1.3", minAppVersion: "9.0.0"),
+            ]
+        )
+
+        let currentManifest = makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1)
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { currentManifest },
+            appVersionProvider: { "1.0.6" }
+        )
+        await manager.refreshStableChannel(channelURL: channelURL)
+
+        guard case .available(let asset) = manager.state else {
+            XCTFail("Expected compatible runtime for current app version to be available")
+            return
+        }
+        XCTAssertEqual(asset.version, "0.1.2")
+        XCTAssertEqual(asset.minAppVersion, "1.0.0")
+        XCTAssertEqual(manager.newerRuntimeRequiringAppUpdate?.runtime.version, "0.1.3")
+        XCTAssertEqual(manager.newerRuntimeRequiringAppUpdate?.requiredAppVersion, "9.0.0")
+        XCTAssertEqual(manager.newerRuntimeRequiringAppUpdate?.currentAppVersion, "1.0.6")
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshReportsRuntimeRequiringNewerAppWhenNoCompatibleRuntime() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.2", minAppVersion: "9.0.0"),
+            ]
+        )
+
+        let currentManifest = makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1)
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { currentManifest },
+            appVersionProvider: { "1.0.6" }
+        )
+        await manager.refreshStableChannel(channelURL: channelURL)
+
+        guard case .requiresAppUpdate(let requirement) = manager.state else {
+            XCTFail("Expected newer runtime to report app update requirement")
+            return
+        }
+        XCTAssertEqual(requirement.runtime.version, "0.1.2")
+        XCTAssertEqual(requirement.requiredAppVersion, "9.0.0")
+        XCTAssertEqual(requirement.currentAppVersion, "1.0.6")
+        XCTAssertEqual(manager.newerRuntimeRequiringAppUpdate, requirement)
+        XCTAssertNil(manager.availableRuntime)
     }
 
     @MainActor
@@ -1012,7 +1136,13 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     private func writeAceStepContractCompletionMarker(at checkpointsPath: URL) throws {
-        let marker = AceStepContractCompletionManifest(plan: AceStepDownloadPlan(checkpointsRoot: checkpointsPath))
+        let marker = AceStepContractCompletionManifest(
+            plan: AceStepDownloadPlan(
+                repoID: "ACE-Step/Ace-Step1.5",
+                requiredComponents: ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"],
+                checkpointsRoot: checkpointsPath
+            )
+        )
         let data = try JSONEncoder().encode(marker)
         try data.write(to: checkpointsPath.appendingPathComponent(AceStepContractCompletionManifest.filename))
     }
@@ -1087,9 +1217,10 @@ final class RuntimeManagerTests: XCTestCase {
         url: URL? = nil,
         sha256: String = String(repeating: "2", count: 64),
         sizeBytes: Int64 = 2048,
-        compatibilityApi: Int = 1
+        compatibilityApi: Int = 1,
+        minAppVersion: String? = nil
     ) -> [String: Any] {
-        [
+        var asset: [String: Any] = [
             "version": version,
             "platform": platform,
             "arch": arch,
@@ -1098,6 +1229,10 @@ final class RuntimeManagerTests: XCTestCase {
             "sizeBytes": sizeBytes,
             "compatibilityApi": compatibilityApi,
         ]
+        if let minAppVersion {
+            asset["minAppVersion"] = minAppVersion
+        }
+        return asset
     }
 
     private func makeZipArchive(from sourceURL: URL, at archiveURL: URL) throws {

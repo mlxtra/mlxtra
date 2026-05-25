@@ -101,23 +101,15 @@ struct AceStepContractCompletionManifest: Codable, Equatable {
 }
 
 struct AceStepDownloadPlan: Equatable {
-    static let mainRepository = "ACE-Step/Ace-Step1.5"
-    static let requiredComponents = [
-        "acestep-v15-turbo",
-        "vae",
-        "Qwen3-Embedding-0.6B",
-        "acestep-5Hz-lm-1.7B"
-    ]
-
     let repoID: String
     let revision: String
     let requiredComponents: [String]
     let checkpointsRoot: URL
 
     init(
-        repoID: String = Self.mainRepository,
+        repoID: String,
         revision: String = "main",
-        requiredComponents: [String] = Self.requiredComponents,
+        requiredComponents: [String],
         checkpointsRoot: URL
     ) {
         self.repoID = repoID
@@ -139,6 +131,7 @@ enum NativeModelDownloadError: LocalizedError, Equatable {
     case sizeMismatch(String, expected: Int64, actual: Int64)
     case checksumMismatch(String)
     case missingDownloadedFile(String)
+    case unsupportedComponentBundle(String)
 
     var errorDescription: String? {
         switch self {
@@ -156,6 +149,8 @@ enum NativeModelDownloadError: LocalizedError, Equatable {
             return "Downloaded file checksum did not match for \(path)."
         case .missingDownloadedFile(let path):
             return "Downloaded file is missing after transfer: \(path)."
+        case .unsupportedComponentBundle(let modelName):
+            return "\(modelName) uses an unsupported component bundle download helper."
         }
     }
 

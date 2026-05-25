@@ -146,6 +146,8 @@ struct RuntimeUpdateSettingsSection: View {
                 }
         case .installing:
             EmptyView()
+        case .requiresAppUpdate:
+            EmptyView()
         case .failed:
             Button {
                 manager.bootstrapStableRuntimeInBackground(reportFailures: true)
@@ -173,7 +175,11 @@ struct RuntimeUpdateSettingsSection: View {
         case .checking:
             return "Checking the stable runtime channel."
         case .available(let asset):
-            return "Runtime \(asset.version) is ready to download."
+            return appUpdateRequirementSuffix(
+                after: "Runtime \(asset.version) is ready to download."
+            )
+        case .requiresAppUpdate(let requirement):
+            return appUpdateRequirementText(requirement)
         case .installing(let progress):
             switch manager.installPhase {
             case .verifying:
@@ -189,7 +195,9 @@ struct RuntimeUpdateSettingsSection: View {
                 return "Downloading, verifying, and activating the runtime."
             }
         case .installed(let version):
-            return "Runtime \(version) is ready for local models."
+            return appUpdateRequirementSuffix(
+                after: "Runtime \(version) is ready for local models."
+            )
         case .failed(let message):
             return message
         }
@@ -199,6 +207,8 @@ struct RuntimeUpdateSettingsSection: View {
         switch manager.state {
         case .available(let asset):
             return "Runtime \(asset.version)"
+        case .requiresAppUpdate(let requirement):
+            return "Runtime \(requirement.runtime.version)"
         case .installing:
             if let manifest = RuntimeManager.activeRuntimeManifest() {
                 return "Runtime \(manifest.runtimeVersion)"
@@ -220,6 +230,8 @@ struct RuntimeUpdateSettingsSection: View {
             return UpdateStatusBadge(title: "Checking", icon: "arrow.clockwise", tint: .accentColor)
         case .available:
             return UpdateStatusBadge(title: "Updating", icon: "arrow.down.circle.fill", tint: .accentColor)
+        case .requiresAppUpdate:
+            return UpdateStatusBadge(title: "Update app", icon: "app.badge", tint: MLXtraDesignSystem.Palette.warning)
         case .installing:
             return UpdateStatusBadge(title: "Installing", icon: "arrow.down.circle.fill", tint: .accentColor)
         case .installed:
@@ -238,13 +250,24 @@ struct RuntimeUpdateSettingsSection: View {
         switch manager.state {
         case .installed:
             return MLXtraDesignSystem.Palette.success
-        case .failed:
+        case .requiresAppUpdate, .failed:
             return MLXtraDesignSystem.Palette.warning
         case .idle:
             return RuntimeManager.activeRuntimeManifest() == nil ? .secondary : MLXtraDesignSystem.Palette.success
         default:
             return .accentColor
         }
+    }
+
+    private func appUpdateRequirementSuffix(after base: String) -> String {
+        guard let requirement = manager.newerRuntimeRequiringAppUpdate else {
+            return base
+        }
+        return "\(base) \(appUpdateRequirementText(requirement))"
+    }
+
+    private func appUpdateRequirementText(_ requirement: RuntimeAppUpdateRequirement) -> String {
+        "Runtime \(requirement.runtime.version) requires MLXtra \(requirement.requiredAppVersion) or newer."
     }
 
     private var runtimeProgress: Double? {
@@ -455,6 +478,15 @@ struct RuntimeUpdateSection: View {
             ) {
                 ProgressView()
                     .controlSize(.small)
+            }
+        case .requiresAppUpdate(let requirement):
+            updateCard(
+                title: "Update MLXtra",
+                detail: "Runtime \(requirement.runtime.version) requires MLXtra \(requirement.requiredAppVersion) or newer.",
+                icon: "exclamationmark.triangle.fill",
+                tint: .orange
+            ) {
+                EmptyView()
             }
         case .installed(let version):
             updateCard(

@@ -54,23 +54,56 @@ class RuntimeScriptTests(unittest.TestCase):
             set(bash_array("RUNTIME_CAPABILITIES")),
         )
         self.assertEqual(
-            set(manifest["supportedModels"]),
-            set(bash_array("RUNTIME_SUPPORTED_MODELS")),
+            set(manifest["imageRuntimes"]["mflux"]["configs"]),
+            set(bash_array("RUNTIME_MFLUX_CONFIGS")),
+        )
+        self.assertEqual(
+            set(manifest["imageRuntimes"]["mflux"]["classes"]),
+            set(bash_array("RUNTIME_MFLUX_CLASSES")),
+        )
+        self.assertEqual(
+            set(map(str, manifest["imageRuntimes"]["mflux"]["quantizeBits"])),
+            set(bash_array("RUNTIME_MFLUX_QUANTIZE_BITS")),
+        )
+        self.assertEqual(
+            set(manifest["audioRuntimes"]["adapters"]),
+            set(bash_array("RUNTIME_AUDIO_ADAPTERS")),
         )
 
-    def test_runtime_supported_models_cover_bundled_catalog(self):
+    def test_runtime_mflux_capabilities_cover_bundled_image_catalog(self):
         catalog = json.loads(MODEL_CATALOG.read_text())
-        catalog_model_ids = {
-            model["modelId"]
+        runtime_manifest = json.loads(RUNTIME_MANIFEST.read_text())
+        supported_mflux_configs = set(runtime_manifest["imageRuntimes"]["mflux"]["configs"])
+
+        catalog_mflux_configs = {
+            model["runtimeOptions"]["mflux"]["config"]
             for model in catalog["models"]
             if model.get("runtime", {}).get("compatibilityApi") == 1
+            and model.get("backend") == "image"
+            and "mflux" in model.get("runtimeOptions", {})
         }
 
-        supported_models = set(bash_array("RUNTIME_SUPPORTED_MODELS"))
+        self.assertFalse(
+            catalog_mflux_configs - supported_mflux_configs,
+            "Runtime mflux configs must include every bundled image catalog config.",
+        )
+
+    def test_runtime_audio_adapters_cover_bundled_audio_catalog(self):
+        catalog = json.loads(MODEL_CATALOG.read_text())
+        runtime_manifest = json.loads(RUNTIME_MANIFEST.read_text())
+        supported_adapters = set(runtime_manifest["audioRuntimes"]["adapters"])
+
+        catalog_adapters = {
+            model["runtimeOptions"]["audio"]["adapter"]
+            for model in catalog["models"]
+            if model.get("runtime", {}).get("compatibilityApi") == 1
+            and model.get("backend") == "audio"
+            and "audio" in model.get("runtimeOptions", {})
+        }
 
         self.assertFalse(
-            catalog_model_ids - supported_models,
-            "Runtime supported models must include every bundled catalog model id.",
+            catalog_adapters - supported_adapters,
+            "Runtime audio adapters must include every bundled audio catalog adapter.",
         )
 
     def test_validate_runtime_bundle_writes_xcode_output_stamp(self):

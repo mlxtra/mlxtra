@@ -334,7 +334,6 @@ extension ChatViewModel {
 
         do {
             let chatProfile = profile(for: .chat)
-            let chatModel = chatProfile.aiModel ?? selectedModel
             guard await requireDownloadedModel(model: chatProfile.downloadableModel, operation: "Lyrics writing") else {
                 return
             }
@@ -345,10 +344,7 @@ extension ChatViewModel {
 
             loadingMessage = "Generating lyrics..."
             let chatExecutionParameters = modelParameterStore.executionParameters(for: chatProfile)
-            let enableThinking = (chatExecutionParameters["enable_thinking"] as? Bool) ?? false
-            let chatTemplateKwargs: [String: Any]? = chatProfile.modelId.lowercased().contains("qwen")
-                ? ["enable_thinking": enableThinking]
-                : nil
+            let chatTemplateKwargs = chatProfile.runtimeOptions?.chatTemplateKwargs(from: chatExecutionParameters)
             let request = ExecutionRequest(
                 backend: .vlm,
                 modelId: chatProfile.modelId,
@@ -362,12 +358,12 @@ extension ChatViewModel {
                         content: "Song idea: \(brief)\n\nWrite concise, singable lyrics for this song."
                     )
                 ],
-                maxTokens: min((chatExecutionParameters["max_tokens"] as? Int) ?? chatModel.defaultMaxTokens, 900),
+                maxTokens: min((chatExecutionParameters["max_tokens"] as? Int) ?? chatProfile.defaultMaxTokens, 900),
                 temperature: max((chatExecutionParameters["temperature"] as? Double) ?? 0.8, 0.7),
-                topP: chatExecutionParameters["top_p"] as? Double ?? chatModel.topP,
-                topK: chatExecutionParameters["top_k"] as? Int ?? chatModel.topK,
-                minP: chatExecutionParameters["min_p"] as? Double ?? chatModel.minP,
-                repetitionPenalty: chatExecutionParameters["repetition_penalty"] as? Double ?? chatModel.repetitionPenalty,
+                topP: chatExecutionParameters["top_p"] as? Double ?? chatProfile.doubleParameterDefault("top_p", fallback: 1.0),
+                topK: chatExecutionParameters["top_k"] as? Int ?? chatProfile.intParameterDefault("top_k", fallback: 0),
+                minP: chatExecutionParameters["min_p"] as? Double ?? chatProfile.doubleParameterDefault("min_p", fallback: 0),
+                repetitionPenalty: chatExecutionParameters["repetition_penalty"] as? Double ?? chatProfile.doubleParameterDefault("repetition_penalty", fallback: 1.0),
                 chatTemplateKwargs: chatTemplateKwargs,
                 tools: nil
             )

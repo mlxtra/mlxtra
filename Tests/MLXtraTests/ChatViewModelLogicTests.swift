@@ -337,21 +337,21 @@ final class ChatViewModelLogicTests: XCTestCase {
 
         XCTAssertTrue(didSelectDownloadedModel)
         XCTAssertEqual(viewModel.activeModelProfile.modelId, downloadedProfile.modelId)
-        if let aiModel = downloadedProfile.aiModel {
-            XCTAssertEqual(viewModel.selectedModel, aiModel)
-        }
         XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), downloadedProfile.modelId)
     }
 
     @MainActor
-    func testDownloadedDefaultDoesNotOverrideStoredVisionSelection() async throws {
+    func testDownloadedDefaultDoesNotOverrideStoredDownloadedVisionSelection() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let storedProfile = try XCTUnwrap(testVisionProfiles.last)
         let downloadedProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != storedProfile.modelId })
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(storedProfile.modelId, for: .vision)
         XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), storedProfile.modelId)
-        let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [downloadedProfile.modelId])
+        let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [
+            storedProfile.modelId,
+            downloadedProfile.modelId
+        ])
         let viewModel = ChatViewModel(
             chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
             vlmExecutor: QuickPromptTestExecutor(),
@@ -365,6 +365,30 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertFalse(didSelectDownloadedModel)
         XCTAssertEqual(viewModel.activeModelProfile.modelId, storedProfile.modelId)
         XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), storedProfile.modelId)
+    }
+
+    @MainActor
+    func testDownloadedDefaultReplacesStoredMissingVisionSelection() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let storedMissingProfile = try XCTUnwrap(testVisionProfiles.last)
+        let downloadedProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != storedMissingProfile.modelId })
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(storedMissingProfile.modelId, for: .vision)
+        XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), storedMissingProfile.modelId)
+        let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [downloadedProfile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+
+        let didSelectDownloadedModel = await viewModel.selectDownloadedDefaultModelIfNeeded(for: .vision)
+
+        XCTAssertTrue(didSelectDownloadedModel)
+        XCTAssertEqual(viewModel.activeModelProfile.modelId, downloadedProfile.modelId)
+        XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), downloadedProfile.modelId)
     }
 
     @MainActor
@@ -502,7 +526,10 @@ final class ChatViewModelLogicTests: XCTestCase {
         let alternateProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != profile.modelId })
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
-        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [profile.modelId])
+        let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [
+            profile.modelId,
+            alternateProfile.modelId
+        ])
         let viewModel = makeLaunchPreloadViewModel(
             defaults: defaults,
             executor: executor,
@@ -976,7 +1003,7 @@ private final class QuickPromptRuntimeManager: ChatRuntimeManaging {
         1.0
     }
 
-    func isModelDownloadedOffMain(modelId: String) async -> Bool {
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
         true
     }
 }
@@ -1000,8 +1027,8 @@ private final class LaunchPreloadRuntimeManager: ChatRuntimeManaging {
         1.0
     }
 
-    func isModelDownloadedOffMain(modelId: String) async -> Bool {
-        downloadedModelIds.contains(modelId)
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
+        downloadedModelIds.contains(model.modelId)
     }
 }
 
@@ -1020,8 +1047,8 @@ private final class DefaultSelectionRuntimeManager: ChatRuntimeManaging {
         1.0
     }
 
-    func isModelDownloadedOffMain(modelId: String) async -> Bool {
-        downloadedModelIds.contains(modelId)
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
+        downloadedModelIds.contains(model.modelId)
     }
 }
 

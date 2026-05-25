@@ -1,5 +1,5 @@
 {
-  "runtimeVersion": "0.1.1",
+  "runtimeVersion": "0.1.2",
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
@@ -14,6 +14,7 @@
     "mlx==0.31.2",
     "mlx-vlm==0.5.0",
     "mlx-audio==0.4.3",
+    "misaki[en]==0.9.4",
     "mflux==0.17.5",
     "transformers==5.8.0",
     "huggingface-hub==1.14.0",
@@ -40,16 +41,25 @@
     "speech-generation",
     "music-generation"
   ],
-  "supportedModels": [
-    "mlx-community/Qwen3.5-9B-MLX-4bit",
-    "google/gemma-4-e4b-it",
-    "mlx-community/Qwen3.5-2B-MLX-4bit",
-    "mlx-community/gemma-4-e2b-it-4bit",
-    "mlx-community/gemma-4-26b-a4b-it-4bit",
-    "mlx-community/Qwen3.6-27B-4bit",
-    "mlx-community/Qwen3.6-35B-A3B-4bit",
-    "black-forest-labs/FLUX.2-klein-4B",
-    "kugelaudio/kugelaudio-0-open",
-    "ACE-Step/acestep-v15-turbo-continuous"
-  ]
+  "imageRuntimes": {
+    "mflux": {
+      "configs": [
+        "flux2-klein-4b",
+        "z-image-turbo"
+      ],
+      "classes": [
+        "Flux2Klein",
+        "Flux2KleinEdit",
+        "ZImage",
+        "ZImageTurbo"
+      ],
+      "quantizeBits": [3, 4, 5, 6, 8]
+    }
+  },
+  "audioRuntimes": {
+    "adapters": [
+      "kugelaudio",
+      "kokoro"
+    ]
+  }
 }

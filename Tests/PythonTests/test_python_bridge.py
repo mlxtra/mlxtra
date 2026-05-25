@@ -793,8 +793,34 @@ class TestAceStepForwarding(unittest.TestCase):
                 )
 
             forwarder.assert_called_once()
-            assert forwarder.call_args.args[0] == str(ace_python)
+            assert Path(forwarder.call_args.args[0]).resolve() == ace_python.resolve()
             assert forwarder.call_args.args[2]["request_id"] == "req-music"
+
+    def test_handle_music_generation_finds_acestep_venv_next_to_active_runtime(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime" / "macos-arm64"
+            main_python = runtime_root / "venv" / "bin" / "python"
+            ace_python = runtime_root / "acestep-venv" / "bin" / "python"
+            main_python.parent.mkdir(parents=True)
+            ace_python.parent.mkdir(parents=True)
+            main_python.write_text("#!/bin/sh\n")
+            ace_python.write_text("#!/bin/sh\n")
+
+            with patch.dict(os.environ, {}, clear=True), patch.object(
+                python_bridge.sys, "executable", str(main_python)
+            ), patch.object(
+                python_bridge, "_forward_acestep_subprocess", return_value=0
+            ) as forwarder:
+                python_bridge.handle_music_generation(
+                    {
+                        "request_id": "req-music",
+                        "type": "music.generate",
+                        "parameters": {"caption": "clockwork piano"},
+                    }
+                )
+
+            forwarder.assert_called_once()
+            assert Path(forwarder.call_args.args[0]).resolve() == ace_python.resolve()
 
     def test_forward_acestep_subprocess_round_trips_request_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -910,14 +936,198 @@ class TestAceStepForwarding(unittest.TestCase):
             assert [line["type"] for line in lines] == ["audio.generated", "chat.completion.complete"]
 
 
+class TestRuntimeResolution(unittest.TestCase):
+    def setUp(self):
+        self.original_manifest_cache = python_bridge.RUNTIME_MANIFEST_CACHE
+        self.original_espeak_configured_for = python_bridge.ESPEAK_RUNTIME_CONFIGURED_FOR
+        python_bridge.RUNTIME_MANIFEST_CACHE = None
+        python_bridge.ESPEAK_RUNTIME_CONFIGURED_FOR = None
+
+    def tearDown(self):
+        python_bridge.RUNTIME_MANIFEST_CACHE = self.original_manifest_cache
+        python_bridge.ESPEAK_RUNTIME_CONFIGURED_FOR = self.original_espeak_configured_for
+
+    def _runtime_site_packages(self, runtime_root: Path) -> Path:
+        site_packages = (
+            runtime_root / "venv" / "lib" / "python3.12" / "site-packages"
+        )
+        site_packages.mkdir(parents=True)
+        return site_packages
+
+    def test_setup_environment_prefers_active_runtime_packages(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            active_runtime = root / "Application Support" / "runtime"
+            bundled_runtime = root / "App.app" / "Contents" / "Resources" / "runtime" / "macos-arm64"
+            active_site_packages = self._runtime_site_packages(active_runtime)
+            bundled_site_packages = self._runtime_site_packages(bundled_runtime)
+            active_python = active_runtime / "venv" / "bin" / "python"
+            active_python.parent.mkdir(parents=True)
+            active_python.write_text("#!/bin/sh\n")
+            bridge_path = bundled_runtime.parent.parent / "python_bridge.py"
+            bridge_path.parent.mkdir(parents=True, exist_ok=True)
+            bridge_path.write_text("")
+
+            original_sys_path = sys.path[:]
+            try:
+                sys.path[:] = ["existing"]
+                with patch.dict(os.environ, {}, clear=True), patch.object(
+                    python_bridge, "__file__", str(bridge_path)
+                ), patch.object(python_bridge.sys, "executable", str(active_python)):
+                    python_bridge.setup_environment()
+
+                self.assertEqual(sys.path[0], str(active_site_packages.resolve()))
+                self.assertEqual(sys.path[1], str(bundled_site_packages.resolve()))
+            finally:
+                sys.path[:] = original_sys_path
+
+    def test_runtime_manifest_prefers_active_runtime(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            active_runtime = root / "active-runtime"
+            bundled_runtime = root / "App.app" / "Contents" / "Resources" / "runtime" / "macos-arm64"
+            self._runtime_site_packages(active_runtime)
+            self._runtime_site_packages(bundled_runtime)
+            active_python = active_runtime / "venv" / "bin" / "python"
+            active_python.parent.mkdir(parents=True)
+            active_python.write_text("#!/bin/sh\n")
+            active_manifest = {"runtime": "active"}
+            bundled_manifest = {"runtime": "bundled"}
+            (active_runtime / "runtime-manifest.json").write_text(json.dumps(active_manifest))
+            (bundled_runtime / "runtime-manifest.json").write_text(json.dumps(bundled_manifest))
+            bridge_path = bundled_runtime.parent.parent / "python_bridge.py"
+            bridge_path.parent.mkdir(parents=True, exist_ok=True)
+            bridge_path.write_text("")
+
+            with patch.dict(os.environ, {}, clear=True), patch.object(
+                python_bridge, "__file__", str(bridge_path)
+            ), patch.object(python_bridge.sys, "executable", str(active_python)):
+                self.assertEqual(python_bridge._runtime_manifest(), active_manifest)
+
+    def test_configure_espeak_runtime_uses_active_runtime_data(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime_root = root / "runtime"
+            site_packages = self._runtime_site_packages(runtime_root)
+            loader_dir = site_packages / "espeakng_loader"
+            data_dir = loader_dir / "espeak-ng-data"
+            data_dir.mkdir(parents=True)
+            (data_dir / "phontab").write_text("data")
+            library_path = loader_dir / "libespeak-ng.dylib"
+            library_path.write_text("library")
+            active_python = runtime_root / "venv" / "bin" / "python"
+            active_python.parent.mkdir(parents=True)
+            active_python.write_text("#!/bin/sh\n")
+
+            with patch.dict(os.environ, {}, clear=True), patch.object(
+                python_bridge.sys, "executable", str(active_python)
+            ):
+                configured = python_bridge._configure_espeak_runtime()
+                self.assertEqual(configured, loader_dir.resolve())
+                self.assertEqual(
+                    os.environ["PHONEMIZER_ESPEAK_LIBRARY"],
+                    str(library_path.resolve()),
+                )
+                self.assertEqual(
+                    os.environ["PHONEMIZER_ESPEAK_DATA_PATH"],
+                    str(data_dir.resolve()),
+                )
+
+
+class TestAudioModelGeneration(unittest.TestCase):
+    def test_kokoro_generation_uses_voice_speed_and_language(self):
+        generated = object()
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = []
+
+            def generate(self, **kwargs):
+                self.calls.append(kwargs)
+                return [generated]
+
+        model = FakeModel()
+
+        result = list(
+            python_bridge._generate_speech_segments(
+                model,
+                "kokoro",
+                "hello",
+                cfg_scale=3.0,
+                ddpm_steps=10,
+                voice="bf_emma",
+                speed=1.15,
+                lang_code="b",
+            )
+        )
+
+        self.assertEqual(result, [generated])
+        self.assertEqual(
+            model.calls[0],
+            {
+                "text": "hello",
+                "voice": "bf_emma",
+                "speed": 1.15,
+                "lang_code": "b",
+            },
+        )
+        request = {
+            "parameters": {
+                "runtimeOptions": {
+                    "audio": {
+                        "languageByVoicePrefix": {"bf": "b"}
+                    }
+                }
+            }
+        }
+        self.assertEqual(python_bridge._lang_code_for_voice(request, "bf_emma"), "b")
+
+    def test_kugelaudio_generation_keeps_existing_cfg_fallback(self):
+        generated = object()
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = []
+
+            def generate(self, **kwargs):
+                self.calls.append(kwargs)
+                if "voice" in kwargs:
+                    raise TypeError("voice is not supported")
+                return [generated]
+
+        model = FakeModel()
+
+        result = list(
+            python_bridge._generate_speech_segments(
+                model,
+                "kugelaudio",
+                "hello",
+                cfg_scale=3.5,
+                ddpm_steps=16,
+                voice="default",
+                speed=1.0,
+                lang_code="",
+            )
+        )
+
+        self.assertEqual(result, [generated])
+        self.assertEqual(
+            model.calls[2],
+            {"text": "hello", "cfg_scale": 3.5, "ddpm_steps": 16},
+        )
+
+
 class TestImageModelLoading(unittest.TestCase):
     def test_passes_model_path_to_mflux(self):
-        model_id = "test-org/test-flux-model"
+        model_id = "black-forest-labs/FLUX.2-klein-4B"
         mock_model_instance = MagicMock()
         mock_flux_class = MagicMock(return_value=mock_model_instance)
+        fake_config = types.SimpleNamespace(model_name=model_id)
 
         config_module = types.ModuleType("mflux.models.common.config")
-        config_module.ModelConfig = types.SimpleNamespace(flux2_klein_4b=MagicMock())
+        config_module.ModelConfig = types.SimpleNamespace(
+            from_name=MagicMock(return_value=fake_config)
+        )
 
         variants_module = types.ModuleType("mflux.models.flux2.variants")
         variants_module.Flux2Klein = mock_flux_class
@@ -931,13 +1141,74 @@ class TestImageModelLoading(unittest.TestCase):
             "mflux.models.flux2": types.ModuleType("mflux.models.flux2"),
             "mflux.models.flux2.variants": variants_module,
         }
+        request = {
+            "parameters": {
+                "runtimeOptions": {
+                    "mflux": {
+                        "config": "flux2-klein-4b",
+                        "textToImageClass": "Flux2Klein",
+                        "editClass": "Flux2KleinEdit",
+                    }
+                }
+            }
+        }
 
         with patch.dict(sys.modules, stubbed_modules):
-            result = python_bridge.load_image_model_if_needed(model_id)
+            result = python_bridge.load_image_model_if_needed(model_id, request=request)
 
-            # Check that Flux2Klein was called with model_path=model_id
+            config_module.ModelConfig.from_name.assert_called_once_with(model_name="flux2-klein-4b")
             args, kwargs = mock_flux_class.call_args
             assert kwargs["model_path"] == model_id
+            assert kwargs["model_config"] == fake_config
+            assert result == mock_model_instance
+
+    def test_image_model_requires_runtime_options_config(self):
+        with self.assertRaisesRegex(ValueError, "runtimeOptions.mflux.config"):
+            python_bridge.load_image_model_if_needed("black-forest-labs/FLUX.2-klein-4B")
+
+    def test_selects_z_image_turbo_runtime_options(self):
+        model_id = "Tongyi-MAI/Z-Image-Turbo"
+        mock_model_instance = MagicMock()
+        mock_z_image_class = MagicMock(return_value=mock_model_instance)
+        fake_config = types.SimpleNamespace(model_name=model_id)
+
+        config_module = types.ModuleType("mflux.models.common.config")
+        config_module.ModelConfig = types.SimpleNamespace(
+            from_name=MagicMock(return_value=fake_config)
+        )
+
+        z_image_module = types.ModuleType("mflux.models.z_image")
+        z_image_module.ZImage = MagicMock()
+        z_image_module.ZImageTurbo = mock_z_image_class
+
+        request = {
+            "parameters": {
+                "runtimeOptions": {
+                    "mflux": {
+                        "config": "z-image-turbo",
+                        "textToImageClass": "ZImageTurbo",
+                        "editClass": "ZImageTurbo",
+                        "quantize": 8,
+                    }
+                }
+            }
+        }
+        stubbed_modules = {
+            "mflux": types.ModuleType("mflux"),
+            "mflux.models": types.ModuleType("mflux.models"),
+            "mflux.models.common": types.ModuleType("mflux.models.common"),
+            "mflux.models.common.config": config_module,
+            "mflux.models.z_image": z_image_module,
+        }
+
+        with patch.dict(sys.modules, stubbed_modules):
+            result = python_bridge.load_image_model_if_needed(model_id, request=request)
+
+            config_module.ModelConfig.from_name.assert_called_once_with(model_name="z-image-turbo")
+            args, kwargs = mock_z_image_class.call_args
+            assert kwargs["model_path"] == model_id
+            assert kwargs["model_config"] == fake_config
+            assert kwargs["quantize"] == 8
             assert result == mock_model_instance
 
 

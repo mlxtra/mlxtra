@@ -144,13 +144,6 @@ extension ChatViewModel {
         var parameters = executionParameters ?? modelParameterStore.executionParameters(for: musicProfile)
         parameters.merge([
             "caption": caption,
-            "batch_size": 1,
-            "audio_format": "wav",
-            "thinking": false,
-            "bpm": 0,
-            "keyscale": "",
-            "timesignature": "",
-            "vocal_language": "unknown",
             "instrumental": caption.localizedCaseInsensitiveContains("instrumental")
                 || caption.localizedCaseInsensitiveContains("beat")
                 || caption.localizedCaseInsensitiveContains("background music")

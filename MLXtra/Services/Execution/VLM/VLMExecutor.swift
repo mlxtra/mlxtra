@@ -224,6 +224,7 @@ class VLMExecutor: NSObject, ModelExecutor {
         cleanEnv["HF_HOME"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path
         cleanEnv["HF_HUB_CACHE"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path
         cleanEnv["ACESTEP_CHECKPOINTS_DIR"] = runtimeManager.checkpointsPath.path
+        cleanEnv["ACESTEP_PYTHON"] = runtimeManager.acestepPythonExecutablePath().path
 
         // Disable Metal validation to prevent crashes with ACE-Step/MLX
         // Metal validation can trigger false positives with certain compute shaders
@@ -391,7 +392,11 @@ private final class StreamFinishState: @unchecked Sendable {
         let modelCacheKey = "\(request.backend.rawValue):\(request.modelId)"
         if currentModelCacheKey != modelCacheKey {
             isModelLoaded = false
-            try await loadModel(request.modelId, backend: request.backend)
+            try await loadModel(
+                request.modelId,
+                backend: request.backend,
+                parameters: request.parameters
+            )
             currentModelCacheKey = modelCacheKey
             currentModelId = request.modelId
             currentModelBackend = request.backend
@@ -452,7 +457,11 @@ private final class StreamFinishState: @unchecked Sendable {
         return responseStream.stream
     }
 
-    private func loadModel(_ modelId: String, backend: RuntimeBackend) async throws {
+    private func loadModel(
+        _ modelId: String,
+        backend: RuntimeBackend,
+        parameters: [String: Any]? = nil
+    ) async throws {
         delegate?.modelLoadingStarted(modelId: modelId)
         delegate?.modelLoadingProgress(
             ModelLoadProgress(
@@ -464,12 +473,15 @@ private final class StreamFinishState: @unchecked Sendable {
         )
 
         let requestID = UUID().uuidString
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "request_id": requestID,
             "type": "init",
             "model_id": modelId,
             "backend": backend.rawValue
         ]
+        if let parameters {
+            payload["parameters"] = parameters
+        }
 
         let waiter = installModelLoadHandler(requestID: requestID, modelId: modelId, backend: backend)
 

@@ -97,7 +97,10 @@ validate_manifest() {
     RUNTIME_EXPECTED_PACKAGES="$(printf '%s\n' "${RUNTIME_MAIN_PACKAGES[@]}")" \
     RUNTIME_EXPECTED_BACKENDS="$(printf '%s\n' "${RUNTIME_SUPPORTED_BACKENDS[@]}")" \
     RUNTIME_EXPECTED_CAPABILITIES="$(printf '%s\n' "${RUNTIME_CAPABILITIES[@]}")" \
-    RUNTIME_EXPECTED_MODELS="$(printf '%s\n' "${RUNTIME_SUPPORTED_MODELS[@]}")" \
+    RUNTIME_EXPECTED_MFLUX_CONFIGS="$(printf '%s\n' "${RUNTIME_MFLUX_CONFIGS[@]}")" \
+    RUNTIME_EXPECTED_MFLUX_CLASSES="$(printf '%s\n' "${RUNTIME_MFLUX_CLASSES[@]}")" \
+    RUNTIME_EXPECTED_MFLUX_QUANTIZE_BITS="$(printf '%s\n' "${RUNTIME_MFLUX_QUANTIZE_BITS[@]}")" \
+    RUNTIME_EXPECTED_AUDIO_ADAPTERS="$(printf '%s\n' "${RUNTIME_AUDIO_ADAPTERS[@]}")" \
     /usr/bin/python3 - "${MANIFEST}" <<'PY'
 import json
 import os
@@ -126,11 +129,40 @@ missing_capabilities = expected_capabilities - manifest_capabilities
 if missing_capabilities:
     raise SystemExit(f"runtime manifest is missing capabilities: {sorted(missing_capabilities)}")
 
-expected_models = set(os.environ["RUNTIME_EXPECTED_MODELS"].splitlines())
-manifest_models = set(manifest.get("supportedModels", []))
-missing_models = expected_models - manifest_models
-if missing_models:
-    raise SystemExit(f"runtime manifest is missing supported models: {sorted(missing_models)}")
+image_runtimes = manifest.get("imageRuntimes", {})
+if not isinstance(image_runtimes, dict):
+    raise SystemExit("runtime manifest imageRuntimes must be an object")
+mflux = image_runtimes.get("mflux", {})
+if not isinstance(mflux, dict):
+    raise SystemExit("runtime manifest imageRuntimes.mflux must be an object")
+
+expected_configs = set(os.environ["RUNTIME_EXPECTED_MFLUX_CONFIGS"].splitlines())
+manifest_configs = set(mflux.get("configs", []))
+missing_configs = expected_configs - manifest_configs
+if missing_configs:
+    raise SystemExit(f"runtime manifest is missing mflux configs: {sorted(missing_configs)}")
+
+expected_classes = set(os.environ["RUNTIME_EXPECTED_MFLUX_CLASSES"].splitlines())
+manifest_classes = set(mflux.get("classes", []))
+missing_classes = expected_classes - manifest_classes
+if missing_classes:
+    raise SystemExit(f"runtime manifest is missing mflux classes: {sorted(missing_classes)}")
+
+expected_quantize = {int(value) for value in os.environ["RUNTIME_EXPECTED_MFLUX_QUANTIZE_BITS"].splitlines()}
+manifest_quantize = set(mflux.get("quantizeBits", []))
+missing_quantize = expected_quantize - manifest_quantize
+if missing_quantize:
+    raise SystemExit(f"runtime manifest is missing mflux quantize bits: {sorted(missing_quantize)}")
+
+audio_runtimes = manifest.get("audioRuntimes", {})
+if not isinstance(audio_runtimes, dict):
+    raise SystemExit("runtime manifest audioRuntimes must be an object")
+
+expected_audio_adapters = set(os.environ["RUNTIME_EXPECTED_AUDIO_ADAPTERS"].splitlines())
+manifest_audio_adapters = set(audio_runtimes.get("adapters", []))
+missing_audio_adapters = expected_audio_adapters - manifest_audio_adapters
+if missing_audio_adapters:
+    raise SystemExit(f"runtime manifest is missing audio adapters: {sorted(missing_audio_adapters)}")
 PY
 }
 
@@ -145,6 +177,7 @@ import os
 expected_packages = {}
 for pinned in os.environ["RUNTIME_EXPECTED_PACKAGES"].splitlines():
     package, version = pinned.split("==", 1)
+    package = package.split("[", 1)[0]
     expected_packages[package] = version
 
 for package, version in expected_packages.items():

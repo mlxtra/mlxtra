@@ -25,6 +25,27 @@ struct RuntimeReleaseAsset: Codable, Equatable, Identifiable {
     let sha256: String
     let sizeBytes: Int64?
     let compatibilityApi: Int
+    let minAppVersion: String?
+
+    init(
+        version: String,
+        platform: String,
+        arch: String,
+        url: URL,
+        sha256: String,
+        sizeBytes: Int64?,
+        compatibilityApi: Int,
+        minAppVersion: String? = nil
+    ) {
+        self.version = version
+        self.platform = platform
+        self.arch = arch
+        self.url = url
+        self.sha256 = sha256
+        self.sizeBytes = sizeBytes
+        self.compatibilityApi = compatibilityApi
+        self.minAppVersion = minAppVersion
+    }
 
     var id: String { "\(platform)-\(arch)-\(version)" }
 }
@@ -100,10 +121,6 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
         self.catalogSnapshot = initialCatalog
     }
 
-    func profile(legacyModel: AIModel) -> ModelCapabilityProfile? {
-        profiles.first { $0.aiModel == legacyModel }
-    }
-
     func profile(modelId: String) -> ModelCapabilityProfile? {
         profiles.first { $0.modelId == modelId }
     }
@@ -127,8 +144,12 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
                 expectedSHA256: channel.catalog.sha256,
                 appVersion: Self.currentAppVersion
             )
+            guard Self.shouldReplaceCatalog(current: catalog, with: refreshed) else {
+                lastRefreshError = nil
+                return
+            }
             try saveCachedCatalog(catalogData)
-            setCatalog(Self.catalogWithRequiredBuiltIns(refreshed))
+            setCatalog(refreshed)
             lastRefreshError = nil
         } catch {
             lastRefreshError = error.localizedDescription
@@ -147,8 +168,12 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
         }
 
         let catalog = try JSONDecoder.catalogDecoder.decode(ModelCatalog.self, from: data)
-        try validate(catalog, appVersion: appVersion)
+        try validate(catalog, appVersion: normalizedAppVersion(appVersion))
         return catalog
+    }
+
+    static func shouldReplaceCatalog(current: ModelCatalog, with refreshed: ModelCatalog) -> Bool {
+        VersionComparator.compare(refreshed.catalogVersion, current.catalogVersion) != .orderedAscending
     }
 
     private let fileManager: FileManager
@@ -202,18 +227,18 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
                 bundledCatalog.catalogVersion,
                 cachedCatalog.catalogVersion
             ) == .orderedDescending ? bundledCatalog : cachedCatalog
-            return catalogWithRequiredBuiltIns(preferred)
+            return preferred
         }
 
         if let cachedCatalog {
-            return catalogWithRequiredBuiltIns(cachedCatalog)
+            return cachedCatalog
         }
 
         if let bundledCatalog {
-            return catalogWithRequiredBuiltIns(bundledCatalog)
+            return bundledCatalog
         }
 
-        return catalogWithRequiredBuiltIns(legacyFallbackCatalog)
+        return emergencyFallbackCatalog
     }
 
     private static func validate(_ catalog: ModelCatalog, appVersion: String?) throws {
@@ -343,31 +368,23 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
     }
 
-    private static var legacyFallbackCatalog: ModelCatalog {
+    private static func normalizedAppVersion(_ rawVersion: String?) -> String? {
+        guard let rawVersion else { return nil }
+        let version = rawVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !version.isEmpty else { return nil }
+        guard version.range(of: #"\$\([^)]+\)"#, options: .regularExpression) == nil else {
+            return nil
+        }
+        guard version.first?.isNumber == true else { return nil }
+        return version
+    }
+
+    private static var emergencyFallbackCatalog: ModelCatalog {
         ModelCatalog(
             schemaVersion: 1,
             catalogVersion: "fallback",
             minAppVersion: nil,
-            models: LegacyModelCatalog.profiles
-        )
-    }
-
-    private static func catalogWithRequiredBuiltIns(_ catalog: ModelCatalog) -> ModelCatalog {
-        var models = catalog.models
-        var existingIds = Set(models.map(\.id))
-        var existingModelIds = Set(models.map(\.modelId))
-
-        for profile in LegacyModelCatalog.profiles
-            where existingIds.insert(profile.id).inserted
-                && existingModelIds.insert(profile.modelId).inserted {
-            models.append(profile)
-        }
-
-        return ModelCatalog(
-            schemaVersion: catalog.schemaVersion,
-            catalogVersion: catalog.catalogVersion,
-            minAppVersion: catalog.minAppVersion,
-            models: models
+            models: EmergencyModelCatalog.profiles
         )
     }
 }

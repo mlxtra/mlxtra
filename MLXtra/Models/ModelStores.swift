@@ -22,12 +22,13 @@ struct ModelSelectionStore {
 
     func storedProfile(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB,
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
         runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
     ) -> ModelCapabilityProfile? {
         guard let modelId = selectedModelId(for: modality),
               let profile = ModelCapabilityProfile.embeddedProfile(modelId: modelId),
               profile.modality == modality,
+              profile.isCatalogVisible,
               profile.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) else {
             return nil
         }
@@ -42,7 +43,7 @@ struct ModelSelectionStore {
 
     func selectedProfile(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB,
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
         runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
     ) -> ModelCapabilityProfile? {
         if let profile = storedProfile(
@@ -59,12 +60,58 @@ struct ModelSelectionStore {
         )
     }
 
+    func selectedAvailableProfile(
+        for modality: ModelModality,
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest(),
+        isAvailable: (DownloadableModel) -> Bool
+    ) -> ModelCapabilityProfile? {
+        if let profile = storedProfile(
+            for: modality,
+            hardwareMemoryGB: hardwareMemoryGB,
+            runtimeManifest: runtimeManifest
+        ), isAvailable(profile.downloadableModel) {
+            return profile
+        }
+
+        return availableFallbackProfile(
+            for: modality,
+            hardwareMemoryGB: hardwareMemoryGB,
+            runtimeManifest: runtimeManifest,
+            isAvailable: isAvailable
+        )
+    }
+
     func key(for modality: ModelModality) -> String {
         switch modality {
         case .vision: return Self.chatKey
         case .image: return Self.imageKey
         case .audio: return Self.speechKey
         case .music: return Self.musicKey
+        }
+    }
+
+    private func availableFallbackProfile(
+        for modality: ModelModality,
+        hardwareMemoryGB: Double,
+        runtimeManifest: RuntimeManifest?,
+        isAvailable: (DownloadableModel) -> Bool
+    ) -> ModelCapabilityProfile? {
+        let sortedProfiles = ModelCapabilityProfile.sortedProfiles(
+            for: modality,
+            hardwareMemoryGB: hardwareMemoryGB
+        )
+        let compatibleProfiles = sortedProfiles.filter { profile in
+            if let runtimeManifest {
+                return profile.isRuntimeCompatible(manifest: runtimeManifest)
+            }
+
+            return profile.isRuntimeCompatible()
+        }
+        let candidateProfiles = compatibleProfiles.isEmpty ? sortedProfiles : compatibleProfiles
+
+        return candidateProfiles.first { profile in
+            isAvailable(profile.downloadableModel)
         }
     }
 }
@@ -162,6 +209,7 @@ struct DownloadableModel: Identifiable, Equatable {
     let estimatedMemoryGB: Double?
     let source: ModelSource
     let runtime: ModelRuntimeRequirement
+    let runtimeOptions: ModelRuntimeOptions?
 
     init(
         id: String,
@@ -173,7 +221,8 @@ struct DownloadableModel: Identifiable, Equatable {
         downloadSizeGB: Double,
         estimatedMemoryGB: Double? = nil,
         source: ModelSource? = nil,
-        runtime: ModelRuntimeRequirement = ModelRuntimeRequirement()
+        runtime: ModelRuntimeRequirement = ModelRuntimeRequirement(),
+        runtimeOptions: ModelRuntimeOptions? = nil
     ) {
         self.id = id
         self.name = name
@@ -185,19 +234,23 @@ struct DownloadableModel: Identifiable, Equatable {
         self.estimatedMemoryGB = estimatedMemoryGB
         self.source = source ?? ModelSource.defaultSource(modelId: modelId)
         self.runtime = runtime
+        self.runtimeOptions = runtimeOptions
     }
 
     static func embeddedModel(modelId: String) -> DownloadableModel? {
-        embedded.first { $0.modelId == modelId }
+        ModelCapabilityProfile.embeddedProfile(modelId: modelId)?.downloadableModel
     }
 
     static var embedded: [DownloadableModel] {
-        ModelCapabilityProfile.embedded.map(\.downloadableModel)
+        ModelCapabilityProfile.embedded
+            .filter(\.isCatalogVisible)
+            .map(\.downloadableModel)
     }
 
     var isRuntimeCompatible: Bool {
         let manifest = RuntimeManager.activeRuntimeManifest()
         return runtime.isSatisfied(by: manifest)
             && (manifest?.supports(backend: backend) ?? false)
+            && (manifest?.supports(runtimeOptions: runtimeOptions) ?? false)
     }
 }

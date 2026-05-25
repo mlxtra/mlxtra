@@ -124,9 +124,9 @@ struct ModelManagerRow: View {
 
     @ViewBuilder
     private var actionView: some View {
-        if !model.isRuntimeCompatible {
+        if shouldShowRuntimeRequirement {
             VStack(alignment: .trailing, spacing: 6) {
-                Label("Setup required", systemImage: "arrow.triangle.2.circlepath")
+                Label(runtimeRequirementTitle, systemImage: runtimeRequirementIcon)
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
 
@@ -136,6 +136,32 @@ struct ModelManagerRow: View {
         } else {
             stateAction
         }
+    }
+
+    private var shouldShowRuntimeRequirement: Bool {
+        guard !model.isRuntimeCompatible else {
+            return false
+        }
+        switch state {
+        case .downloading, .paused:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private var runtimeRequirementTitle: String {
+        if case .requiresAppUpdate = runtimeUpdateManager.state {
+            return "App update required"
+        }
+        return "Setup required"
+    }
+
+    private var runtimeRequirementIcon: String {
+        if case .requiresAppUpdate = runtimeUpdateManager.state {
+            return "app.badge"
+        }
+        return "arrow.triangle.2.circlepath"
     }
 
     @ViewBuilder
@@ -172,6 +198,8 @@ struct ModelManagerRow: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+        case .requiresAppUpdate:
+            runtimeBlockedDownloadAction
         case .idle, .installed:
             Button {
                 onDownload()
@@ -180,6 +208,20 @@ struct ModelManagerRow: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private var runtimeBlockedDownloadAction: some View {
+        switch state {
+        case .notDownloaded, .failed:
+            if isPendingDownload {
+                queuedRuntimeAction
+            } else {
+                queueDownloadButton
+            }
+        default:
+            runtimeUnavailableStatus("Update MLXtra")
         }
     }
 
@@ -211,6 +253,12 @@ struct ModelManagerRow: View {
             .accessibilityLabel("Remove from Queue")
             .accessibilityIdentifier("settings.modelState.queued.cancel")
         }
+    }
+
+    private func runtimeUnavailableStatus(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(.orange)
     }
 
     private func runtimeSetupStatus(_ text: String) -> some View {
@@ -410,7 +458,7 @@ struct ModelManagerRow: View {
     private var modelFit: ModelFit {
         ModelFit.classify(
             estimatedMemoryGB: model.estimatedMemoryGB,
-            hardwareMemoryGB: AIModel.currentHardwareMemoryGB
+            hardwareMemoryGB: SystemHardware.currentMemoryGB
         )
     }
 

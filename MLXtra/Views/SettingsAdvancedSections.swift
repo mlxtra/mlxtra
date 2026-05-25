@@ -450,11 +450,11 @@ struct ModelDownloadRow: View {
 
     private var modelFit: ModelFit {
         ModelCapabilityProfile.embeddedProfile(modelId: model.modelId)?.fit()
-            ?? ModelFit.classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: AIModel.currentHardwareMemoryGB)
+            ?? ModelFit.classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: SystemHardware.currentMemoryGB)
     }
 
     private func requestDownload() {
-        guard model.isRuntimeCompatible else {
+        guard !model.source.usesComponentBundle || model.isRuntimeCompatible else {
             pendingDownloadModelId = model.modelId
             runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
             return

@@ -26,7 +26,7 @@ struct ModelSettingsModelSorter {
         selectedModelId: String?,
         recommendedModelId: String?,
         state: (DownloadableModel) -> ModelDownloadManager.DownloadState,
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB,
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
         runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
     ) -> [DownloadableModel] {
         models.sorted { lhs, rhs in
@@ -57,7 +57,7 @@ struct ModelSettingsModelSorter {
         runtimeManifest: RuntimeManifest?
     ) -> ModelSettingsSortKey {
         ModelSettingsSortKey(
-            defaultRank: selectedModelId == model.modelId ? 0 : 1,
+            defaultRank: selectedModelId == model.modelId && state == .downloaded ? 0 : 1,
             recommendedRank: recommendedModelId == model.modelId ? 0 : 1,
             runtimeRank: isRuntimeCompatible(model, manifest: runtimeManifest) ? 0 : 1,
             stateRank: state.sortRank,
@@ -70,7 +70,9 @@ struct ModelSettingsModelSorter {
     }
 
     private static func isRuntimeCompatible(_ model: DownloadableModel, manifest: RuntimeManifest?) -> Bool {
-        model.runtime.isSatisfied(by: manifest) && (manifest?.supports(backend: model.backend) ?? true)
+        model.runtime.isSatisfied(by: manifest)
+            && (manifest?.supports(backend: model.backend) ?? true)
+            && (manifest?.supports(runtimeOptions: model.runtimeOptions) ?? true)
     }
 }
 

@@ -94,7 +94,7 @@ struct WelcomeView: View {
         }
 
         switch runtimeUpdateManager.state {
-        case .idle, .checking, .available, .installing, .failed:
+        case .idle, .checking, .available, .requiresAppUpdate, .installing, .failed:
             return true
         case .installed:
             return false

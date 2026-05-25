@@ -10,7 +10,6 @@ struct ChatGenerationRequest {
     let prompt: String
     let images: [URL]
     let tool: Tool
-    let selectedModel: AIModel
     let profilesByModality: [ModelModality: ModelCapabilityProfile]
     let parametersByModelId: [String: [String: Any]]
     let selectionDownloadRequirement: DownloadableModel?
@@ -30,7 +29,16 @@ struct ChatGenerationRequest {
     }
 
     func executionParameters(for profile: ModelCapabilityProfile) -> [String: Any] {
-        parametersByModelId[profile.modelId] ?? [:]
+        var parameters = parametersByModelId[profile.modelId] ?? [:]
+        let runtimeOptions = profile.runtimeOptions?.executionDictionary ?? [:]
+        if !runtimeOptions.isEmpty {
+            parameters["runtimeOptions"] = runtimeOptions
+        }
+        return parameters
+    }
+
+    func chatTemplateKwargs(for profile: ModelCapabilityProfile) -> [String: Any]? {
+        profile.runtimeOptions?.chatTemplateKwargs(from: executionParameters(for: profile))
     }
 
     static func modelModality(for tool: Tool) -> ModelModality {

@@ -58,33 +58,17 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertFalse(embedded.isEmpty)
 
         let visionModels = embedded.filter { $0.modality == .vision }
-        XCTAssertGreaterThanOrEqual(visionModels.count, AIModel.allCases.count)
+        XCTAssertGreaterThanOrEqual(visionModels.count, 3)
     }
 
-    func testEmbeddedVisionModelsIncludeLegacyBuiltInCatalog() {
-        let embeddedVisionModels = DownloadableModel.embedded.filter { $0.modality == .vision }
-        let expectedVisionModels = AIModel.allCases.map { model in
-            DownloadableModel(
-                id: model.modelId,
-                name: model.displayName,
-                subtitle: model.subtitle,
-                modelId: model.modelId,
-                modality: .vision,
-                downloadSizeGB: model.downloadSizeGB,
-                estimatedMemoryGB: model.memoryRequirementGB
-            )
-        }
-
-        for model in expectedVisionModels {
-            XCTAssertTrue(embeddedVisionModels.contains(model), "Missing \(model.modelId)")
-        }
-    }
-
-    func testEmbeddedVisionModelsIncludeAdditionalGemmaAndQwenSizes() {
+    func testEmbeddedVisionModelsIncludeCatalogChatModels() {
         let embeddedVisionModelIds = Set(DownloadableModel.embedded
             .filter { $0.modality == .vision }
             .map(\.modelId))
 
+        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.5-9B-MLX-4bit"))
+        XCTAssertTrue(embeddedVisionModelIds.contains("google/gemma-4-e4b-it"))
+        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.5-2B-MLX-4bit"))
         XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/gemma-4-e2b-it-4bit"))
         XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
         XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
@@ -141,10 +125,11 @@ final class DownloadableModelTests: XCTestCase {
     func testEmbeddedImageModel() {
         let embedded = DownloadableModel.embedded
         let imageModels = embedded.filter { $0.modality == .image }
+        let imageModelIds = Set(imageModels.map(\.id))
 
-        XCTAssertEqual(imageModels.count, 1)
-        XCTAssertEqual(imageModels.first?.id, "black-forest-labs/FLUX.2-klein-4B")
-        XCTAssertEqual(imageModels.first?.modelId, "black-forest-labs/FLUX.2-klein-4B")
+        XCTAssertEqual(imageModels.count, 2)
+        XCTAssertTrue(imageModelIds.contains("black-forest-labs/FLUX.2-klein-4B"))
+        XCTAssertTrue(imageModelIds.contains("Tongyi-MAI/Z-Image-Turbo"))
     }
 
     func testEmbeddedModelLookupByModelId() {
@@ -161,10 +146,11 @@ final class DownloadableModelTests: XCTestCase {
     func testEmbeddedAudioModel() {
         let embedded = DownloadableModel.embedded
         let audioModels = embedded.filter { $0.modality == .audio }
+        let audioModelIds = Set(audioModels.map(\.id))
 
-        XCTAssertEqual(audioModels.count, 1)
-        XCTAssertEqual(audioModels.first?.id, "kugelaudio/kugelaudio-0-open")
-        XCTAssertEqual(audioModels.first?.name, "KugelAudio 0 Open")
+        XCTAssertEqual(audioModels.count, 2)
+        XCTAssertTrue(audioModelIds.contains("kugelaudio/kugelaudio-0-open"))
+        XCTAssertTrue(audioModelIds.contains("mlx-community/Kokoro-82M-4bit"))
     }
 
 
@@ -212,39 +198,5 @@ final class ModelModalityTests: XCTestCase {
         XCTAssertEqual(ModelModality.image.icon, "photo")
         XCTAssertEqual(ModelModality.audio.icon, "waveform")
         XCTAssertEqual(ModelModality.music.icon, "music.note")
-    }
-}
-
-
-final class ModelInfoTests: XCTestCase {
-
-    func testModelInfoProperties() {
-        let info = ModelInfo(
-            name: "Test Model",
-            modelId: "org/test-model",
-            contextWindow: 8192,
-            memoryRequired: 4.0,
-            downloadSize: 3.5,
-            supportsVision: true
-        )
-
-        XCTAssertEqual(info.name, "Test Model")
-        XCTAssertEqual(info.modelId, "org/test-model")
-        XCTAssertEqual(info.contextWindow, 8192)
-        XCTAssertEqual(info.memoryRequired, 4.0)
-        XCTAssertEqual(info.downloadSize, 3.5)
-        XCTAssertTrue(info.supportsVision)
-    }
-
-    func testModelInfoNonVisionSupport() {
-        let info = ModelInfo(
-            name: "Test Model",
-            modelId: "org/test-model",
-            contextWindow: 4096,
-            memoryRequired: 2.0,
-            downloadSize: 2.0,
-            supportsVision: false
-        )
-        XCTAssertFalse(info.supportsVision)
     }
 }

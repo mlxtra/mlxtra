@@ -1,5 +1,11 @@
 import Foundation
 
+enum SystemHardware {
+    static var currentMemoryGB: Double {
+        Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+    }
+}
+
 enum ModelModality: String, CaseIterable, Identifiable {
     case vision = "Vision"
     case image = "Image"
@@ -120,6 +126,12 @@ enum ModelParameterType: String, Equatable, Codable {
     case boolean
     case option
     case text
+}
+
+enum ModelAvailability: String, Equatable, Codable {
+    case visible
+    case hidden
+    case requiresHFAccess = "requires_hf_access"
 }
 
 struct ModelParameterDefinition: Identifiable, Equatable, Codable {
@@ -295,32 +307,32 @@ enum ModelSourceType: String, Codable, Equatable {
     case componentBundle = "component_bundle"
 }
 
+enum ModelDownloadHelper: String, Codable, Equatable {
+    case aceStep = "ace_step"
+}
+
 struct ModelSource: Codable, Equatable {
     let type: ModelSourceType
     let repo: String?
     let revision: String?
     let components: [String]
+    let helper: ModelDownloadHelper?
 
     init(
         type: ModelSourceType,
         repo: String? = nil,
         revision: String? = nil,
-        components: [String] = []
+        components: [String] = [],
+        helper: ModelDownloadHelper? = nil
     ) {
         self.type = type
         self.repo = repo
         self.revision = revision
         self.components = components
+        self.helper = helper
     }
 
     static func defaultSource(modelId: String) -> ModelSource {
-        if modelId.hasPrefix("ACE-Step/") {
-            return ModelSource(
-                type: .componentBundle,
-                repo: modelId,
-                components: ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
-            )
-        }
         return ModelSource(type: .huggingFaceSnapshot, repo: modelId, revision: "main")
     }
 
@@ -346,6 +358,130 @@ struct ModelRuntimeRequirement: Codable, Equatable {
         guard let manifest else { return false }
         guard manifest.compatibilityApi == compatibilityApi else { return false }
         return VersionComparator.compare(manifest.runtimeVersion, minVersion) != .orderedAscending
+    }
+}
+
+struct ModelRuntimeOptions: Codable, Equatable {
+    let mflux: MFluxRuntimeOptions?
+    let chatTemplate: ChatTemplateRuntimeOptions?
+    let audio: AudioRuntimeOptions?
+
+    init(
+        mflux: MFluxRuntimeOptions? = nil,
+        chatTemplate: ChatTemplateRuntimeOptions? = nil,
+        audio: AudioRuntimeOptions? = nil
+    ) {
+        self.mflux = mflux
+        self.chatTemplate = chatTemplate
+        self.audio = audio
+    }
+
+    var executionDictionary: [String: Any] {
+        var options: [String: Any] = [:]
+        if let mflux {
+            options["mflux"] = mflux.executionDictionary
+        }
+        if let audio {
+            options["audio"] = audio.executionDictionary
+        }
+        return options
+    }
+
+    func chatTemplateKwargs(from parameters: [String: Any]) -> [String: Any]? {
+        chatTemplate?.kwargs(from: parameters)
+    }
+}
+
+struct MFluxRuntimeOptions: Codable, Equatable {
+    let config: String
+    let textToImageClass: String
+    let editClass: String
+    let quantize: Int?
+
+    init(
+        config: String,
+        textToImageClass: String,
+        editClass: String,
+        quantize: Int? = nil
+    ) {
+        self.config = config
+        self.textToImageClass = textToImageClass
+        self.editClass = editClass
+        self.quantize = quantize
+    }
+
+    var executionDictionary: [String: Any] {
+        var options: [String: Any] = [
+            "config": config,
+            "textToImageClass": textToImageClass,
+            "editClass": editClass
+        ]
+        if let quantize {
+            options["quantize"] = quantize
+        }
+        return options
+    }
+}
+
+struct ChatTemplateRuntimeOptions: Codable, Equatable {
+    let parameterKwargs: [String: String]
+
+    init(parameterKwargs: [String: String] = [:]) {
+        self.parameterKwargs = parameterKwargs
+    }
+
+    func kwargs(from parameters: [String: Any]) -> [String: Any]? {
+        var kwargs: [String: Any] = [:]
+        for (kwarg, parameterKey) in parameterKwargs {
+            if let value = parameters[parameterKey] {
+                kwargs[kwarg] = value
+            }
+        }
+        return kwargs.isEmpty ? nil : kwargs
+    }
+}
+
+struct AudioRuntimeOptions: Codable, Equatable {
+    let adapter: String
+    let defaultVoice: String?
+    let languageByVoicePrefix: [String: String]
+
+    private enum CodingKeys: String, CodingKey {
+        case adapter
+        case defaultVoice
+        case languageByVoicePrefix
+    }
+
+    init(
+        adapter: String,
+        defaultVoice: String? = nil,
+        languageByVoicePrefix: [String: String] = [:]
+    ) {
+        self.adapter = adapter
+        self.defaultVoice = defaultVoice
+        self.languageByVoicePrefix = languageByVoicePrefix
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            adapter: try container.decode(String.self, forKey: .adapter),
+            defaultVoice: try container.decodeIfPresent(String.self, forKey: .defaultVoice),
+            languageByVoicePrefix: try container.decodeIfPresent([String: String].self, forKey: .languageByVoicePrefix) ?? [:]
+        )
+    }
+
+    var executionDictionary: [String: Any] {
+        var options: [String: Any] = [
+            "adapter": adapter
+        ]
+        if let defaultVoice {
+            options["defaultVoice"] = defaultVoice
+        }
+        if !languageByVoicePrefix.isEmpty {
+            options["languageByVoicePrefix"] = languageByVoicePrefix
+        }
+        return options
     }
 }
 
@@ -376,10 +512,11 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     let estimatedMemoryGB: Double?
     let source: ModelSource
     let runtime: ModelRuntimeRequirement
+    let runtimeOptions: ModelRuntimeOptions?
+    let availability: ModelAvailability?
     let ranking: ModelRanking
     let parameters: [ModelParameterDefinition]
     let presets: [ModelParameterPreset]
-    let aiModel: AIModel?
 
     init(
         id: String,
@@ -396,10 +533,11 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         estimatedMemoryGB: Double?,
         source: ModelSource? = nil,
         runtime: ModelRuntimeRequirement = ModelRuntimeRequirement(),
+        runtimeOptions: ModelRuntimeOptions? = nil,
+        availability: ModelAvailability? = nil,
         ranking: ModelRanking = ModelRanking(),
         parameters: [ModelParameterDefinition],
-        presets: [ModelParameterPreset],
-        aiModel: AIModel?
+        presets: [ModelParameterPreset]
     ) {
         self.id = id
         self.name = name
@@ -415,10 +553,11 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         self.estimatedMemoryGB = estimatedMemoryGB
         self.source = source ?? ModelSource.defaultSource(modelId: modelId)
         self.runtime = runtime
+        self.runtimeOptions = runtimeOptions
+        self.availability = availability
         self.ranking = ranking
         self.parameters = parameters
         self.presets = presets
-        self.aiModel = aiModel
     }
 
     var downloadableModel: DownloadableModel {
@@ -432,7 +571,8 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
             downloadSizeGB: downloadSizeGB,
             estimatedMemoryGB: estimatedMemoryGB,
             source: source,
-            runtime: runtime
+            runtime: runtime,
+            runtimeOptions: runtimeOptions
         )
     }
 
@@ -440,20 +580,49 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         capabilities.contains("vision")
     }
 
-    func fit(hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB) -> ModelFit {
+    var isCatalogVisible: Bool {
+        (availability ?? .visible) == .visible
+    }
+
+    func fit(hardwareMemoryGB: Double = SystemHardware.currentMemoryGB) -> ModelFit {
         ModelFit.classify(estimatedMemoryGB: estimatedMemoryGB, hardwareMemoryGB: hardwareMemoryGB)
     }
 
-    func isHardwareCompatible(hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB) -> Bool {
+    func isHardwareCompatible(hardwareMemoryGB: Double = SystemHardware.currentMemoryGB) -> Bool {
         fit(hardwareMemoryGB: hardwareMemoryGB) != .heavy
     }
 
     func isRuntimeCompatible(manifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()) -> Bool {
-        runtime.isSatisfied(by: manifest) && (manifest?.supports(backend: backend) ?? true)
+        guard let manifest else { return false }
+        return runtime.isSatisfied(by: manifest)
+            && manifest.supports(backend: backend)
+            && manifest.supports(runtimeOptions: runtimeOptions)
     }
 
     func parameterDefinition(key: String) -> ModelParameterDefinition? {
         parameters.first { $0.key == key }
+    }
+
+    func doubleParameterDefault(_ key: String, fallback: Double) -> Double {
+        Double(parameterDefinition(key: key)?.defaultValue ?? "") ?? fallback
+    }
+
+    func intParameterDefault(_ key: String, fallback: Int) -> Int {
+        Int(doubleParameterDefault(key, fallback: Double(fallback)))
+    }
+
+    func boolParameterDefault(_ key: String, fallback: Bool) -> Bool {
+        guard let value = parameterDefinition(key: key)?.defaultValue else {
+            return fallback
+        }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true", "yes", "1":
+            return true
+        case "false", "no", "0":
+            return false
+        default:
+            return fallback
+        }
     }
 
     static var embedded: [ModelCapabilityProfile] {
@@ -465,12 +634,12 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     }
 
     static func profiles(for modality: ModelModality) -> [ModelCapabilityProfile] {
-        embedded.filter { $0.modality == modality }
+        embedded.filter { $0.modality == modality && $0.isCatalogVisible }
     }
 
     static func visibleProfiles(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
     ) -> [ModelCapabilityProfile] {
         let candidates = profiles(for: modality)
         let compatible = candidates.filter { $0.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) }
@@ -486,7 +655,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     }
 
     static func visibleProfiles(
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
     ) -> [ModelCapabilityProfile] {
         ModelModality.allCases.flatMap { modality in
             visibleProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB)
@@ -495,14 +664,14 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 
     static func bestProfile(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
     ) -> ModelCapabilityProfile? {
         recommendedProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).first
     }
 
     static func recommendedProfiles(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
     ) -> [ModelCapabilityProfile] {
         let allCandidates = profiles(for: modality)
         let compatibleCandidates = allCandidates.filter { $0.isRuntimeCompatible() }
@@ -524,7 +693,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 
     static func sortedProfiles(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
     ) -> [ModelCapabilityProfile] {
         visibleProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).sorted { lhs, rhs in
             isRecommendationSortedBefore(lhs, rhs, hardwareMemoryGB: hardwareMemoryGB)
@@ -532,10 +701,9 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     }
 
     fileprivate static func chatParameters(
-        for model: AIModel,
+        defaults: ChatParameterDefaults = .qwen,
         maxContextWindow: Int? = nil
     ) -> [ModelParameterDefinition] {
-        let defaults = ChatParameterDefaults(model: model)
         let contextWindow = maxContextWindow ?? defaults.maxContextWindow
 
         return [
@@ -549,9 +717,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         ]
     }
 
-    fileprivate static func chatPresets(for model: AIModel) -> [ModelParameterPreset] {
-        let defaults = ChatParameterDefaults(model: model)
-
+    fileprivate static func chatPresets(defaults: ChatParameterDefaults = .qwen) -> [ModelParameterPreset] {
         return [
             ModelParameterPreset(id: "balanced", label: "Balanced", values: [
                 "temperature": "\(defaults.temperature)",
@@ -564,7 +730,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         ]
     }
 
-    private struct ChatParameterDefaults {
+    fileprivate struct ChatParameterDefaults {
         let maxContextWindow: Int
         let defaultMaxTokens: Int
         let temperatureRange: ClosedRange<Double>
@@ -575,29 +741,50 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         let repetitionPenalty: Double
         let enableThinking: Bool
 
-        init(model: AIModel) {
-            switch model {
-            case .qwen35, .mini:
-                maxContextWindow = 32768
-                defaultMaxTokens = 4096
-                temperatureRange = 0...2
-                temperature = 0.7
-                topP = 0.8
-                topK = 20
-                minP = 0
-                repetitionPenalty = 1
-                enableThinking = false
-            case .gemma4:
-                maxContextWindow = 8192
-                defaultMaxTokens = 4096
-                temperatureRange = 0...2
-                temperature = 0.7
-                topP = 1
-                topK = 0
-                minP = 0
-                repetitionPenalty = 1
-                enableThinking = false
-            }
+        static let qwen = ChatParameterDefaults(
+            maxContextWindow: 32768,
+            defaultMaxTokens: 4096,
+            temperatureRange: 0...2,
+            temperature: 0.7,
+            topP: 0.8,
+            topK: 20,
+            minP: 0,
+            repetitionPenalty: 1,
+            enableThinking: false
+        )
+
+        static let gemma = ChatParameterDefaults(
+            maxContextWindow: 8192,
+            defaultMaxTokens: 4096,
+            temperatureRange: 0...2,
+            temperature: 0.7,
+            topP: 1,
+            topK: 0,
+            minP: 0,
+            repetitionPenalty: 1,
+            enableThinking: false
+        )
+
+        init(
+            maxContextWindow: Int,
+            defaultMaxTokens: Int,
+            temperatureRange: ClosedRange<Double>,
+            temperature: Double,
+            topP: Double,
+            topK: Int,
+            minP: Double,
+            repetitionPenalty: Double,
+            enableThinking: Bool
+        ) {
+            self.maxContextWindow = maxContextWindow
+            self.defaultMaxTokens = defaultMaxTokens
+            self.temperatureRange = temperatureRange
+            self.temperature = temperature
+            self.topP = topP
+            self.topK = topK
+            self.minP = minP
+            self.repetitionPenalty = repetitionPenalty
+            self.enableThinking = enableThinking
         }
     }
 
@@ -665,60 +852,18 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     }
 
     private static func qualityRank(_ profile: ModelCapabilityProfile) -> Int {
-        if profile.ranking.quality != 0 {
-            return -profile.ranking.quality
-        }
-
-        switch profile.aiModel {
-        case .qwen35:
-            return 0
-        case .gemma4:
-            return 1
-        case .mini:
-            return 2
-        case nil:
-            return 0
-        }
+        -profile.ranking.quality
     }
 
     private static func lightweightRank(_ profile: ModelCapabilityProfile) -> Int {
-        switch profile.aiModel {
-        case .mini:
-            return 0
-        case .gemma4:
-            return 1
-        case .qwen35:
-            return 2
-        case nil:
-            return 0
-        }
+        -profile.ranking.speed
     }
 }
 
-enum LegacyModelCatalog {
+enum EmergencyModelCatalog {
     static let profiles: [ModelCapabilityProfile] = [
         chatProfile(
-            aiModel: .qwen35,
-            subtitle: "Vision language model (9B parameters)",
-            modelId: "mlx-community/Qwen3.5-9B-MLX-4bit",
-            maxContextWindow: 32768,
-            memoryRequirementGB: 6.0,
-            downloadSizeGB: 5.6,
-            icon: "eye",
-            ranking: ModelRanking(quality: 100, speed: 62, defaultForMemoryGB: 16)
-        ),
-        chatProfile(
-            aiModel: .gemma4,
-            subtitle: "Google vision model (4B parameters)",
-            modelId: "google/gemma-4-e4b-it",
-            maxContextWindow: 8192,
-            memoryRequirementGB: 3.0,
-            downloadSizeGB: 2.5,
-            icon: "sparkles",
-            ranking: ModelRanking(quality: 82, speed: 78, defaultForMemoryGB: 8)
-        ),
-        chatProfile(
-            aiModel: .mini,
+            name: "Qwen 3.5 2B",
             subtitle: "Lightweight vision model (2B parameters)",
             modelId: "mlx-community/Qwen3.5-2B-MLX-4bit",
             maxContextWindow: 32768,
@@ -726,154 +871,8 @@ enum LegacyModelCatalog {
             downloadSizeGB: 1.5,
             icon: "bolt",
             ranking: ModelRanking(quality: 70, speed: 92, defaultForMemoryGB: 4)
-        ),
-        chatProfile(
-            name: "Gemma 4 E2B",
-            subtitle: "Compact Google vision model (E2B)",
-            modelId: "mlx-community/gemma-4-e2b-it-4bit",
-            maxContextWindow: 32768,
-            memoryRequirementGB: 4.0,
-            downloadSizeGB: 3.6,
-            icon: "sparkle",
-            ranking: ModelRanking(quality: 76, speed: 88),
-            parameterTemplate: .gemma4
-        ),
-        chatProfile(
-            name: "Gemma 4 26B A4B",
-            subtitle: "Large Google vision model (26B A4B)",
-            modelId: "mlx-community/gemma-4-26b-a4b-it-4bit",
-            maxContextWindow: 32768,
-            memoryRequirementGB: 17.5,
-            downloadSizeGB: 15.6,
-            icon: "sparkles",
-            ranking: ModelRanking(quality: 108, speed: 42),
-            parameterTemplate: .gemma4
-        ),
-        chatProfile(
-            name: "Qwen 3.6 27B",
-            subtitle: "Large vision language model (27B parameters)",
-            modelId: "mlx-community/Qwen3.6-27B-4bit",
-            maxContextWindow: 32768,
-            memoryRequirementGB: 18.0,
-            downloadSizeGB: 16.1,
-            icon: "eye",
-            ranking: ModelRanking(quality: 110, speed: 38),
-            parameterTemplate: .qwen35
-        ),
-        chatProfile(
-            name: "Qwen 3.6 35B A3B",
-            subtitle: "High-capability vision model (35B A3B)",
-            modelId: "mlx-community/Qwen3.6-35B-A3B-4bit",
-            maxContextWindow: 32768,
-            memoryRequirementGB: 23.0,
-            downloadSizeGB: 20.4,
-            icon: "eye.circle",
-            ranking: ModelRanking(quality: 116, speed: 34),
-            parameterTemplate: .qwen35
-        ),
-        ModelCapabilityProfile(
-            id: "black-forest-labs/FLUX.2-klein-4B",
-            name: "FLUX.2-klein-4B",
-            subtitle: "Image generation model",
-            modelId: "black-forest-labs/FLUX.2-klein-4B",
-            modality: .image,
-            backend: .image,
-            icon: "photo",
-            capabilities: ["image-generation", "image-editing"],
-            downloadSizeGB: 15.0,
-            estimatedMemoryGB: 13.0,
-            ranking: ModelRanking(quality: 100, speed: 70),
-            parameters: [
-                ModelParameterDefinition(key: "width", label: "Width", type: .integer, defaultValue: "1024", range: 512...1536, step: 128),
-                ModelParameterDefinition(key: "height", label: "Height", type: .integer, defaultValue: "1024", range: 512...1536, step: 128),
-                ModelParameterDefinition(key: "steps", label: "Steps", type: .integer, defaultValue: "4", range: 1...12, step: 1),
-                ModelParameterDefinition(key: "guidance", label: "Guidance", type: .decimal, defaultValue: "1", range: 1...4, step: 0.1),
-                ModelParameterDefinition(key: "seed", label: "Seed", type: .integer, defaultValue: "0", range: 0...2_147_483_647, step: 1, isAdvanced: true)
-            ],
-            presets: [
-                ModelParameterPreset(id: "fast", label: "Fast", values: ["steps": "4"]),
-                ModelParameterPreset(id: "detail", label: "Detailed", values: ["steps": "8"])
-            ],
-            aiModel: nil
-        ),
-        ModelCapabilityProfile(
-            id: "kugelaudio/kugelaudio-0-open",
-            name: "KugelAudio 0 Open",
-            subtitle: "Speech generation model",
-            modelId: "kugelaudio/kugelaudio-0-open",
-            modality: .audio,
-            backend: .audio,
-            icon: "waveform",
-            capabilities: ["speech-generation"],
-            downloadSizeGB: 15.0,
-            estimatedMemoryGB: 19.0,
-            ranking: ModelRanking(quality: 100, speed: 55),
-            parameters: [
-                ModelParameterDefinition(key: "cfg_scale", label: "Clarity", type: .decimal, defaultValue: "3", range: 1...10, step: 0.5),
-                ModelParameterDefinition(key: "ddpm_steps", label: "Steps", type: .integer, defaultValue: "10", range: 4...40, step: 1, isAdvanced: true)
-            ],
-            presets: [
-                ModelParameterPreset(id: "fast", label: "Fast", values: ["ddpm_steps": "8"]),
-                ModelParameterPreset(id: "quality", label: "Clear", values: ["ddpm_steps": "16", "cfg_scale": "3.5"])
-            ],
-            aiModel: nil
-        ),
-        ModelCapabilityProfile(
-            id: "ACE-Step/acestep-v15-turbo-continuous",
-            name: "ACE-Step 1.5 Turbo",
-            subtitle: "Music generation model",
-            modelId: "ACE-Step/acestep-v15-turbo-continuous",
-            modality: .music,
-            backend: .music,
-            icon: "music.note",
-            capabilities: ["music-generation"],
-            downloadSizeGB: 4.8,
-            estimatedMemoryGB: 4.0,
-            ranking: ModelRanking(quality: 100, speed: 85),
-            parameters: [
-                ModelParameterDefinition(key: "duration", label: "Duration", type: .integer, defaultValue: "30", range: 10...600, step: 5),
-                ModelParameterDefinition(key: "instrumental", label: "Instrumental", type: .boolean, defaultValue: "false"),
-                ModelParameterDefinition(key: "bpm", label: "BPM", type: .integer, defaultValue: "0", range: 0...300, step: 1, isAdvanced: true),
-                ModelParameterDefinition(key: "keyscale", label: "Key", type: .text, defaultValue: "", isAdvanced: true),
-                ModelParameterDefinition(key: "timesignature", label: "Time Signature", type: .option, defaultValue: "", options: ["", "2", "3", "4", "6"], isAdvanced: true),
-                ModelParameterDefinition(key: "vocal_language", label: "Vocal Language", type: .option, defaultValue: "unknown", options: ["unknown", "en", "zh", "ja", "es", "fr", "de", "it", "pt", "tr"], isAdvanced: true),
-                ModelParameterDefinition(key: "inference_steps", label: "Steps", type: .integer, defaultValue: "8", range: 4...40, step: 1, isAdvanced: true),
-                ModelParameterDefinition(key: "shift", label: "Shift", type: .decimal, defaultValue: "3", range: 1...6, step: 0.1, isAdvanced: true),
-                ModelParameterDefinition(key: "infer_method", label: "Method", type: .option, defaultValue: "ode", options: ["ode", "euler"], isAdvanced: true),
-                ModelParameterDefinition(key: "thinking", label: "Planner", type: .boolean, defaultValue: "false", isAdvanced: true),
-                ModelParameterDefinition(key: "seed", label: "Seed", type: .integer, defaultValue: "0", range: 0...2_147_483_647, step: 1, isAdvanced: true)
-            ],
-            presets: [
-                ModelParameterPreset(id: "fast", label: "Fast", values: ["duration": "20", "inference_steps": "6"]),
-                ModelParameterPreset(id: "full", label: "Full", values: ["duration": "45", "inference_steps": "12"])
-            ],
-            aiModel: nil
         )
     ]
-
-    private static func chatProfile(
-        aiModel: AIModel,
-        subtitle: String,
-        modelId: String,
-        maxContextWindow: Int,
-        memoryRequirementGB: Double,
-        downloadSizeGB: Double,
-        icon: String,
-        ranking: ModelRanking
-    ) -> ModelCapabilityProfile {
-        chatProfile(
-            name: aiModel.rawValue,
-            subtitle: subtitle,
-            modelId: modelId,
-            maxContextWindow: maxContextWindow,
-            memoryRequirementGB: memoryRequirementGB,
-            downloadSizeGB: downloadSizeGB,
-            icon: icon,
-            ranking: ranking,
-            parameterTemplate: aiModel,
-            aiModel: aiModel
-        )
-    }
 
     private static func chatProfile(
         name: String,
@@ -884,8 +883,7 @@ enum LegacyModelCatalog {
         downloadSizeGB: Double,
         icon: String,
         ranking: ModelRanking,
-        parameterTemplate: AIModel,
-        aiModel: AIModel? = nil
+        parameterDefaults: ModelCapabilityProfile.ChatParameterDefaults = .qwen
     ) -> ModelCapabilityProfile {
         ModelCapabilityProfile(
             id: modelId,
@@ -901,9 +899,8 @@ enum LegacyModelCatalog {
             downloadSizeGB: downloadSizeGB,
             estimatedMemoryGB: memoryRequirementGB,
             ranking: ranking,
-            parameters: ModelCapabilityProfile.chatParameters(for: parameterTemplate, maxContextWindow: maxContextWindow),
-            presets: ModelCapabilityProfile.chatPresets(for: parameterTemplate),
-            aiModel: aiModel
+            parameters: ModelCapabilityProfile.chatParameters(defaults: parameterDefaults, maxContextWindow: maxContextWindow),
+            presets: ModelCapabilityProfile.chatPresets(defaults: parameterDefaults)
         )
     }
 }

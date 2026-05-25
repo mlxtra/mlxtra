@@ -69,7 +69,10 @@ def last_user_prompt(messages: list[dict]) -> str:
 
 
 def generate_music_once(request: dict) -> bool:
-    model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
+    model_id = request.get("model")
+    if not model_id:
+        send_json({"type": "error", "message": "No model provided for music generation"}, request=request)
+        return False
     normalized_id = normalize_music_model_id(model_id)
 
     messages = request.get("messages", [])

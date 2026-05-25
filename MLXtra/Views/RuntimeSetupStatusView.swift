@@ -143,6 +143,8 @@ struct RuntimeSetupStatusView: View {
             return "Checking setup"
         case .available:
             return "Starting download"
+        case .requiresAppUpdate:
+            return "Update MLXtra"
         case .installing:
             return "Installing local files"
         case .installed:
@@ -164,6 +166,8 @@ struct RuntimeSetupStatusView: View {
             return "Finding the current release."
         case .available(let asset):
             return "Version \(asset.version) will download automatically."
+        case .requiresAppUpdate(let requirement):
+            return "Runtime \(requirement.runtime.version) requires MLXtra \(requirement.requiredAppVersion) or newer."
         case .installing:
             switch runtimeUpdateManager.installPhase {
             case .verifying:
@@ -187,7 +191,7 @@ struct RuntimeSetupStatusView: View {
         switch runtimeUpdateManager.state {
         case .installed:
             return "checkmark.circle.fill"
-        case .failed:
+        case .requiresAppUpdate, .failed:
             return "exclamationmark.triangle.fill"
         default:
             return RuntimeManager.activeRuntimeManifest() == nil ? "arrow.down.circle.fill" : "checkmark.circle.fill"
@@ -198,7 +202,7 @@ struct RuntimeSetupStatusView: View {
         switch runtimeUpdateManager.state {
         case .installed:
             return MLXtraDesignSystem.Palette.success
-        case .failed:
+        case .requiresAppUpdate, .failed:
             return MLXtraDesignSystem.Palette.warning
         default:
             return RuntimeManager.activeRuntimeManifest() == nil ? .accentColor : MLXtraDesignSystem.Palette.success

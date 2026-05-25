@@ -2,20 +2,21 @@
   "schemaVersion": 1,
   "channel": "stable",
   "catalog": {
-    "version": "2026.05.19",
-    "url": "https://github.com/mlxtra/mlxtra/releases/download/catalog-2026.05.19/model-catalog.json",
-    "sha256": "57ee2077cb321b9d2cc777eb4cb4e039e77c46cb1b25bf20cde2f68d07a8a813",
-    "sizeBytes": 17305
+    "version": "2026.05.25.8",
+    "url": "https://github.com/mlxtra/mlxtra/releases/download/catalog-2026.05.25.8/model-catalog.json",
+    "sha256": "e2fa5c3bab5a5503c8bc3653ae6768a46561caa48ff61387cd5f44f51ebfd92c",
+    "sizeBytes": 32757
   },
   "runtimes": [
     {
-      "version": "0.1.1",
+      "version": "0.1.2",
       "platform": "macos",
       "arch": "arm64",
-      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.1/runtime-macos-arm64-0.1.1.zip",
-      "sha256": "2bce2ba9a724079ec535e999715ae4e9f5960b9748365266d0672836eae5f185",
-      "sizeBytes": 1056087196,
-      "compatibilityApi": 1
+      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.2/runtime-macos-arm64-0.1.2.zip",
+      "sha256": "20a5fed895f968635b37f563cce792d9b24d6d6495de199c2eb21a3fb9456f8e",
+      "sizeBytes": 1103387276,
+      "compatibilityApi": 1,
+      "minAppVersion": "1.0.6"
     }
   ]
 }

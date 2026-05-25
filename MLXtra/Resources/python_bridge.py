@@ -32,6 +32,8 @@ IMAGE_MODEL_REGISTRY: Dict[str, Any] = {}
 AUDIO_MODEL_REGISTRY: Dict[str, Any] = {}
 MUSIC_MODEL_REGISTRY: Dict[str, Any] = {}
 BRIDGE_PROCESS_STARTED = time.perf_counter()
+RUNTIME_MANIFEST_CACHE: Optional[Dict[str, Any]] = None
+ESPEAK_RUNTIME_CONFIGURED_FOR: Optional[str] = None
 
 
 def bridge_debug_enabled() -> bool:
@@ -169,19 +171,146 @@ def send_timing(
     send_json(payload, request=request)
 
 
-def setup_environment():
-    """Setup Python environment for bundled runtime"""
-    started_at = time.perf_counter()
-    resources_dir = Path(__file__).resolve().parent
-    venv_path = resources_dir / "runtime" / "macos-arm64" / "venv"
+def _runtime_python_versions() -> List[str]:
+    versions = [
+        f"python{sys.version_info.major}.{sys.version_info.minor}",
+        "python3.13",
+        "python3.12",
+        "python3.11",
+    ]
+    return list(dict.fromkeys(versions))
 
-    if venv_path.exists():
-        for py_version in ["python3.13", "python3.12", "python3.11"]:
-            site_packages = venv_path / "lib" / py_version / "site-packages"
-            if site_packages.exists():
-                sys.path.insert(0, str(site_packages))
-                break
+
+def _runtime_root_from_python(executable: str) -> Optional[Path]:
+    if not executable:
+        return None
+
+    candidates = [Path(executable)]
+    try:
+        resolved = Path(executable).resolve()
+        if resolved != candidates[0]:
+            candidates.append(resolved)
+    except OSError:
+        pass
+
+    for candidate in candidates:
+        if candidate.parent.name == "bin" and candidate.parent.parent.name == "venv":
+            runtime_root = candidate.parent.parent.parent
+            if (runtime_root / "venv").exists():
+                return runtime_root
+    return None
+
+
+def _bundled_runtime_root() -> Path:
+    return Path(__file__).resolve().parent / "runtime" / "macos-arm64"
+
+
+def _add_runtime_root_candidate(
+    candidates: List[Path], seen: set[str], runtime_root: Optional[Path]
+) -> None:
+    if runtime_root is None:
+        return
+
+    try:
+        normalized = runtime_root.expanduser().resolve()
+    except OSError:
+        normalized = runtime_root.expanduser()
+
+    if not (normalized / "venv").exists():
+        return
+
+    key = str(normalized)
+    if key not in seen:
+        candidates.append(normalized)
+        seen.add(key)
+
+
+def _runtime_root_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    seen: set[str] = set()
+
+    runtime_override = os.environ.get("MLXTRA_RUNTIME_DIR")
+    if runtime_override:
+        _add_runtime_root_candidate(candidates, seen, Path(runtime_override))
+
+    _add_runtime_root_candidate(
+        candidates, seen, _runtime_root_from_python(sys.executable)
+    )
+    _add_runtime_root_candidate(candidates, seen, _bundled_runtime_root())
+
+    return candidates
+
+
+def _site_packages_for_runtime(runtime_root: Path) -> Optional[Path]:
+    venv_path = runtime_root / "venv"
+    for py_version in _runtime_python_versions():
+        site_packages = venv_path / "lib" / py_version / "site-packages"
+        if site_packages.exists():
+            return site_packages
+    return None
+
+
+def _runtime_site_packages_candidates() -> List[Path]:
+    paths: List[Path] = []
+    seen: set[str] = set()
+    for runtime_root in _runtime_root_candidates():
+        site_packages = _site_packages_for_runtime(runtime_root)
+        if site_packages is None:
+            continue
+        key = str(site_packages)
+        if key not in seen:
+            paths.append(site_packages)
+            seen.add(key)
+    return paths
+
+
+def setup_environment():
+    """Setup Python environment for the active app runtime."""
+    started_at = time.perf_counter()
+    site_packages_paths = _runtime_site_packages_candidates()
+
+    for site_packages in reversed(site_packages_paths):
+        site_packages_path = str(site_packages)
+        sys.path[:] = [path for path in sys.path if path != site_packages_path]
+        sys.path.insert(0, site_packages_path)
+
+    _configure_espeak_runtime()
     send_timing("bridge.setup_environment", started_at)
+
+
+def _configure_espeak_runtime() -> Optional[Path]:
+    """Point phonemizer/espeak at the active runtime's bundled data files."""
+    global ESPEAK_RUNTIME_CONFIGURED_FOR
+
+    for site_packages in _runtime_site_packages_candidates():
+        loader_dir = site_packages / "espeakng_loader"
+        library_path = loader_dir / "libespeak-ng.dylib"
+        data_path = loader_dir / "espeak-ng-data"
+        if not (
+            library_path.exists()
+            and data_path.is_dir()
+            and (data_path / "phontab").exists()
+        ):
+            continue
+
+        configured_for = str(loader_dir)
+        os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = str(library_path)
+        os.environ["PHONEMIZER_ESPEAK_DATA_PATH"] = str(data_path)
+
+        wrapper_module = sys.modules.get("phonemizer.backend.espeak.wrapper")
+        wrapper = getattr(wrapper_module, "EspeakWrapper", None)
+        if wrapper is not None:
+            try:
+                wrapper.set_library(str(library_path))
+                wrapper.set_data_path(str(data_path))
+            except Exception:
+                pass
+
+        ESPEAK_RUNTIME_CONFIGURED_FOR = configured_for
+        return loader_dir
+
+    ESPEAK_RUNTIME_CONFIGURED_FOR = None
+    return None
 
 
 def _clear_accelerator_cache():
@@ -276,11 +405,175 @@ def load_model_if_needed(model_id: str, request: Optional[dict] = None):
         raise
 
 
+def _mflux_options_from_request(request: Optional[dict]) -> dict:
+    runtime_options = _runtime_options_from_request(request)
+    mflux_options = runtime_options.get("mflux")
+    return mflux_options if isinstance(mflux_options, dict) else {}
+
+
+def _runtime_options_from_request(request: Optional[dict]) -> dict:
+    if not isinstance(request, dict):
+        return {}
+
+    parameters = request.get("parameters")
+    if not isinstance(parameters, dict):
+        return {}
+
+    runtime_options = parameters.get("runtimeOptions") or parameters.get("runtime_options")
+    if not isinstance(runtime_options, dict):
+        return {}
+
+    return runtime_options
+
+
+def _audio_options_from_request(request: Optional[dict]) -> dict:
+    runtime_options = _runtime_options_from_request(request)
+    audio_options = runtime_options.get("audio")
+    return audio_options if isinstance(audio_options, dict) else {}
+
+
+def _runtime_manifest() -> Dict[str, Any]:
+    global RUNTIME_MANIFEST_CACHE
+    if RUNTIME_MANIFEST_CACHE is not None:
+        return RUNTIME_MANIFEST_CACHE
+
+    manifest = {}
+    for runtime_root in _runtime_root_candidates():
+        manifest_path = runtime_root / "runtime-manifest.json"
+        try:
+            with manifest_path.open("r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+            break
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            raise RuntimeError(f"Could not read runtime manifest: {exc}") from exc
+
+    RUNTIME_MANIFEST_CACHE = manifest if isinstance(manifest, dict) else {}
+    return RUNTIME_MANIFEST_CACHE
+
+
+def _runtime_mflux_capabilities() -> dict:
+    image_runtimes = _runtime_manifest().get("imageRuntimes", {})
+    if not isinstance(image_runtimes, dict):
+        return {}
+    mflux = image_runtimes.get("mflux", {})
+    return mflux if isinstance(mflux, dict) else {}
+
+
+def _safe_filename_component(value: str) -> str:
+    component = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._").lower()
+    return component[:80] or "image"
+
+
+def _audio_adapter(request: Optional[dict]) -> str:
+    adapter = str(_audio_options_from_request(request).get("adapter") or "generic").strip()
+    return adapter or "generic"
+
+
+def _audio_default_voice(request: Optional[dict]) -> str:
+    default_voice = str(_audio_options_from_request(request).get("defaultVoice") or "default").strip()
+    return default_voice or "default"
+
+
+def _lang_code_for_voice(request: Optional[dict], voice: str) -> str:
+    language_by_prefix = _audio_options_from_request(request).get("languageByVoicePrefix", {})
+    if not isinstance(language_by_prefix, dict):
+        language_by_prefix = {}
+    prefix = voice.lower().split("_", 1)[0]
+    return str(language_by_prefix.get(prefix) or "a").strip() or "a"
+
+
+def _coerce_float_parameter(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _coerce_int_parameter(value: Any, default: int) -> int:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return number
+
+
+def _mflux_class_by_name(class_name: str):
+    if class_name in {"Flux2Klein", "Flux2KleinEdit"}:
+        from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
+
+        return {
+            "Flux2Klein": Flux2Klein,
+            "Flux2KleinEdit": Flux2KleinEdit,
+        }[class_name]
+
+    if class_name in {"ZImage", "ZImageTurbo"}:
+        from mflux.models.z_image import ZImage, ZImageTurbo
+
+        return {
+            "ZImage": ZImage,
+            "ZImageTurbo": ZImageTurbo,
+        }[class_name]
+
+    raise ValueError(f"Unsupported mflux model class '{class_name}'")
+
+
+def _resolve_mflux_model(model_id: str, edit: bool, request: Optional[dict] = None):
+    options = _mflux_options_from_request(request)
+    configured_name = str(options.get("config") or "").strip()
+    if not configured_name:
+        raise ValueError("Missing required runtimeOptions.mflux.config for image model")
+    capabilities = _runtime_mflux_capabilities()
+    allowed_configs = set(capabilities.get("configs") or [])
+    if allowed_configs and configured_name not in allowed_configs:
+        allowed = ", ".join(sorted(allowed_configs))
+        raise ValueError(
+            f"Unsupported mflux model config '{configured_name}'. Allowed configs: {allowed}"
+        )
+
+    from mflux.models.common.config import ModelConfig
+
+    model_config = ModelConfig.from_name(model_name=configured_name)
+
+    class_key = "editClass" if edit else "textToImageClass"
+    class_name = str(options.get(class_key) or "").strip()
+    if not class_name:
+        raise ValueError(f"Missing required runtimeOptions.mflux.{class_key} for image model")
+    allowed_classes = set(capabilities.get("classes") or [])
+    if allowed_classes and class_name not in allowed_classes:
+        allowed = ", ".join(sorted(allowed_classes))
+        raise ValueError(
+            f"Unsupported mflux model class '{class_name}'. Allowed classes: {allowed}"
+        )
+
+    quantize = options.get("quantize")
+    if quantize is not None:
+        try:
+            quantize = int(quantize)
+        except (TypeError, ValueError):
+            raise ValueError(f"Unsupported mflux quantize value '{quantize}'")
+        allowed_quantize = set(capabilities.get("quantizeBits") or [])
+        if allowed_quantize and quantize not in allowed_quantize:
+            allowed = ", ".join(str(bits) for bits in sorted(allowed_quantize))
+            raise ValueError(
+                f"Unsupported mflux quantize value '{quantize}'. Allowed values: {allowed}"
+            )
+
+    return _mflux_class_by_name(class_name), model_config, quantize
+
+
 def load_image_model_if_needed(
     model_id: str, edit: bool = False, request: Optional[dict] = None
 ):
     """Lazy load mflux image model, cache in registry"""
-    cache_key = f"{model_id}:{'edit' if edit else 'txt2img'}"
+    model_class, model_config, quantize = _resolve_mflux_model(model_id, edit, request)
+    configured_name = getattr(model_config, "model_name", "") or str(
+        _mflux_options_from_request(request).get("config") or model_id
+    )
+    model_class_name = getattr(model_class, "__name__", model_class.__class__.__name__)
+    cache_key = f"{model_id}:{configured_name}:{model_class_name}:q{quantize or 'none'}"
     if cache_key in IMAGE_MODEL_REGISTRY:
         log_debug(
             f"[Python Bridge] Image model {cache_key} already loaded, using cache"
@@ -299,13 +592,7 @@ def load_image_model_if_needed(
         unload_models()
         log_debug(f"[Python Bridge] Loading image model: {model_id}")
 
-        from mflux.models.common.config import ModelConfig
-        from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
-
-        model_class = Flux2KleinEdit if edit else Flux2Klein
-        model = model_class(
-            model_path=model_id, model_config=ModelConfig.flux2_klein_4b()
-        )
+        model = model_class(model_path=model_id, model_config=model_config, quantize=quantize)
 
         IMAGE_MODEL_REGISTRY[cache_key] = model
 
@@ -341,6 +628,7 @@ def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
 
     try:
         unload_models()
+        _configure_espeak_runtime()
         log_debug(f"[Python Bridge] Loading audio model: {model_id}")
         from mlx_audio.tts.utils import load_model
 
@@ -853,21 +1141,50 @@ def _write_wav(path: Path, audio: Any, sample_rate: int = 24000) -> None:
 
 
 def _generate_speech_segments(
-    model: Any, text: str, cfg_scale: float, ddpm_steps: int, voice: str
+    model: Any,
+    adapter: str,
+    text: str,
+    cfg_scale: float,
+    ddpm_steps: int,
+    voice: str,
+    speed: float,
+    lang_code: str,
 ):
-    """Try mlx-audio TTS generation with model-specific KugelAudio-friendly args."""
-    attempts = [
-        {
-            "text": text,
-            "voice": voice,
-            "cfg_scale": cfg_scale,
-            "ddpm_steps": ddpm_steps,
-        },
-        {"text": text, "voice": voice, "cfg_scale": cfg_scale},
-        {"text": text, "cfg_scale": cfg_scale, "ddpm_steps": ddpm_steps},
-        {"text": text, "cfg_scale": cfg_scale},
-        {"text": text},
-    ]
+    """Try mlx-audio TTS generation with adapter-specific arguments."""
+    if adapter == "kokoro":
+        attempts = [
+            {"text": text, "voice": voice, "speed": speed, "lang_code": lang_code},
+            {"text": text, "voice": voice, "speed": speed},
+            {"text": text, "voice": voice},
+            {"text": text},
+        ]
+    elif adapter == "kugelaudio":
+        attempts = [
+            {
+                "text": text,
+                "voice": voice,
+                "cfg_scale": cfg_scale,
+                "ddpm_steps": ddpm_steps,
+            },
+            {"text": text, "voice": voice, "cfg_scale": cfg_scale},
+            {"text": text, "cfg_scale": cfg_scale, "ddpm_steps": ddpm_steps},
+            {"text": text, "cfg_scale": cfg_scale},
+            {"text": text},
+        ]
+    else:
+        attempts = [
+            {
+                "text": text,
+                "voice": voice,
+                "speed": speed,
+                "lang_code": lang_code,
+                "cfg_scale": cfg_scale,
+                "ddpm_steps": ddpm_steps,
+            },
+            {"text": text, "voice": voice, "speed": speed, "lang_code": lang_code},
+            {"text": text, "voice": voice},
+            {"text": text},
+        ]
     last_type_error = None
 
     for kwargs in attempts:
@@ -891,7 +1208,10 @@ def handle_image_generation(request: dict) -> None:
     """Handle image.generate request via mflux"""
     import mlx.core as mx
 
-    model_id = request.get("model", "black-forest-labs/FLUX.2-klein-4B")
+    model_id = request.get("model")
+    if not model_id:
+        send_json({"type": "error", "message": "No model provided for image generation"}, request=request)
+        return
     messages = request.get("messages", [])
     prompt = request.get("prompt") or _last_user_prompt(messages)
     image_paths = request.get("images", [])
@@ -947,7 +1267,7 @@ def handle_image_generation(request: dict) -> None:
                 generation_kwargs.pop("guidance", None)
                 image = model.generate_image(**generation_kwargs)
 
-        output_path = output_dir / f"flux2-klein-{uuid.uuid4().hex}.png"
+        output_path = output_dir / f"{_safe_filename_component(model_id)}-{uuid.uuid4().hex}.png"
         image.save(str(output_path), overwrite=True)
 
         send_json(
@@ -967,7 +1287,7 @@ def handle_image_generation(request: dict) -> None:
                 "choices": [
                     {
                         "message": {
-                            "content": f"Generated image with FLUX.2-klein-4B. Seed: {seed}"
+                            "content": f"Generated image with {model_id}. Seed: {seed}"
                         }
                     }
                 ],
@@ -989,18 +1309,40 @@ def handle_audio_speech(request: dict) -> None:
     """Handle text-to-speech request via mlx-audio."""
     import mlx.core as mx
 
-    model_id = request.get("model", "kugelaudio/kugelaudio-0-open")
+    model_id = request.get("model")
+    if not model_id:
+        send_json({"type": "error", "message": "No model provided for speech generation"}, request=request)
+        return
     messages = request.get("messages", [])
-    text = (
-        request.get("input") or request.get("text") or _last_user_prompt(messages)
+    text = str(
+        request.get("input") or request.get("text") or _last_user_prompt(messages) or ""
     ).strip()
     output_dir = Path(request.get("output_dir") or Path.home() / "Music" / "MLXtra")
     parameters = request.get("parameters", {}) or {}
     if not isinstance(parameters, dict):
         parameters = {}
-    cfg_scale = float(parameters.get("cfg_scale") or request.get("cfg_scale", 3.0))
-    ddpm_steps = int(parameters.get("ddpm_steps") or request.get("ddpm_steps", 10))
-    voice = parameters.get("voice") or request.get("voice", "default")
+    cfg_scale = _coerce_float_parameter(
+        parameters.get("cfg_scale") or request.get("cfg_scale"),
+        3.0,
+    )
+    ddpm_steps = _coerce_int_parameter(
+        parameters.get("ddpm_steps") or request.get("ddpm_steps"),
+        10,
+    )
+    voice = str(
+        parameters.get("voice") or request.get("voice") or _audio_default_voice(request)
+    ).strip()
+    if not voice:
+        voice = _audio_default_voice(request)
+    speed = _coerce_float_parameter(
+        parameters.get("speed") or request.get("speed"),
+        1.0,
+    )
+    if speed <= 0:
+        speed = 1.0
+    lang_code = str(parameters.get("lang_code") or request.get("lang_code") or "").strip()
+    if not lang_code and _audio_options_from_request(request).get("languageByVoicePrefix"):
+        lang_code = _lang_code_for_voice(request, voice)
 
     if not text:
         send_json(
@@ -1018,14 +1360,16 @@ def handle_audio_speech(request: dict) -> None:
             request=request,
         )
 
-        output_path = output_dir / f"kugelaudio-{uuid.uuid4().hex}.wav"
+        output_path = output_dir / f"{_safe_filename_component(model_id)}-{uuid.uuid4().hex}.wav"
         audio_segments = []
         total_samples = 0
         sample_rate = 24000
 
         with contextlib.redirect_stdout(sys.stderr):
+            adapter = _audio_adapter(request)
+            _configure_espeak_runtime()
             for result in _generate_speech_segments(
-                model, text, cfg_scale, ddpm_steps, voice
+                model, adapter, text, cfg_scale, ddpm_steps, voice, speed, lang_code
             ):
                 audio = result.audio
                 sample_rate = int(
@@ -1065,7 +1409,7 @@ def handle_audio_speech(request: dict) -> None:
             {
                 "type": "chat.completion.complete",
                 "choices": [
-                    {"message": {"content": "Generated speech with KugelAudio."}}
+                    {"message": {"content": f"Generated speech with {model_id}."}}
                 ],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0},
             },
@@ -1263,31 +1607,68 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
         _terminate_child(child)
 
 
+def _candidate_acestep_python_paths() -> List[Path]:
+    candidates: List[Path] = []
+
+    env_python = os.environ.get("ACESTEP_PYTHON")
+    if env_python:
+        candidates.append(Path(env_python))
+
+    executable_path = Path(sys.executable)
+    try:
+        runtime_root = executable_path.resolve().parents[2]
+    except IndexError:
+        runtime_root = None
+    if runtime_root is not None:
+        candidates.append(runtime_root / "acestep-venv" / "bin" / "python")
+
+    candidates.append(
+        Path(__file__).parent
+        / "runtime"
+        / "macos-arm64"
+        / "acestep-venv"
+        / "bin"
+        / "python"
+    )
+
+    return candidates
+
+
+def _resolve_acestep_python() -> Optional[str]:
+    seen: set[str] = set()
+    current_python = Path(sys.executable).resolve()
+
+    for candidate in _candidate_acestep_python_paths():
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+
+        candidate_key = str(resolved)
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+
+        if not candidate.exists() or resolved == current_python:
+            continue
+        return str(resolved)
+
+    return None
+
+
 def handle_music_generation(request: dict) -> None:
     """Handle text-to-music request via ACE-Step 1.5."""
-    ace_python = os.environ.get("ACESTEP_PYTHON")
-    if not ace_python:
-        ace_python_path = (
-            Path(__file__).parent
-            / "runtime"
-            / "macos-arm64"
-            / "acestep-venv"
-            / "bin"
-            / "python"
-        )
-        if ace_python_path.exists():
-            ace_python = str(ace_python_path)
+    ace_python = _resolve_acestep_python()
 
-    if (
-        ace_python
-        and Path(ace_python).exists()
-        and Path(ace_python) != Path(sys.executable)
-    ):
+    if ace_python:
         helper_path = Path(__file__).with_name("acestep_bridge.py")
         _forward_acestep_subprocess(ace_python, helper_path, request)
         return
 
-    model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")
+    model_id = request.get("model")
+    if not model_id:
+        send_json({"type": "error", "message": "No model provided for music generation"}, request=request)
+        return
     messages = request.get("messages", [])
     parameters = request.get("parameters", {}) or {}
     if not isinstance(parameters, dict):

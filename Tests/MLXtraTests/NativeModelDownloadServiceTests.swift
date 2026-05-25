@@ -245,7 +245,11 @@ final class NativeModelDownloadServiceTests: XCTestCase {
         let checkpointsRoot = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: checkpointsRoot) }
 
-        let plan = AceStepDownloadPlan(checkpointsRoot: checkpointsRoot)
+        let plan = AceStepDownloadPlan(
+            repoID: "ACE-Step/Ace-Step1.5",
+            requiredComponents: ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"],
+            checkpointsRoot: checkpointsRoot
+        )
 
         XCTAssertEqual(plan.repoID, "ACE-Step/Ace-Step1.5")
         XCTAssertEqual(
@@ -273,7 +277,11 @@ final class NativeModelDownloadServiceTests: XCTestCase {
         )
 
         try NativeModelDownloadService().markAceStepContractComplete(
-            plan: AceStepDownloadPlan(checkpointsRoot: checkpointsRoot)
+            plan: AceStepDownloadPlan(
+                repoID: "ACE-Step/Ace-Step1.5",
+                requiredComponents: ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"],
+                checkpointsRoot: checkpointsRoot
+            )
         )
 
         XCTAssertFalse(

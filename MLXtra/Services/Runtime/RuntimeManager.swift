@@ -51,6 +51,56 @@ private struct DownloadSupportValidationContext: Sendable {
     let environment: [String: String]
 }
 
+struct RuntimeImageRuntimes: Codable, Equatable {
+    let mflux: RuntimeMFluxCapabilities?
+
+    init(mflux: RuntimeMFluxCapabilities? = nil) {
+        self.mflux = mflux
+    }
+}
+
+struct RuntimeMFluxCapabilities: Codable, Equatable {
+    let configs: [String]
+    let classes: [String]
+    let quantizeBits: [Int]
+
+    init(configs: [String] = [], classes: [String] = [], quantizeBits: [Int] = []) {
+        self.configs = configs
+        self.classes = classes
+        self.quantizeBits = quantizeBits
+    }
+
+    func supports(_ options: MFluxRuntimeOptions) -> Bool {
+        if !configs.isEmpty && !configs.contains(options.config) {
+            return false
+        }
+        if !classes.isEmpty {
+            guard classes.contains(options.textToImageClass),
+                  classes.contains(options.editClass) else {
+                return false
+            }
+        }
+        if let quantize = options.quantize,
+           !quantizeBits.isEmpty,
+           !quantizeBits.contains(quantize) {
+            return false
+        }
+        return true
+    }
+}
+
+struct RuntimeAudioRuntimes: Codable, Equatable {
+    let adapters: [String]
+
+    init(adapters: [String] = []) {
+        self.adapters = adapters
+    }
+
+    func supports(_ options: AudioRuntimeOptions) -> Bool {
+        adapters.isEmpty || adapters.contains(options.adapter)
+    }
+}
+
 struct RuntimeManifest: Codable, Equatable {
     let runtimeVersion: String
     let compatibilityApi: Int
@@ -65,6 +115,8 @@ struct RuntimeManifest: Codable, Equatable {
     let supportedModels: [String]?
     let supportedBackends: [RuntimeBackend]
     let capabilities: [String]
+    let imageRuntimes: RuntimeImageRuntimes?
+    let audioRuntimes: RuntimeAudioRuntimes?
 
     init(
         runtimeVersion: String,
@@ -79,7 +131,9 @@ struct RuntimeManifest: Codable, Equatable {
         isolatedPackages: [String] = [],
         supportedModels: [String]? = nil,
         supportedBackends: [RuntimeBackend] = [],
-        capabilities: [String] = []
+        capabilities: [String] = [],
+        imageRuntimes: RuntimeImageRuntimes? = nil,
+        audioRuntimes: RuntimeAudioRuntimes? = nil
     ) {
         self.runtimeVersion = runtimeVersion
         self.compatibilityApi = compatibilityApi
@@ -94,6 +148,8 @@ struct RuntimeManifest: Codable, Equatable {
         self.supportedModels = supportedModels
         self.supportedBackends = supportedBackends
         self.capabilities = capabilities
+        self.imageRuntimes = imageRuntimes
+        self.audioRuntimes = audioRuntimes
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -110,6 +166,8 @@ struct RuntimeManifest: Codable, Equatable {
         case supportedModels
         case supportedBackends
         case capabilities
+        case imageRuntimes
+        case audioRuntimes
     }
 
     init(from decoder: Decoder) throws {
@@ -127,6 +185,8 @@ struct RuntimeManifest: Codable, Equatable {
         supportedModels = try container.decodeIfPresent([String].self, forKey: .supportedModels)
         supportedBackends = try container.decodeIfPresent([RuntimeBackend].self, forKey: .supportedBackends) ?? []
         capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+        imageRuntimes = try container.decodeIfPresent(RuntimeImageRuntimes.self, forKey: .imageRuntimes)
+        audioRuntimes = try container.decodeIfPresent(RuntimeAudioRuntimes.self, forKey: .audioRuntimes)
     }
 
     func supports(backend: RuntimeBackend) -> Bool {
@@ -139,7 +199,28 @@ struct RuntimeManifest: Codable, Equatable {
     func supports(profile: ModelCapabilityProfile) -> Bool {
         profile.runtime.isSatisfied(by: self)
             && supports(backend: profile.backend)
+            && supports(runtimeOptions: profile.runtimeOptions)
             && (supportedModels?.contains(profile.modelId) ?? true)
+    }
+
+    func supports(runtimeOptions: ModelRuntimeOptions?) -> Bool {
+        guard let runtimeOptions else {
+            return true
+        }
+        if let mflux = runtimeOptions.mflux {
+            guard let capabilities = imageRuntimes?.mflux else {
+                return true
+            }
+            guard capabilities.supports(mflux) else {
+                return false
+            }
+        }
+        if let audio = runtimeOptions.audio,
+           let capabilities = audioRuntimes,
+           !capabilities.supports(audio) {
+            return false
+        }
+        return true
     }
 }
 
@@ -423,6 +504,12 @@ enum RuntimeInstallPhase: Equatable {
     case activating
 }
 
+struct RuntimeAppUpdateRequirement: Equatable {
+    let runtime: RuntimeReleaseAsset
+    let requiredAppVersion: String
+    let currentAppVersion: String?
+}
+
 @MainActor
 final class RuntimeUpdateManager: ObservableObject {
     static let shared = RuntimeUpdateManager()
@@ -431,6 +518,7 @@ final class RuntimeUpdateManager: ObservableObject {
         case idle
         case checking
         case available(RuntimeReleaseAsset)
+        case requiresAppUpdate(RuntimeAppUpdateRequirement)
         case installing(Double?)
         case installed(String)
         case failed(String)
@@ -438,11 +526,13 @@ final class RuntimeUpdateManager: ObservableObject {
 
     @Published private(set) var state: InstallState = .idle
     @Published private(set) var channel: ReleaseChannelManifest?
+    @Published private(set) var newerRuntimeRequiringAppUpdate: RuntimeAppUpdateRequirement?
     @Published private(set) var installPhase: RuntimeInstallPhase = .idle
     @Published private(set) var runtimeDownloadProgress: RuntimeDownloadProgress?
     @Published private(set) var runtimeActivationProgress: RuntimeActivationProgress?
 
     private let currentManifestProvider: () -> RuntimeManifest?
+    private let appVersionProvider: () -> String?
     private let runtimeArchiveInstaller: RuntimeArchiveInstaller
     private let runtimeArchiveDownloadConfiguration: URLSessionConfiguration
     private let runtimeArchiveCacheDirectory: URL
@@ -451,6 +541,9 @@ final class RuntimeUpdateManager: ObservableObject {
 
     init(
         currentManifestProvider: @escaping () -> RuntimeManifest? = { RuntimeManager.activeRuntimeManifest() },
+        appVersionProvider: @escaping () -> String? = {
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        },
         runtimeArchiveInstaller: @escaping RuntimeArchiveInstaller = { archiveURL, progressHandler in
             try RuntimeManager.installRuntimeArchive(archiveURL, progressHandler: progressHandler)
         },
@@ -460,6 +553,7 @@ final class RuntimeUpdateManager: ObservableObject {
             .appendingPathComponent("runtime")
     ) {
         self.currentManifestProvider = currentManifestProvider
+        self.appVersionProvider = appVersionProvider
         self.runtimeArchiveInstaller = runtimeArchiveInstaller
         self.runtimeArchiveDownloadConfiguration = runtimeArchiveDownloadConfiguration
         self.runtimeArchiveCacheDirectory = runtimeArchiveCacheDirectory
@@ -509,6 +603,7 @@ final class RuntimeUpdateManager: ObservableObject {
         reportFailures: Bool = true
     ) async {
         state = .checking
+        newerRuntimeRequiringAppUpdate = nil
         do {
             let (data, response) = try await URLSession.shared.data(from: channelURL)
             if let httpResponse = response as? HTTPURLResponse,
@@ -519,8 +614,13 @@ final class RuntimeUpdateManager: ObservableObject {
             let manifest = try JSONDecoder().decode(ReleaseChannelManifest.self, from: data)
             channel = manifest
 
-            if let asset = bestRuntimeAsset(in: manifest) {
+            let selection = runtimeUpdateSelection(in: manifest)
+            newerRuntimeRequiringAppUpdate = selection.newerRuntimeRequiringAppUpdate
+
+            if let asset = selection.compatibleRuntime {
                 state = .available(asset)
+            } else if let requirement = selection.newerRuntimeRequiringAppUpdate {
+                state = .requiresAppUpdate(requirement)
             } else {
                 state = .idle
             }
@@ -674,17 +774,62 @@ final class RuntimeUpdateManager: ObservableObject {
         }
     }
 
-    private func bestRuntimeAsset(in manifest: ReleaseChannelManifest) -> RuntimeReleaseAsset? {
+    private struct RuntimeUpdateSelection {
+        let compatibleRuntime: RuntimeReleaseAsset?
+        let newerRuntimeRequiringAppUpdate: RuntimeAppUpdateRequirement?
+    }
+
+    private func runtimeUpdateSelection(in manifest: ReleaseChannelManifest) -> RuntimeUpdateSelection {
         let current = currentManifestProvider()
-        return manifest.runtimes
+        let candidates = manifest.runtimes
             .filter { $0.platform == "macos" && $0.arch == "arm64" }
             .filter { asset in
                 guard let current else { return true }
                 guard asset.compatibilityApi == current.compatibilityApi else { return false }
                 return VersionComparator.compare(asset.version, current.runtimeVersion) == .orderedDescending
             }
+
+        let compatibleRuntime = candidates
+            .filter { runtimeAssetSupportsCurrentApp($0) }
             .sorted { VersionComparator.compare($0.version, $1.version) == .orderedDescending }
             .first
+
+        let appBlockedRuntime = candidates
+            .compactMap { appUpdateRequirement(for: $0) }
+            .filter { requirement in
+                guard let compatibleRuntime else { return true }
+                return VersionComparator.compare(requirement.runtime.version, compatibleRuntime.version) == .orderedDescending
+            }
+            .sorted { VersionComparator.compare($0.runtime.version, $1.runtime.version) == .orderedDescending }
+            .first
+
+        return RuntimeUpdateSelection(
+            compatibleRuntime: compatibleRuntime,
+            newerRuntimeRequiringAppUpdate: appBlockedRuntime
+        )
+    }
+
+    private func runtimeAssetSupportsCurrentApp(_ asset: RuntimeReleaseAsset) -> Bool {
+        appUpdateRequirement(for: asset) == nil
+    }
+
+    private func appUpdateRequirement(for asset: RuntimeReleaseAsset) -> RuntimeAppUpdateRequirement? {
+        guard let requiredAppVersion = asset.minAppVersion else { return nil }
+        guard let currentAppVersion = appVersionProvider() else {
+            return RuntimeAppUpdateRequirement(
+                runtime: asset,
+                requiredAppVersion: requiredAppVersion,
+                currentAppVersion: nil
+            )
+        }
+        guard VersionComparator.compare(currentAppVersion, requiredAppVersion) == .orderedAscending else {
+            return nil
+        }
+        return RuntimeAppUpdateRequirement(
+            runtime: asset,
+            requiredAppVersion: requiredAppVersion,
+            currentAppVersion: currentAppVersion
+        )
     }
 
     private func fetchRuntimeArchive(_ asset: RuntimeReleaseAsset) async throws -> URL {
@@ -1199,7 +1344,7 @@ class RuntimeManager: ObservableObject {
 
     func validateDownloadSupport(for modelId: String) throws {
         try validateDownloadSupport(
-            for: DownloadableModel(
+            for: Self.embeddedModelForRuntimeLookup(modelId: modelId) ?? DownloadableModel(
                 id: modelId,
                 name: modelId,
                 subtitle: "",
@@ -1212,9 +1357,6 @@ class RuntimeManager: ObservableObject {
 
     /// Downloading should not require unrelated model runtimes to be present.
     func validateDownloadSupport(for model: DownloadableModel) throws {
-        guard model.isRuntimeCompatible else {
-            throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
-        }
         guard model.source.usesComponentBundle else {
             return
         }
@@ -1223,9 +1365,6 @@ class RuntimeManager: ObservableObject {
     }
 
     func validateDownloadSupportOffMain(for model: DownloadableModel) async throws {
-        guard model.isRuntimeCompatible else {
-            throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
-        }
         guard model.source.usesComponentBundle else {
             return
         }
@@ -1236,8 +1375,8 @@ class RuntimeManager: ObservableObject {
     }
 
     private func downloadSupportValidationContext(for model: DownloadableModel) throws -> DownloadSupportValidationContext {
-        guard model.isRuntimeCompatible else {
-            throw RuntimeError.runtimeUpdateRequired(model.name, model.runtime.minVersion)
+        guard model.source.helper == .aceStep else {
+            throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
         }
 
         let aceStepPython = acestepPythonExecutablePath()
@@ -1413,10 +1552,39 @@ class RuntimeManager: ObservableObject {
             .appendingPathComponent("models--" + modelId.replacingOccurrences(of: "/", with: "--"))
     }
 
+    private nonisolated static func embeddedModelForRuntimeLookup(modelId: String) -> DownloadableModel? {
+        if let model = DownloadableModel.embeddedModel(modelId: modelId) {
+            return model
+        }
+
+        guard let aceStepLocalId = aceStepLocalModelId(modelId) else {
+            return nil
+        }
+
+        return ModelCapabilityProfile.embedded.first { profile in
+            guard profile.source.helper == .aceStep else { return false }
+            return profile.source.components.contains { component in
+                guard component.hasPrefix("acestep-v15-") else { return false }
+                return aceStepLocalId == component || aceStepLocalId.hasPrefix(component + "-")
+            }
+        }?.downloadableModel
+    }
+
+    private nonisolated static func aceStepLocalModelId(_ modelId: String) -> String? {
+        let namespace = "ACE-Step/"
+        if modelId.hasPrefix(namespace) {
+            return String(modelId.dropFirst(namespace.count))
+        }
+        if modelId.hasPrefix("acestep-") {
+            return modelId
+        }
+        return nil
+    }
+
     /// Hugging Face models use the default HF cache so downloads can be shared with other apps.
     func modelStoragePath(modelId: String) -> URL {
-        if modelId.hasPrefix("ACE-Step/") {
-            return checkpointsPath
+        if let model = Self.embeddedModelForRuntimeLookup(modelId: modelId) {
+            return modelStoragePath(for: model)
         }
         return modelCachePath(modelId: modelId)
     }
@@ -1453,10 +1621,24 @@ class RuntimeManager: ObservableObject {
         checkpointsPath: URL,
         huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
     ) -> ModelStorageStatus {
-        if modelId.hasPrefix("ACE-Step/") {
-            return aceStepModelStorageStatus(checkpointsPath: checkpointsPath)
+        if let model = embeddedModelForRuntimeLookup(modelId: modelId) {
+            return modelStorageStatus(
+                model: model,
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: huggingFaceCacheRoot
+            )
         }
 
+        return huggingFaceModelStorageStatus(
+            modelId: modelId,
+            huggingFaceCacheRoot: huggingFaceCacheRoot
+        )
+    }
+
+    private nonisolated static func huggingFaceModelStorageStatus(
+        modelId: String,
+        huggingFaceCacheRoot: URL
+    ) -> ModelStorageStatus {
         let path = modelCachePath(modelId: modelId, huggingFaceCacheRoot: huggingFaceCacheRoot)
         RuntimeDiagnostics.log("[RuntimeManager] Checking HF cache for \(modelId) at \(path.path)")
 
@@ -1505,8 +1687,12 @@ class RuntimeManager: ObservableObject {
         huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
     ) -> ModelStorageStatus {
         if model.source.usesComponentBundle {
-            if model.modelId.hasPrefix("ACE-Step/") || model.source.downloadRepository == AceStepDownloadPlan.mainRepository {
-                return aceStepModelStorageStatus(checkpointsPath: checkpointsPath)
+            if model.source.helper == .aceStep {
+                return aceStepModelStorageStatus(
+                    checkpointsPath: checkpointsPath,
+                    repoID: model.source.downloadRepository ?? model.modelId,
+                    components: model.source.components
+                )
             }
             return componentBundleStorageStatus(
                 checkpointsPath: checkpointsPath,
@@ -1514,22 +1700,21 @@ class RuntimeManager: ObservableObject {
             )
         }
 
-        return modelStorageStatus(
+        return huggingFaceModelStorageStatus(
             modelId: model.source.downloadRepository ?? model.modelId,
-            checkpointsPath: checkpointsPath,
             huggingFaceCacheRoot: huggingFaceCacheRoot
         )
     }
 
-    private nonisolated static func isAceStepModelDownloaded(checkpointsPath: URL) -> Bool {
-        aceStepModelStorageStatus(checkpointsPath: checkpointsPath).isDownloaded
-    }
-
-    private nonisolated static func aceStepModelStorageStatus(checkpointsPath: URL) -> ModelStorageStatus {
-        let aceStepComponents = ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+    private nonisolated static func aceStepModelStorageStatus(
+        checkpointsPath: URL,
+        repoID: String,
+        components: [String]
+    ) -> ModelStorageStatus {
         if let contractStatus = aceStepContractStorageStatus(
             checkpointsPath: checkpointsPath,
-            expectedComponents: aceStepComponents
+            expectedRepoID: repoID,
+            expectedComponents: components
         ) {
             switch contractStatus {
             case .downloaded:
@@ -1538,49 +1723,52 @@ class RuntimeManager: ObservableObject {
                 return contractStatus
             }
         }
-        return componentBundleStorageStatus(checkpointsPath: checkpointsPath, components: aceStepComponents)
+        return componentBundleStorageStatus(checkpointsPath: checkpointsPath, components: components)
     }
 
     private nonisolated static func componentBundleStorageStatus(
         checkpointsPath: URL,
         components: [String]
     ) -> ModelStorageStatus {
-        let requiredComponents = components.isEmpty
-            ? ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
-            : components
+        let requiredComponents = components
         let checkpointsDir = checkpointsPath
         var foundAnyComponent = false
         var incompleteComponents: [String] = []
 
-        RuntimeDiagnostics.log("[RuntimeManager] Checking ACE-Step model components at \(checkpointsDir.path)")
+        guard !requiredComponents.isEmpty else {
+            return .incomplete("Component bundle is missing component metadata.")
+        }
+
+        RuntimeDiagnostics.log("[RuntimeManager] Checking component bundle at \(checkpointsDir.path)")
 
         for component in requiredComponents {
             let componentPath = checkpointsDir.appendingPathComponent(component)
             if !FileManager.default.fileExists(atPath: componentPath.path) {
-                RuntimeDiagnostics.log("[RuntimeManager] ACE-Step component missing: \(componentPath.path)")
+                RuntimeDiagnostics.log("[RuntimeManager] Component missing: \(componentPath.path)")
                 incompleteComponents.append(component)
                 continue
             }
             foundAnyComponent = true
             if !Self.containsModelWeights(at: componentPath) {
-                RuntimeDiagnostics.log("[RuntimeManager] ACE-Step component missing weight files: \(componentPath.path)")
+                RuntimeDiagnostics.log("[RuntimeManager] Component missing weight files: \(componentPath.path)")
                 incompleteComponents.append(component)
                 continue
             }
-            RuntimeDiagnostics.log("[RuntimeManager] ACE-Step component found with weights: \(componentPath.path)")
+            RuntimeDiagnostics.log("[RuntimeManager] Component found with weights: \(componentPath.path)")
         }
 
         if !incompleteComponents.isEmpty {
             guard foundAnyComponent else { return .missing }
-            return .incomplete("ACE-Step checkpoints are incomplete: \(incompleteComponents.joined(separator: ", ")). Repair will redownload missing components.")
+            return .incomplete("Model components are incomplete: \(incompleteComponents.joined(separator: ", ")). Repair will redownload missing components.")
         }
 
-        RuntimeDiagnostics.log("[RuntimeManager] ACE-Step model fully downloaded at \(checkpointsDir.path)")
+        RuntimeDiagnostics.log("[RuntimeManager] Component bundle fully downloaded at \(checkpointsDir.path)")
         return .downloaded
     }
 
     private nonisolated static func aceStepContractStorageStatus(
         checkpointsPath: URL,
+        expectedRepoID: String,
         expectedComponents: [String]
     ) -> ModelStorageStatus? {
         let inProgressURL = checkpointsPath.appendingPathComponent(AceStepContractCompletionManifest.inProgressFilename)
@@ -1596,7 +1784,7 @@ class RuntimeManager: ObservableObject {
         guard let data = try? Data(contentsOf: completionURL),
               let marker = try? JSONDecoder().decode(AceStepContractCompletionManifest.self, from: data),
               marker.schemaVersion == AceStepContractCompletionManifest.currentSchemaVersion,
-              marker.repoID == AceStepDownloadPlan.mainRepository,
+              marker.repoID == expectedRepoID,
               Set(marker.requiredComponents) == Set(expectedComponents) else {
             return .incomplete("ACE-Step contract marker is invalid. Repair will verify model code and checkpoints.")
         }
@@ -1864,24 +2052,7 @@ class RuntimeManager: ObservableObject {
     }
 
     func estimatedModelSize(modelId: String) -> Double {
-        if modelId.contains("Qwen3.5-9B") {
-            return 5.6
-        } else if modelId.contains("gemma-4") {
-            return 3.0
-        } else if modelId.contains("Qwen3.5-2B") {
-            return 1.5
-        } else if modelId.contains("FLUX.2-klein-4B") {
-            return 15.0
-        } else if modelId.contains("kugelaudio-0-open") {
-            return 15.0
-        } else if modelId.contains("acestep-v15-xl") {
-            return 19.0
-        } else if modelId.contains("acestep-v15-turbo-continuous") {
-            return 4.8
-        } else if modelId.contains("acestep-v15") {
-            return 5.0
-        }
-        return 5.0 // Default estimate
+        ModelCapabilityProfile.embeddedProfile(modelId: modelId)?.downloadSizeGB ?? 5.0
     }
 }
 

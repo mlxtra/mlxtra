@@ -68,15 +68,49 @@ def resolve_app_bundle() -> Path:
 
 APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
-RUNTIME = RESOURCES / "runtime/macos-arm64"
+APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
+
+
+def runtime_is_valid(path: Path) -> bool:
+    return all(
+        (path / relative_path).exists()
+        for relative_path in [
+            "venv/bin/python",
+            "acestep-venv/bin/python",
+            "python/Frameworks/Versions/3.12",
+            "acestep_download_helper.py",
+            "runtime-manifest.json",
+        ]
+    )
+
+
+def resolve_runtime_dir() -> Path:
+    candidates = []
+    override = os.environ.get("MLXTRA_RUNTIME_DIR")
+    if override:
+        candidates.append(Path(override))
+    candidates.extend(
+        [
+            APP_SUPPORT / "runtimes/macos-arm64/current",
+            RESOURCES / "runtime/macos-arm64",
+        ]
+    )
+
+    for candidate in candidates:
+        if runtime_is_valid(candidate):
+            return candidate
+    return candidates[-1]
+
+
+RUNTIME = resolve_runtime_dir()
 VENV_PYTHON = RUNTIME / "acestep-venv/bin/python"
 MAIN_PYTHON = RUNTIME / "venv/bin/python"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
 PYTHON_BRIDGE = RESOURCES / "python_bridge.py"
 GENERATED_MUSIC_DIR = (
-    Path.home() / "Library/Application Support/MLXtra/GeneratedMusic"
+    APP_SUPPORT / "GeneratedMusic"
 )
-ACESTEP_CHECKPOINTS_DIR = Path.home() / "Library/Application Support/MLXtra/checkpoints"
+ACESTEP_CHECKPOINTS_DIR = APP_SUPPORT / "checkpoints"
 REQUIRE_ALL_MODELS = (
     os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
     or "--strict" in sys.argv[1:]
@@ -228,15 +262,12 @@ class MusicGenerationIntegrationTest:
 
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONHOME"] = str(
-            APP_BUNDLE
-            / "Contents/Resources/runtime/macos-arm64/python/Frameworks/Versions/3.12"
-        )
+        env["PYTHONHOME"] = str(RUNTIME / "python/Frameworks/Versions/3.12")
+        env["MLXTRA_RUNTIME_DIR"] = str(RUNTIME)
         env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
         env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
-        env["ACESTEP_CHECKPOINTS_DIR"] = str(
-            Path.home() / "Library/Application Support/MLXtra/checkpoints"
-        )
+        env["ACESTEP_CHECKPOINTS_DIR"] = str(ACESTEP_CHECKPOINTS_DIR)
+        env["ACESTEP_PYTHON"] = str(VENV_PYTHON)
         env["MTL_DEBUG_LAYER"] = "0"
         env["MTL_SHADER_VALIDATION"] = "0"
 

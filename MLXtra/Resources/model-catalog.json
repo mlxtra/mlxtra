@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "2026.05.19",
-  "minAppVersion": "0.1.0",
+  "catalogVersion": "2026.05.25.8",
+  "minAppVersion": "1.0.6",
   "models": [
     {
       "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
-      "name": "Qwen 3.5",
+      "name": "Qwen 3.5 9B",
       "subtitle": "Vision language model (9B parameters)",
       "modelId": "mlx-community/Qwen3.5-9B-MLX-4bit",
       "modality": "vision",
@@ -25,6 +25,13 @@
       "runtime": {
         "minVersion": "0.1.0",
         "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "chatTemplate": {
+          "parameterKwargs": {
+            "enable_thinking": "enable_thinking"
+          }
+        }
       },
       "ranking": {
         "quality": 100,
@@ -119,12 +126,11 @@
             "top_p": "0.8"
           }
         }
-      ],
-      "aiModel": "Qwen 3.5"
+      ]
     },
     {
       "id": "google/gemma-4-e4b-it",
-      "name": "Gemma 4",
+      "name": "Gemma 4 E4B",
       "subtitle": "Google vision model (4B parameters)",
       "modelId": "google/gemma-4-e4b-it",
       "modality": "vision",
@@ -238,12 +244,11 @@
             "top_p": "0.8"
           }
         }
-      ],
-      "aiModel": "Gemma 4"
+      ]
     },
     {
       "id": "mlx-community/Qwen3.5-2B-MLX-4bit",
-      "name": "Qwen 3.5 Mini",
+      "name": "Qwen 3.5 2B",
       "subtitle": "Lightweight vision model (2B parameters)",
       "modelId": "mlx-community/Qwen3.5-2B-MLX-4bit",
       "modality": "vision",
@@ -263,6 +268,13 @@
       "runtime": {
         "minVersion": "0.1.0",
         "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "chatTemplate": {
+          "parameterKwargs": {
+            "enable_thinking": "enable_thinking"
+          }
+        }
       },
       "ranking": {
         "quality": 70,
@@ -357,8 +369,185 @@
             "top_p": "0.8"
           }
         }
+      ]
+    },
+    {
+      "id": "mlx-community/gemma-4-e2b-it-4bit",
+      "name": "Gemma 4 E2B",
+      "subtitle": "Compact Google vision model (E2B)",
+      "modelId": "mlx-community/gemma-4-e2b-it-4bit",
+      "modality": "vision",
+      "backend": "vlm",
+      "icon": "sparkle",
+      "capabilities": ["chat", "vision"],
+      "maxContextWindow": 32768,
+      "defaultMaxTokens": 4096,
+      "downloadSizeGB": 3.6,
+      "estimatedMemoryGB": 4.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "mlx-community/gemma-4-e2b-it-4bit",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 76,
+        "speed": 88
+      },
+      "parameters": [
+        { "key": "temperature", "label": "Temperature", "type": "decimal", "defaultValue": "0.7", "range": { "min": 0, "max": 2 }, "step": 0.1, "options": [], "isAdvanced": false },
+        { "key": "max_tokens", "label": "Max Tokens", "type": "integer", "defaultValue": "4096", "range": { "min": 256, "max": 32768 }, "step": 256, "options": [], "isAdvanced": false },
+        { "key": "top_p", "label": "Top P", "type": "decimal", "defaultValue": "1.0", "range": { "min": 0, "max": 1 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "top_k", "label": "Top K", "type": "integer", "defaultValue": "0", "range": { "min": 0, "max": 100 }, "step": 1, "options": [], "isAdvanced": true },
+        { "key": "min_p", "label": "Min P", "type": "decimal", "defaultValue": "0.0", "range": { "min": 0, "max": 1 }, "step": 0.01, "options": [], "isAdvanced": true },
+        { "key": "repetition_penalty", "label": "Repetition Penalty", "type": "decimal", "defaultValue": "1.0", "range": { "min": 0.8, "max": 1.5 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "enable_thinking", "label": "Reasoning", "type": "boolean", "defaultValue": "false", "step": 1, "options": [], "isAdvanced": true }
       ],
-      "aiModel": "Qwen 3.5 Mini"
+      "presets": [
+        { "id": "balanced", "label": "Balanced", "values": { "temperature": "0.7", "max_tokens": "4096" } },
+        { "id": "focused", "label": "Focused", "values": { "temperature": "0.2", "top_p": "0.8" } }
+      ]
+    },
+    {
+      "id": "mlx-community/gemma-4-26b-a4b-it-4bit",
+      "name": "Gemma 4 26B A4B",
+      "subtitle": "Large Google vision model (26B A4B)",
+      "modelId": "mlx-community/gemma-4-26b-a4b-it-4bit",
+      "modality": "vision",
+      "backend": "vlm",
+      "icon": "sparkles",
+      "capabilities": ["chat", "vision"],
+      "maxContextWindow": 32768,
+      "defaultMaxTokens": 4096,
+      "downloadSizeGB": 15.6,
+      "estimatedMemoryGB": 17.5,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "ranking": {
+        "quality": 108,
+        "speed": 42
+      },
+      "parameters": [
+        { "key": "temperature", "label": "Temperature", "type": "decimal", "defaultValue": "0.7", "range": { "min": 0, "max": 2 }, "step": 0.1, "options": [], "isAdvanced": false },
+        { "key": "max_tokens", "label": "Max Tokens", "type": "integer", "defaultValue": "4096", "range": { "min": 256, "max": 32768 }, "step": 256, "options": [], "isAdvanced": false },
+        { "key": "top_p", "label": "Top P", "type": "decimal", "defaultValue": "1.0", "range": { "min": 0, "max": 1 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "top_k", "label": "Top K", "type": "integer", "defaultValue": "0", "range": { "min": 0, "max": 100 }, "step": 1, "options": [], "isAdvanced": true },
+        { "key": "min_p", "label": "Min P", "type": "decimal", "defaultValue": "0.0", "range": { "min": 0, "max": 1 }, "step": 0.01, "options": [], "isAdvanced": true },
+        { "key": "repetition_penalty", "label": "Repetition Penalty", "type": "decimal", "defaultValue": "1.0", "range": { "min": 0.8, "max": 1.5 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "enable_thinking", "label": "Reasoning", "type": "boolean", "defaultValue": "false", "step": 1, "options": [], "isAdvanced": true }
+      ],
+      "presets": [
+        { "id": "balanced", "label": "Balanced", "values": { "temperature": "0.7", "max_tokens": "4096" } },
+        { "id": "focused", "label": "Focused", "values": { "temperature": "0.2", "top_p": "0.8" } }
+      ]
+    },
+    {
+      "id": "mlx-community/Qwen3.6-27B-4bit",
+      "name": "Qwen 3.6 27B",
+      "subtitle": "Large vision language model (27B parameters)",
+      "modelId": "mlx-community/Qwen3.6-27B-4bit",
+      "modality": "vision",
+      "backend": "vlm",
+      "icon": "eye",
+      "capabilities": ["chat", "vision"],
+      "maxContextWindow": 32768,
+      "defaultMaxTokens": 4096,
+      "downloadSizeGB": 16.1,
+      "estimatedMemoryGB": 18.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "mlx-community/Qwen3.6-27B-4bit",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "chatTemplate": {
+          "parameterKwargs": {
+            "enable_thinking": "enable_thinking"
+          }
+        }
+      },
+      "ranking": {
+        "quality": 110,
+        "speed": 38
+      },
+      "parameters": [
+        { "key": "temperature", "label": "Temperature", "type": "decimal", "defaultValue": "0.7", "range": { "min": 0, "max": 2 }, "step": 0.1, "options": [], "isAdvanced": false },
+        { "key": "max_tokens", "label": "Max Tokens", "type": "integer", "defaultValue": "4096", "range": { "min": 256, "max": 32768 }, "step": 256, "options": [], "isAdvanced": false },
+        { "key": "top_p", "label": "Top P", "type": "decimal", "defaultValue": "0.8", "range": { "min": 0, "max": 1 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "top_k", "label": "Top K", "type": "integer", "defaultValue": "20", "range": { "min": 0, "max": 100 }, "step": 1, "options": [], "isAdvanced": true },
+        { "key": "min_p", "label": "Min P", "type": "decimal", "defaultValue": "0.0", "range": { "min": 0, "max": 1 }, "step": 0.01, "options": [], "isAdvanced": true },
+        { "key": "repetition_penalty", "label": "Repetition Penalty", "type": "decimal", "defaultValue": "1.0", "range": { "min": 0.8, "max": 1.5 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "enable_thinking", "label": "Reasoning", "type": "boolean", "defaultValue": "false", "step": 1, "options": [], "isAdvanced": true }
+      ],
+      "presets": [
+        { "id": "balanced", "label": "Balanced", "values": { "temperature": "0.7", "max_tokens": "4096" } },
+        { "id": "focused", "label": "Focused", "values": { "temperature": "0.2", "top_p": "0.8" } }
+      ]
+    },
+    {
+      "id": "mlx-community/Qwen3.6-35B-A3B-4bit",
+      "name": "Qwen 3.6 35B A3B",
+      "subtitle": "High-capability vision model (35B A3B)",
+      "modelId": "mlx-community/Qwen3.6-35B-A3B-4bit",
+      "modality": "vision",
+      "backend": "vlm",
+      "icon": "eye.circle",
+      "capabilities": ["chat", "vision"],
+      "maxContextWindow": 32768,
+      "defaultMaxTokens": 4096,
+      "downloadSizeGB": 20.4,
+      "estimatedMemoryGB": 23.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "chatTemplate": {
+          "parameterKwargs": {
+            "enable_thinking": "enable_thinking"
+          }
+        }
+      },
+      "ranking": {
+        "quality": 116,
+        "speed": 34
+      },
+      "parameters": [
+        { "key": "temperature", "label": "Temperature", "type": "decimal", "defaultValue": "0.7", "range": { "min": 0, "max": 2 }, "step": 0.1, "options": [], "isAdvanced": false },
+        { "key": "max_tokens", "label": "Max Tokens", "type": "integer", "defaultValue": "4096", "range": { "min": 256, "max": 32768 }, "step": 256, "options": [], "isAdvanced": false },
+        { "key": "top_p", "label": "Top P", "type": "decimal", "defaultValue": "0.8", "range": { "min": 0, "max": 1 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "top_k", "label": "Top K", "type": "integer", "defaultValue": "20", "range": { "min": 0, "max": 100 }, "step": 1, "options": [], "isAdvanced": true },
+        { "key": "min_p", "label": "Min P", "type": "decimal", "defaultValue": "0.0", "range": { "min": 0, "max": 1 }, "step": 0.01, "options": [], "isAdvanced": true },
+        { "key": "repetition_penalty", "label": "Repetition Penalty", "type": "decimal", "defaultValue": "1.0", "range": { "min": 0.8, "max": 1.5 }, "step": 0.05, "options": [], "isAdvanced": true },
+        { "key": "enable_thinking", "label": "Reasoning", "type": "boolean", "defaultValue": "false", "step": 1, "options": [], "isAdvanced": true }
+      ],
+      "presets": [
+        { "id": "balanced", "label": "Balanced", "values": { "temperature": "0.7", "max_tokens": "4096" } },
+        { "id": "focused", "label": "Focused", "values": { "temperature": "0.2", "top_p": "0.8" } }
+      ]
     },
     {
       "id": "black-forest-labs/FLUX.2-klein-4B",
@@ -383,8 +572,15 @@
         "minVersion": "0.1.0",
         "compatibilityApi": 1
       },
+      "runtimeOptions": {
+        "mflux": {
+          "config": "flux2-klein-4b",
+          "textToImageClass": "Flux2Klein",
+          "editClass": "Flux2KleinEdit"
+        }
+      },
       "ranking": {
-        "quality": 100,
+        "quality": 92,
         "speed": 70
       },
       "parameters": [
@@ -453,6 +649,96 @@
       ]
     },
     {
+      "id": "Tongyi-MAI/Z-Image-Turbo",
+      "name": "Z-Image Turbo",
+      "subtitle": "Fast photorealistic image generation model",
+      "modelId": "Tongyi-MAI/Z-Image-Turbo",
+      "modality": "image",
+      "backend": "image",
+      "icon": "camera.aperture",
+      "capabilities": ["image-generation"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 32.9,
+      "estimatedMemoryGB": 14.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "Tongyi-MAI/Z-Image-Turbo",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.0",
+        "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "mflux": {
+          "config": "z-image-turbo",
+          "textToImageClass": "ZImageTurbo",
+          "editClass": "ZImageTurbo",
+          "quantize": 8
+        }
+      },
+      "ranking": {
+        "quality": 96,
+        "speed": 82
+      },
+      "parameters": [
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "integer",
+          "defaultValue": "1024",
+          "range": { "min": 512, "max": 1536 },
+          "step": 128,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "type": "integer",
+          "defaultValue": "1024",
+          "range": { "min": 512, "max": 1536 },
+          "step": 128,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "type": "integer",
+          "defaultValue": "9",
+          "range": { "min": 4, "max": 20 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "seed",
+          "label": "Seed",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 2147483647 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": { "steps": "8" }
+        },
+        {
+          "id": "detail",
+          "label": "Detailed",
+          "values": { "steps": "12" }
+        }
+      ]
+    },
+    {
       "id": "kugelaudio/kugelaudio-0-open",
       "name": "KugelAudio 0 Open",
       "subtitle": "Speech generation model",
@@ -474,6 +760,12 @@
       "runtime": {
         "minVersion": "0.1.0",
         "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "audio": {
+          "adapter": "kugelaudio",
+          "defaultVoice": "default"
+        }
       },
       "ranking": {
         "quality": 100,
@@ -518,6 +810,115 @@
       ]
     },
     {
+      "id": "mlx-community/Kokoro-82M-4bit",
+      "name": "Kokoro 82M 4-bit",
+      "subtitle": "Fast English speech model",
+      "modelId": "mlx-community/Kokoro-82M-4bit",
+      "modality": "audio",
+      "backend": "audio",
+      "icon": "waveform",
+      "capabilities": ["speech-generation"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 0.67,
+      "estimatedMemoryGB": 1.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "mlx-community/Kokoro-82M-4bit",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.2",
+        "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "audio": {
+          "adapter": "kokoro",
+          "defaultVoice": "af_heart",
+          "languageByVoicePrefix": {
+            "bf": "b",
+            "bm": "b",
+            "jf": "j",
+            "jm": "j",
+            "zf": "z",
+            "zm": "z",
+            "ef": "e",
+            "em": "e",
+            "ff": "f",
+            "fm": "f",
+            "hf": "h",
+            "hm": "h",
+            "if": "i",
+            "im": "i",
+            "pf": "p",
+            "pm": "p"
+          }
+        }
+      },
+      "ranking": {
+        "quality": 90,
+        "speed": 100
+      },
+      "parameters": [
+        {
+          "key": "voice",
+          "label": "Voice",
+          "type": "option",
+          "defaultValue": "af_heart",
+          "step": 1,
+          "options": [
+            "af_heart",
+            "af_bella",
+            "af_nicole",
+            "af_nova",
+            "af_sarah",
+            "af_sky",
+            "am_adam",
+            "am_michael",
+            "bf_emma",
+            "bf_isabella",
+            "bm_george"
+          ],
+          "isAdvanced": false
+        },
+        {
+          "key": "speed",
+          "label": "Speed",
+          "type": "decimal",
+          "defaultValue": "1",
+          "range": { "min": 0.7, "max": 1.3 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "lang_code",
+          "label": "Language",
+          "type": "option",
+          "defaultValue": "",
+          "step": 1,
+          "options": ["", "a", "b"],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": { "speed": "1.15" }
+        },
+        {
+          "id": "natural",
+          "label": "Natural",
+          "values": {
+            "speed": "1",
+            "voice": "af_heart"
+          }
+        }
+      ]
+    },
+    {
       "id": "ACE-Step/acestep-v15-turbo-continuous",
       "name": "ACE-Step 1.5 Turbo",
       "subtitle": "Music generation model",
@@ -532,9 +933,10 @@
       "estimatedMemoryGB": 4.0,
       "source": {
         "type": "component_bundle",
-        "repo": "ACE-Step/acestep-v15-turbo-continuous",
+        "repo": "ACE-Step/Ace-Step1.5",
         "revision": "main",
-        "components": ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"]
+        "components": ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"],
+        "helper": "ace_step"
       },
       "runtime": {
         "minVersion": "0.1.0",
@@ -563,6 +965,25 @@
           "step": 1,
           "options": [],
           "isAdvanced": false
+        },
+        {
+          "key": "batch_size",
+          "label": "Batch Size",
+          "type": "integer",
+          "defaultValue": "1",
+          "range": { "min": 1, "max": 4 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "audio_format",
+          "label": "Format",
+          "type": "option",
+          "defaultValue": "wav",
+          "step": 1,
+          "options": ["wav"],
+          "isAdvanced": true
         },
         {
           "key": "bpm",

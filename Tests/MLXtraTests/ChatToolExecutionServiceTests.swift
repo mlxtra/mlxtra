@@ -6,7 +6,7 @@ import XCTest
 final class ChatToolExecutionServiceTests: XCTestCase {
     private static var defaultChatModelId: String {
         ModelCapabilityProfile.bestProfile(for: .vision)?.modelId
-            ?? AIModel.defaultForCurrentHardware.modelId
+            ?? "mlx-community/Qwen3.5-2B-MLX-4bit"
     }
     private var standardDefaultsSnapshot: [String: Any?] = [:]
 
@@ -364,8 +364,10 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             runtimeManager: runtimeManager,
             toolExecutor: MockChatToolExecutionService()
         )
-        let originalModel = viewModel.selectedModel
-        let alternateModel = AIModel.allCases.first { $0 != originalModel } ?? originalModel
+        let originalProfile = viewModel.activeModelProfile
+        let alternateProfile = ModelCapabilityProfile
+            .visibleProfiles(for: .vision)
+            .first { $0.modelId != originalProfile.modelId } ?? originalProfile
         let originalFocusRequest = viewModel.composerFocusRequest
         viewModel.selectTool(.chat)
         viewModel.inputText = "First prompt"
@@ -376,14 +378,14 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.inputText = "Second prompt"
         viewModel.sendMessage()
         viewModel.selectTool(.image)
-        viewModel.selectModel(alternateModel)
+        viewModel.selectModelProfile(alternateProfile)
         viewModel.toggleToolMenu()
         viewModel.toggleModelMenu()
         viewModel.focusComposer()
 
         XCTAssertEqual(viewModel.inputText, "Second prompt")
         XCTAssertEqual(viewModel.selectedTool, .chat)
-        XCTAssertEqual(viewModel.selectedModel, originalModel)
+        XCTAssertEqual(viewModel.activeModelProfile.modelId, originalProfile.modelId)
         XCTAssertFalse(viewModel.isToolMenuOpen)
         XCTAssertFalse(viewModel.isModelMenuOpen)
         XCTAssertEqual(viewModel.composerFocusRequest, originalFocusRequest)
@@ -417,6 +419,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             toolExecutor: toolExecutor,
             userDefaults: userDefaults
         )
+        viewModel.selectModelProfile(imageProfile)
         viewModel.setParameterValue("512", for: widthDefinition, profile: imageProfile)
         viewModel.selectTool(.auto)
         viewModel.inputText = "Draw a quiet studio desk"
@@ -1632,8 +1635,8 @@ private final class MockChatRuntimeManager: ChatRuntimeManaging {
         1.0
     }
 
-    func isModelDownloadedOffMain(modelId: String) async -> Bool {
-        downloadedModelIds.contains(modelId)
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
+        downloadedModelIds.contains(model.modelId)
     }
 }
 

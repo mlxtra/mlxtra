@@ -328,8 +328,10 @@ final class ModelDownloadManager: ObservableObject {
 
             do {
                 try await runtimeManager.validateDownloadSupportOffMain(for: model)
-                if model.source.usesComponentBundle {
+                if model.source.helper == .aceStep {
                     try await runAceStepDownload(model: model)
+                } else if model.source.usesComponentBundle {
+                    throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
                 } else {
                     try await runSnapshotDownload(model: model)
                 }
@@ -414,10 +416,7 @@ final class ModelDownloadManager: ObservableObject {
         huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
     ) -> [URL] {
         if model.source.usesComponentBundle {
-            let components = model.source.components.isEmpty
-                ? ModelSource.defaultSource(modelId: model.modelId).components
-                : model.source.components
-            return components.map { checkpointsPath.appendingPathComponent($0) }
+            return model.source.components.map { checkpointsPath.appendingPathComponent($0) }
         }
 
         return [
@@ -591,12 +590,14 @@ final class ModelDownloadManager: ObservableObject {
 
     private func runAceStepDownload(model: DownloadableModel) async throws {
         let modelId = model.id
-        let components = model.source.components.isEmpty
-            ? AceStepDownloadPlan.requiredComponents
-            : model.source.components
+        let repoID = model.source.downloadRepository ?? model.modelId
+        guard !model.source.components.isEmpty else {
+            throw NativeModelDownloadError.emptyManifest(repoID)
+        }
         let plan = AceStepDownloadPlan(
+            repoID: repoID,
             revision: model.source.revision ?? "main",
-            requiredComponents: components,
+            requiredComponents: model.source.components,
             checkpointsRoot: checkpointsPath
         )
 

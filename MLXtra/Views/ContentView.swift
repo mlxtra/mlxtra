@@ -161,7 +161,7 @@ struct ContentView: View {
         case .downloaded:
             pendingDownloadModelId = ""
         case .notDownloaded, .failed:
-            guard model.isRuntimeCompatible else {
+            guard !model.source.usesComponentBundle || model.isRuntimeCompatible else {
                 return
             }
             downloadManager.download(model)

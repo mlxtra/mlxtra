@@ -40,7 +40,7 @@ protocol ChatRuntimeManaging: AnyObject {
     var state: RuntimeManager.RuntimeState { get }
     func initialize() async throws
     func estimatedModelSize(modelId: String) -> Double
-    func isModelDownloadedOffMain(modelId: String) async -> Bool
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool
 }
 
 @MainActor
@@ -376,7 +376,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         plan: ChatMediaToolExecutionPlan,
         onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
     ) async -> ChatToolExecutionOutcome {
-        guard await runtimeManager.isModelDownloadedOffMain(modelId: plan.model.modelId) else {
+        guard await runtimeManager.isModelDownloadedOffMain(model: plan.model) else {
             return .downloadRequired(plan.model)
         }
 
@@ -483,10 +483,10 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
 extension VLMExecutor: ChatModelExecuting {}
 
 extension RuntimeManager: ChatRuntimeManaging {
-    func isModelDownloadedOffMain(modelId: String) async -> Bool {
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
         let checkpointsPath = checkpointsPath
         return await Task.detached(priority: .utility) {
-            RuntimeManager.isModelDownloaded(modelId: modelId, checkpointsPath: checkpointsPath)
+            RuntimeManager.modelStorageStatus(model: model, checkpointsPath: checkpointsPath).isDownloaded
         }.value
     }
 }

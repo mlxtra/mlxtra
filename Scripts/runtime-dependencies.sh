@@ -3,7 +3,7 @@
 # Shared runtime dependency pins for the embedded macOS Python bundle.
 # Keep runtime upgrades here so the builder, validator, and generated manifest stay in sync.
 
-RUNTIME_VERSION="0.1.1"
+RUNTIME_VERSION="0.1.2"
 PYTHON_VERSION="3.12.8"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-macos11.pkg"
 PYTHON_PKG_NAME="python-${PYTHON_VERSION}-macos11.pkg"
@@ -12,6 +12,7 @@ PYTHON_PKG_SHA256="c411b5372d563532f5e6b589af7eb16e95613d61bd5af7bfe78563467130b
 MLX_VERSION="0.31.2"
 MLX_VLM_VERSION="0.5.0"
 MLX_AUDIO_VERSION="0.4.3"
+MISAKI_VERSION="0.9.4"
 MFLUX_VERSION="0.17.5"
 TRANSFORMERS_VERSION="5.8.0"
 HUGGINGFACE_HUB_VERSION="1.14.0"
@@ -26,6 +27,7 @@ RUNTIME_MAIN_PYPI_PACKAGES=(
     "mlx==${MLX_VERSION}"
     "mlx-vlm==${MLX_VLM_VERSION}"
     "mlx-audio==${MLX_AUDIO_VERSION}"
+    "misaki[en]==${MISAKI_VERSION}"
     "mflux==${MFLUX_VERSION}"
     "transformers==${TRANSFORMERS_VERSION}"
     "huggingface-hub==${HUGGINGFACE_HUB_VERSION}"
@@ -60,15 +62,27 @@ RUNTIME_CAPABILITIES=(
     "music-generation"
 )
 
-RUNTIME_SUPPORTED_MODELS=(
-    "mlx-community/Qwen3.5-9B-MLX-4bit"
-    "google/gemma-4-e4b-it"
-    "mlx-community/Qwen3.5-2B-MLX-4bit"
-    "mlx-community/gemma-4-e2b-it-4bit"
-    "mlx-community/gemma-4-26b-a4b-it-4bit"
-    "mlx-community/Qwen3.6-27B-4bit"
-    "mlx-community/Qwen3.6-35B-A3B-4bit"
-    "black-forest-labs/FLUX.2-klein-4B"
-    "kugelaudio/kugelaudio-0-open"
-    "ACE-Step/acestep-v15-turbo-continuous"
+RUNTIME_MFLUX_CONFIGS=(
+    "flux2-klein-4b"
+    "z-image-turbo"
+)
+
+RUNTIME_MFLUX_CLASSES=(
+    "Flux2Klein"
+    "Flux2KleinEdit"
+    "ZImage"
+    "ZImageTurbo"
+)
+
+RUNTIME_MFLUX_QUANTIZE_BITS=(
+    "3"
+    "4"
+    "5"
+    "6"
+    "8"
+)
+
+RUNTIME_AUDIO_ADAPTERS=(
+    "kugelaudio"
+    "kokoro"
 )

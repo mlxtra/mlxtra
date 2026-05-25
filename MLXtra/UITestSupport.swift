@@ -83,7 +83,7 @@ private final class UITestRuntimeManager: ChatRuntimeManaging {
         1.0
     }
 
-    func isModelDownloadedOffMain(modelId: String) async -> Bool {
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
         true
     }
 }

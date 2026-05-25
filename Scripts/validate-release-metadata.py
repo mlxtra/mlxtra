@@ -16,7 +16,9 @@ from urllib.parse import urlparse
 KNOWN_MODALITIES = {"vision", "chat", "image", "audio", "speech", "music"}
 KNOWN_BACKENDS = {"vlm", "llm", "image", "audio", "music"}
 KNOWN_SOURCE_TYPES = {"hugging_face_snapshot", "component_bundle"}
+KNOWN_DOWNLOAD_HELPERS = {"ace_step"}
 KNOWN_PARAMETER_TYPES = {"decimal", "integer", "boolean", "option", "text"}
+KNOWN_AVAILABILITY = {"visible", "hidden", "requires_hf_access"}
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:[-.][0-9A-Za-z]+)?$")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -171,6 +173,9 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
     backend = model.get("backend")
     validator.require(backend in KNOWN_BACKENDS, f"{path}.backend is unsupported: {backend}")
 
+    availability = model.get("availability", "visible")
+    validator.require(availability in KNOWN_AVAILABILITY, f"{path}.availability is unsupported: {availability}")
+
     capabilities = model.get("capabilities")
     validator.require(isinstance(capabilities, list), f"{path}.capabilities must be an array")
     if isinstance(capabilities, list):
@@ -207,6 +212,9 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
                         is_non_empty_string(component),
                         f"{path}.source.components[{component_index}] must be a non-empty string",
                     )
+            helper = source.get("helper")
+            if helper is not None:
+                validator.require(helper in KNOWN_DOWNLOAD_HELPERS, f"{path}.source.helper is unsupported: {helper}")
 
     runtime = model.get("runtime")
     validator.require(isinstance(runtime, dict), f"{path}.runtime must be an object")
@@ -218,15 +226,56 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
         runtime_api = runtime.get("compatibilityApi")
         require_int(runtime_api, f"{path}.runtime.compatibilityApi", validator, minimum=1)
 
+    runtime_options = model.get("runtimeOptions")
+    if runtime_options is not None:
+        validator.require(isinstance(runtime_options, dict), f"{path}.runtimeOptions must be an object")
+        if isinstance(runtime_options, dict):
+            mflux_options = runtime_options.get("mflux")
+            if mflux_options is not None:
+                validator.require(isinstance(mflux_options, dict), f"{path}.runtimeOptions.mflux must be an object")
+                if isinstance(mflux_options, dict):
+                    config = mflux_options.get("config")
+                    validator.require(is_non_empty_string(config), f"{path}.runtimeOptions.mflux.config must be a non-empty string")
+                    text_class = mflux_options.get("textToImageClass")
+                    edit_class = mflux_options.get("editClass")
+                    validator.require(is_non_empty_string(text_class), f"{path}.runtimeOptions.mflux.textToImageClass must be a non-empty string")
+                    validator.require(is_non_empty_string(edit_class), f"{path}.runtimeOptions.mflux.editClass must be a non-empty string")
+                    quantize = mflux_options.get("quantize")
+                    if quantize is not None:
+                        require_int(quantize, f"{path}.runtimeOptions.mflux.quantize", validator, minimum=1)
+                    if backend != "image":
+                        validator.error(f"{path}.runtimeOptions.mflux is only supported for image backend models")
+            chat_template = runtime_options.get("chatTemplate")
+            if chat_template is not None:
+                validator.require(isinstance(chat_template, dict), f"{path}.runtimeOptions.chatTemplate must be an object")
+                if isinstance(chat_template, dict):
+                    parameter_kwargs = chat_template.get("parameterKwargs", {})
+                    validator.require(isinstance(parameter_kwargs, dict), f"{path}.runtimeOptions.chatTemplate.parameterKwargs must be an object")
+                    if isinstance(parameter_kwargs, dict):
+                        for kwarg, parameter_key in parameter_kwargs.items():
+                            validator.require(is_non_empty_string(kwarg), f"{path}.runtimeOptions.chatTemplate.parameterKwargs contains an empty kwarg")
+                            validator.require(is_non_empty_string(parameter_key), f"{path}.runtimeOptions.chatTemplate.parameterKwargs.{kwarg} must be a parameter key")
+            audio_options = runtime_options.get("audio")
+            if audio_options is not None:
+                validator.require(isinstance(audio_options, dict), f"{path}.runtimeOptions.audio must be an object")
+                if isinstance(audio_options, dict):
+                    validator.require(is_non_empty_string(audio_options.get("adapter")), f"{path}.runtimeOptions.audio.adapter must be a non-empty string")
+                    if audio_options.get("defaultVoice") is not None:
+                        validator.require(is_non_empty_string(audio_options.get("defaultVoice")), f"{path}.runtimeOptions.audio.defaultVoice must be a non-empty string")
+                    language_by_prefix = audio_options.get("languageByVoicePrefix", {})
+                    validator.require(isinstance(language_by_prefix, dict), f"{path}.runtimeOptions.audio.languageByVoicePrefix must be an object")
+                    if isinstance(language_by_prefix, dict):
+                        for prefix, lang_code in language_by_prefix.items():
+                            validator.require(is_non_empty_string(prefix), f"{path}.runtimeOptions.audio.languageByVoicePrefix contains an empty prefix")
+                            validator.require(is_non_empty_string(lang_code), f"{path}.runtimeOptions.audio.languageByVoicePrefix.{prefix} must be a non-empty string")
+                    if backend != "audio":
+                        validator.error(f"{path}.runtimeOptions.audio is only supported for audio backend models")
+
     ranking = model.get("ranking")
     validator.require(isinstance(ranking, dict), f"{path}.ranking must be an object")
     if isinstance(ranking, dict):
         require_int(ranking.get("quality"), f"{path}.ranking.quality", validator, minimum=0)
         require_int(ranking.get("speed"), f"{path}.ranking.speed", validator, minimum=0)
-        if isinstance(ranking.get("quality"), int):
-            validator.require(ranking["quality"] <= 100, f"{path}.ranking.quality must be <= 100")
-        if isinstance(ranking.get("speed"), int):
-            validator.require(ranking["speed"] <= 100, f"{path}.ranking.speed must be <= 100")
         if ranking.get("defaultForMemoryGB") is not None:
             require_number(ranking.get("defaultForMemoryGB"), f"{path}.ranking.defaultForMemoryGB", validator, minimum=1)
 
@@ -241,6 +290,17 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
                 if key:
                     validator.require(key not in parameter_keys, f"{path}.parameters contains duplicate key: {key}")
                     parameter_keys.add(key)
+
+    if isinstance(runtime_options, dict):
+        chat_template = runtime_options.get("chatTemplate")
+        if isinstance(chat_template, dict):
+            parameter_kwargs = chat_template.get("parameterKwargs", {})
+            if isinstance(parameter_kwargs, dict):
+                for kwarg, parameter_key in parameter_kwargs.items():
+                    validator.require(
+                        parameter_key in parameter_keys,
+                        f"{path}.runtimeOptions.chatTemplate.parameterKwargs.{kwarg} references unknown parameter: {parameter_key}",
+                    )
 
     preset_ids: set[str] = set()
     presets = model.get("presets")
@@ -270,6 +330,8 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
         "capabilities": set(capabilities if isinstance(capabilities, list) else []),
         "runtimeApi": runtime_api,
         "minRuntimeVersion": min_runtime,
+        "availability": availability,
+        "runtimeOptions": runtime_options if isinstance(runtime_options, dict) else None,
     }
 
 
@@ -362,6 +424,10 @@ def validate_channel(
             else:
                 require_int(size_bytes, f"{runtime_path}.sizeBytes", validator, minimum=1)
             require_int(runtime.get("compatibilityApi"), f"{runtime_path}.compatibilityApi", validator, minimum=1)
+            min_app_version = runtime.get("minAppVersion")
+            validator.require(isinstance(min_app_version, str) and bool(min_app_version.strip()), f"{runtime_path}.minAppVersion is required")
+            if isinstance(min_app_version, str):
+                validate_version(min_app_version, f"{runtime_path}.minAppVersion", validator)
 
 
 def validate_runtime_manifest(
@@ -384,8 +450,43 @@ def validate_runtime_manifest(
     capabilities = set(manifest.get("capabilities", []))
     validator.require(backends.issubset(KNOWN_BACKENDS), "runtime.supportedBackends contains unsupported values")
 
+    image_runtimes = manifest.get("imageRuntimes", {})
+    validator.require(isinstance(image_runtimes, dict), "runtime.imageRuntimes must be an object")
+    mflux_capabilities = {}
+    if isinstance(image_runtimes, dict):
+        mflux_capabilities = image_runtimes.get("mflux", {})
+        validator.require(isinstance(mflux_capabilities, dict), "runtime.imageRuntimes.mflux must be an object")
+        if isinstance(mflux_capabilities, dict):
+            configs = mflux_capabilities.get("configs", [])
+            classes = mflux_capabilities.get("classes", [])
+            quantize_bits = mflux_capabilities.get("quantizeBits", [])
+            validator.require(isinstance(configs, list), "runtime.imageRuntimes.mflux.configs must be an array")
+            validator.require(isinstance(classes, list), "runtime.imageRuntimes.mflux.classes must be an array")
+            validator.require(isinstance(quantize_bits, list), "runtime.imageRuntimes.mflux.quantizeBits must be an array")
+            if isinstance(configs, list):
+                validator.require(all(is_non_empty_string(value) for value in configs), "runtime.imageRuntimes.mflux.configs contains invalid values")
+            if isinstance(classes, list):
+                validator.require(all(is_non_empty_string(value) for value in classes), "runtime.imageRuntimes.mflux.classes contains invalid values")
+            if isinstance(quantize_bits, list):
+                validator.require(
+                    all(isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in quantize_bits),
+                    "runtime.imageRuntimes.mflux.quantizeBits contains invalid values",
+                )
+
+    audio_runtimes = manifest.get("audioRuntimes", {})
+    validator.require(isinstance(audio_runtimes, dict), "runtime.audioRuntimes must be an object")
+    audio_adapters: set[str] = set()
+    if isinstance(audio_runtimes, dict):
+        adapters = audio_runtimes.get("adapters", [])
+        validator.require(isinstance(adapters, list), "runtime.audioRuntimes.adapters must be an array")
+        if isinstance(adapters, list):
+            validator.require(all(is_non_empty_string(value) for value in adapters), "runtime.audioRuntimes.adapters contains invalid values")
+            audio_adapters = set(adapters)
+
     manifest_version = manifest.get("runtimeVersion")
     for requirement in model_requirements:
+        if requirement.get("availability") == "hidden":
+            continue
         if requirement.get("runtimeApi") != manifest.get("compatibilityApi"):
             continue
         minimum_runtime = requirement.get("minRuntimeVersion")
@@ -400,6 +501,43 @@ def validate_runtime_manifest(
             not missing_capabilities,
             f"runtime is missing capabilities for catalog model {requirement.get('id')}: {sorted(missing_capabilities)}",
         )
+        runtime_options = requirement.get("runtimeOptions")
+        if isinstance(runtime_options, dict) and isinstance(mflux_capabilities, dict):
+            mflux_options = runtime_options.get("mflux")
+            if isinstance(mflux_options, dict):
+                supported_configs = set(mflux_capabilities.get("configs", []))
+                supported_classes = set(mflux_capabilities.get("classes", []))
+                supported_quantize = set(mflux_capabilities.get("quantizeBits", []))
+                config = mflux_options.get("config")
+                text_class = mflux_options.get("textToImageClass")
+                edit_class = mflux_options.get("editClass")
+                quantize = mflux_options.get("quantize")
+                validator.require(
+                    config in supported_configs,
+                    f"runtime is missing mflux config for catalog model {requirement.get('id')}: {config}",
+                )
+                if text_class is not None:
+                    validator.require(
+                        text_class in supported_classes,
+                        f"runtime is missing mflux text class for catalog model {requirement.get('id')}: {text_class}",
+                    )
+                if edit_class is not None:
+                    validator.require(
+                        edit_class in supported_classes,
+                        f"runtime is missing mflux edit class for catalog model {requirement.get('id')}: {edit_class}",
+                    )
+                if quantize is not None:
+                    validator.require(
+                        quantize in supported_quantize,
+                        f"runtime is missing mflux quantize support for catalog model {requirement.get('id')}: {quantize}",
+                    )
+            audio_options = runtime_options.get("audio")
+            if isinstance(audio_options, dict):
+                adapter = audio_options.get("adapter")
+                validator.require(
+                    adapter in audio_adapters,
+                    f"runtime is missing audio adapter for catalog model {requirement.get('id')}: {adapter}",
+                )
 
 
 def parse_args() -> argparse.Namespace:

@@ -18,7 +18,7 @@ struct FirstRunStarterModel: Identifiable {
     }
 
     static func bestChatForThisMac(
-        hardwareMemoryGB: Double = AIModel.currentHardwareMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
     ) -> FirstRunStarterModel? {
         guard let profile = ModelCapabilityProfile.bestProfile(
             for: .vision,

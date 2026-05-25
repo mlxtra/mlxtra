@@ -56,7 +56,6 @@ class ChatViewModel: ObservableObject {
         }
     }
     @Published var selectedTool: Tool = .auto
-    @Published var selectedModel: AIModel = AIModel.defaultForCurrentHardware
     @Published var isToolMenuOpen: Bool = false
     @Published var isModelMenuOpen: Bool = false
     @Published var selectedImagePaths: [URL] = []
@@ -231,10 +230,6 @@ class ChatViewModel: ObservableObject {
             runtimeManager: resolvedRuntimeManager,
             webSearchService: MCPWebSearchService()
         )
-
-        if let storedChatModel = modelSelectionStore.selectedProfile(for: .vision)?.aiModel {
-            selectedModel = storedChatModel
-        }
 
         loadConversationHistory()
         self.vlmExecutor.delegate = self
@@ -423,7 +418,6 @@ class ChatViewModel: ObservableObject {
             prompt: prompt,
             images: images,
             tool: selectedTool,
-            selectedModel: selectedModel,
             profilesByModality: profilesByModality,
             parametersByModelId: parametersByModelId,
             selectionDownloadRequirement: downloadRequirementForCurrentSelection(),
@@ -563,7 +557,6 @@ class ChatViewModel: ObservableObject {
 
             let selectedCapabilityProfile = request.profile(for: request.tool)
             let activeChatProfile = request.profile(for: .chat)
-            let activeChatModel = activeChatProfile.aiModel ?? request.selectedModel
             let executionProfile = (isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile
             let resolvedModelId = executionProfile.modelId
             let activeModelName = executionProfile.name
@@ -718,19 +711,18 @@ class ChatViewModel: ObservableObject {
             let mediaExecutionParameters = isImageGeneration || isSpeechGeneration
                 ? request.executionParameters(for: executionProfile)
                 : nil
-            let enableThinking = (chatExecutionParameters["enable_thinking"] as? Bool) ?? activeChatModel.enableThinking
-            let chatTemplateKwargs: [String: Any]? = !isImageGeneration && !isSpeechGeneration && !isMusicGeneration && activeChatProfile.modelId.lowercased().contains("qwen")
-                ? ["enable_thinking": enableThinking]
+            let chatTemplateKwargs: [String: Any]? = !isImageGeneration && !isSpeechGeneration && !isMusicGeneration
+                ? request.chatTemplateKwargs(for: activeChatProfile)
                 : nil
 
             let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil)
             let isDirectMediaGeneration = isImageGeneration || isSpeechGeneration
-            let maxTokens = (chatExecutionParameters["max_tokens"] as? Int) ?? activeChatModel.defaultMaxTokens
-            let temperature = (chatExecutionParameters["temperature"] as? Double) ?? activeChatModel.temperatureRange.default
-            let topP = (chatExecutionParameters["top_p"] as? Double) ?? activeChatModel.topP
-            let topK = (chatExecutionParameters["top_k"] as? Int) ?? activeChatModel.topK
-            let minP = (chatExecutionParameters["min_p"] as? Double) ?? activeChatModel.minP
-            let repetitionPenalty = (chatExecutionParameters["repetition_penalty"] as? Double) ?? activeChatModel.repetitionPenalty
+            let maxTokens = (chatExecutionParameters["max_tokens"] as? Int) ?? activeChatProfile.defaultMaxTokens
+            let temperature = (chatExecutionParameters["temperature"] as? Double) ?? activeChatProfile.doubleParameterDefault("temperature", fallback: 0.7)
+            let topP = (chatExecutionParameters["top_p"] as? Double) ?? activeChatProfile.doubleParameterDefault("top_p", fallback: 1.0)
+            let topK = (chatExecutionParameters["top_k"] as? Int) ?? activeChatProfile.intParameterDefault("top_k", fallback: 0)
+            let minP = (chatExecutionParameters["min_p"] as? Double) ?? activeChatProfile.doubleParameterDefault("min_p", fallback: 0)
+            let repetitionPenalty = (chatExecutionParameters["repetition_penalty"] as? Double) ?? activeChatProfile.doubleParameterDefault("repetition_penalty", fallback: 1.0)
 
             let executionRequest = ExecutionRequest(
                 backend: activeBackend,
