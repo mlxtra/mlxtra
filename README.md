@@ -1,18 +1,47 @@
 # MLXtra
 
-MLXtra is a native macOS app for running local AI models on Apple Silicon with
-[MLX](https://github.com/ml-explore/mlx). It brings chat, image generation,
-speech generation, and music generation into one desktop app.
+**Local AI creation for Mac, not another chat-only model runner.**
 
-Models run locally on your Mac. The app downloads its verified runtime and the
-models you choose after installation.
+MLXtra is a native Apple Silicon app for local AI creation. It runs chat,
+vision, image, speech, and music models on your Mac with
+[MLX](https://github.com/ml-explore/mlx), without turning setup into a model
+server project.
 
-## Download
+[Download MLXtra 1.0.9 DMG](https://github.com/mlxtra/mlxtra/releases/download/app-1.0.9/MLXtra-1.0.9.dmg)
+| [View releases](https://github.com/mlxtra/mlxtra/releases)
+| [Build from source](#build-from-source)
 
-Download the latest notarized DMG from
-[GitHub Releases](https://github.com/mlxtra/mlxtra/releases/latest).
+![MLXtra home screen](docs/assets/screenshots/welcome.png)
 
-Open the release page and download the `MLXtra-*.dmg` asset.
+## What's Different
+
+- **Creative modes, not just chat.** Move between conversation, image
+  generation, text-to-speech, and music generation from the same composer.
+- **Mac-first runtime.** MLXtra ships a verified Apple Silicon runtime and
+  keeps model downloads inside the app instead of asking you to assemble Python
+  environments by hand.
+- **Curated local models.** The catalog favors models that are practical on
+  Macs, including lightweight starters and larger options that appear only when
+  the hardware fit makes sense.
+- **Generated media is handled like app output.** Images, speech, and music are
+  saved locally, shown in the conversation, and easy to open or export.
+- **Simple first run.** Download the app, choose a model, and let MLXtra handle
+  runtime and model setup in the background.
+
+## Demo
+
+<video src="docs/assets/demo/MLXtra.mp4" controls width="100%" title="MLXtra demo"></video>
+
+[Open the demo video](docs/assets/demo/MLXtra.mp4)
+
+## What You Can Do
+
+- Chat with local vision-language models and attach images
+- Generate images with FLUX.2 Klein or Z-Image Turbo
+- Generate speech with KugelAudio or Kokoro
+- Generate music with ACE-Step
+- Manage runtime and model downloads from Settings
+- Stream responses and keep conversation history locally
 
 ## Requirements
 
@@ -24,66 +53,30 @@ Open the release page and download the `MLXtra-*.dmg` asset.
 Model sizes vary. Small chat models are a few GB; image and speech models can be
 larger.
 
-## First Run
+## Models
+
+MLXtra ships with a curated model catalog:
+
+| Type | Included models |
+| --- | --- |
+| Chat and vision | Qwen 3.5 2B, Qwen 3.5 9B, Qwen 3.6 27B, Qwen 3.6 35B A3B, Gemma 4 E2B, Gemma 4 E4B, Gemma 4 26B A4B |
+| Image | FLUX.2-klein-4B, Z-Image Turbo |
+| Speech | KugelAudio 0 Open, Kokoro 82M 4-bit |
+| Music | ACE-Step 1.5 Turbo |
+
+Large models are shown only on Macs where they are expected to fit comfortably.
+Some model providers may require accepting model terms or signing in to Hugging
+Face before downloads work.
+
+## First Launch
 
 On first launch, MLXtra starts setting up the local runtime in the background.
 You can choose your first model while setup finishes. If the runtime is still
 installing, the model download is queued and starts automatically once the
 runtime is ready.
 
-The runtime is installed under:
-
-```text
-~/Library/Application Support/MLXtra/runtimes/
-```
-
-Downloaded model files and generated media stay on your Mac.
-
-## Features
-
-- Chat with local models, including models that can understand images
-- Generate images with FLUX.2 Klein
-- Generate speech with KugelAudio
-- Generate music with ACE-Step
-- Manage model downloads from Settings
-- Stream chat responses in real time
-- Keep conversation history locally
-- Receive app updates through Sparkle
-
-## Screenshots
-
-![Welcome screen](docs/assets/screenshots/welcome.png)
-
-![Chat interface with image generation](docs/assets/screenshots/image.png)
-
-![Speech generation](docs/assets/screenshots/speech.png)
-
-![Music generation](docs/assets/screenshots/music.png)
-
-![Tool selector](docs/assets/screenshots/web.png)
-
-![Model management](docs/assets/screenshots/models.png)
-
-## Models
-
-MLXtra ships with a curated model catalog. The current catalog includes:
-
-- Qwen 3.5 9B
-- Qwen 3.5 Mini 2B
-- Qwen 3.6 27B
-- Qwen 3.6 35B A3B
-- Gemma 4
-- FLUX.2 Klein
-- KugelAudio 0 Open
-- ACE-Step 1.5 Turbo
-
-Large models are shown only on Macs where they are expected to fit comfortably.
-Some model providers may require accepting model terms or signing in to Hugging
-Face before downloads work.
-
-## Generated Files
-
-Generated media is saved in the app support directory:
+The runtime, model cache, conversations, and generated media stay on your Mac.
+Generated files are saved under:
 
 ```text
 ~/Library/Application Support/MLXtra/GeneratedImages/
@@ -119,27 +112,6 @@ swift test
 ```
 
 Python bridge and integration tests are documented in [AGENTS.md](AGENTS.md).
-
-## Project Layout
-
-```text
-MLXtra/
-├── MLXtra/
-│   ├── Models/
-│   ├── Services/
-│   │   ├── AppUpdate/
-│   │   ├── Execution/
-│   │   └── Runtime/
-│   ├── ViewModels/
-│   ├── Views/
-│   └── Resources/
-│       ├── python_bridge.py
-│       ├── acestep_bridge.py
-│       └── stable-channel.json
-├── Scripts/
-├── Tests/
-└── docs/
-```
 
 Release, runtime, notarization, and appcast workflows are documented in
 [docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md).
