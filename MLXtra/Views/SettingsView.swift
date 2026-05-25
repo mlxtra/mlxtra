@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct SettingsView: View {
+    private let appUpdateController: AppUpdateController?
+
     @StateObject private var downloadManager = ModelDownloadManager.shared
     @StateObject private var catalogService = ModelCatalogService.shared
     @StateObject private var runtimeUpdateManager = RuntimeUpdateManager.shared
@@ -18,6 +20,10 @@ struct SettingsView: View {
     @State private var selectedModelMode: SettingsModelMode = .chat
     @State private var modelSelectionRevision = 0
     @State private var removalCandidate: DownloadableModel?
+
+    init(appUpdateController: AppUpdateController? = nil) {
+        self.appUpdateController = appUpdateController
+    }
 
     private var allModels: [DownloadableModel] {
         catalogService.profiles
@@ -312,10 +318,6 @@ struct SettingsView: View {
             }
         }
         .padding(.bottom, 12)
-    }
-
-    private var appUpdateController: AppUpdateController? {
-        (NSApp.delegate as? MLXtraApplicationDelegate)?.appUpdateController
     }
 
     private var appVersionText: String {

@@ -13,7 +13,7 @@ struct MLXtraApp: App {
         .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .windowStyle(.titleBar)
         .commands {
-            MLXtraCommands()
+            MLXtraCommands(appUpdateController: appDelegate.appUpdateController)
         }
 
         MenuBarExtra("MLXtra", image: "MLXtraMenuBarIcon") {
@@ -22,7 +22,7 @@ struct MLXtraApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView()
+            SettingsView(appUpdateController: appDelegate.appUpdateController)
         }
     }
 
@@ -110,6 +110,11 @@ extension FocusedValues {
 
 private struct MLXtraCommands: Commands {
     @FocusedValue(\.chatCommandActions) private var chatActions
+    @ObservedObject private var appUpdateController: AppUpdateController
+
+    init(appUpdateController: AppUpdateController) {
+        _appUpdateController = ObservedObject(wrappedValue: appUpdateController)
+    }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -122,9 +127,9 @@ private struct MLXtraCommands: Commands {
 
         CommandGroup(after: .appInfo) {
             Button("Check for Updates...") {
-                NSApp.delegate.flatMap { $0 as? MLXtraApplicationDelegate }?.checkForUpdates()
+                appUpdateController.checkForUpdates()
             }
-            .disabled(NSApp.delegate.flatMap { $0 as? MLXtraApplicationDelegate }?.canCheckForUpdates != true)
+            .disabled(!appUpdateController.canCheckForUpdates)
         }
 
         CommandMenu("Chat") {
