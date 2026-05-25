@@ -12,7 +12,7 @@ server project.
 | [View releases](https://github.com/mlxtra/mlxtra/releases)
 | [Build from source](#build-from-source)
 
-[![Watch the MLXtra demo](docs/assets/screenshots/welcome.png)](https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4)
+![MLXtra home screen](docs/assets/screenshots/welcome.png)
 
 ## What's Different
 
