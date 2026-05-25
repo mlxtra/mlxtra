@@ -600,9 +600,38 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertTrue(messages[0].isUser)
         XCTAssertFalse(messages[1].isUser)
         XCTAssertFalse(messages[1].isStreaming)
-        XCTAssertEqual(messages[1].content, "The local engine stopped before it could finish. Restart it, then try again.")
+        XCTAssertEqual(messages[1].content, "The local engine reported an error.\n\nbridge failed")
         XCTAssertEqual(viewModel.localEngineStatus.state, .needsAttention)
         XCTAssertEqual(viewModel.localEngineStatus.primaryAction, .restart)
+    }
+
+    func testStreamProcessStoppedPreservesBridgeDetails() async {
+        let executor = MockChatModelExecutor(events: [
+            .error(ExecutionError.processStopped("Traceback\nModuleNotFoundError: No module named 'mlx_vlm'"))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.inputText = "Hello"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { (viewModel.chats.first?.messages ?? []).count == 2 }
+
+        let messages = viewModel.chats.first?.messages ?? []
+        XCTAssertEqual(
+            messages[1].content,
+            "The local engine stopped before it could finish.\n\nTraceback\nModuleNotFoundError: No module named 'mlx_vlm'"
+        )
+        XCTAssertEqual(
+            viewModel.localEngineStatus.detail,
+            "Local engine stopped: Traceback\nModuleNotFoundError: No module named 'mlx_vlm'"
+        )
     }
 
     func testFreeLocalEngineMemoryTerminatesExecutorAndUpdatesStatus() async {

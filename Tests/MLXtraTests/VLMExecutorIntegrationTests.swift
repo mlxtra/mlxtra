@@ -16,6 +16,7 @@ final class VLMExecutorIntegrationTests: XCTestCase {
     func testShouldRetryForProcessCrashed() {
         XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.processCrashed(retryCount: 0), retryCount: 0, maxRetries: 1))
         XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.processNotRunning, retryCount: 0, maxRetries: 1))
+        XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.processStopped("traceback"), retryCount: 0, maxRetries: 1))
         XCTAssertTrue(VLMExecutor.shouldRetry(error: ExecutionError.timeout, retryCount: 0, maxRetries: 1))
     }
 

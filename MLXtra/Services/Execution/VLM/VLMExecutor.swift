@@ -48,6 +48,7 @@ class VLMExecutor: NSObject, ModelExecutor {
 
     private let stdoutDispatcher = BridgeOutputDispatcher()
     private let stdoutLineBuffer = BridgeLineBuffer()
+    private let stderrBuffer = BridgeStderrBuffer(maxLines: 24)
     private var currentRequest: ExecutionRequest?
     private var currentModelCacheKey: String?
     private var retryCount: Int = 0
@@ -201,6 +202,7 @@ class VLMExecutor: NSObject, ModelExecutor {
         process = Process()
         process?.executableURL = pythonPath
         process?.arguments = [bridgePath.path]
+        stderrBuffer.clear()
 
         var cleanEnv = ProcessInfo.processInfo.environment
         cleanEnv.removeValue(forKey: "PYTHONPATH")
@@ -301,7 +303,7 @@ class VLMExecutor: NSObject, ModelExecutor {
 
         while !(await waiter.state.isReady) {
             if process?.isRunning == false {
-                throw ExecutionError.processNotRunning
+                throw stoppedProcessError()
             }
             if Date().timeIntervalSince(startTime) > timeout {
                 VLMBridgeDiagnostics.log("[VLMExecutor] Timeout waiting for bridge ready signal")
@@ -555,7 +557,7 @@ private final class StreamFinishState: @unchecked Sendable {
                 throw ExecutionError.pythonError("Model loading failed: \(error)")
             }
             if process?.isRunning == false {
-                throw ExecutionError.processNotRunning
+                throw stoppedProcessError()
             }
             if Date().timeIntervalSince(startTime) > timeout {
                 VLMBridgeDiagnostics.log("[VLMExecutor] Timeout waiting for model loaded signal")
@@ -568,7 +570,7 @@ private final class StreamFinishState: @unchecked Sendable {
 
     private func sendRequest(_ payload: [String: Any]) async throws {
         guard stdinPipe != nil else {
-            throw ExecutionError.processNotRunning
+            throw stoppedProcessError()
         }
 
         let data = try JSONSerialization.data(withJSONObject: payload)
@@ -585,7 +587,7 @@ private final class StreamFinishState: @unchecked Sendable {
             try stdinPipe?.fileHandleForWriting.write(contentsOf: lineData)
         } catch {
             if process?.isRunning == false {
-                throw ExecutionError.processNotRunning
+                throw stoppedProcessError()
             }
             throw ExecutionError.encodingFailed
         }
@@ -596,6 +598,7 @@ private final class StreamFinishState: @unchecked Sendable {
         let finishState = StreamFinishState()
         let handlerID = UUID()
         let dispatcher = stdoutDispatcher
+        let stderrBuffer = stderrBuffer
 
         let stream = AsyncStream<ExecutionEvent> { continuation in
             continuation.yield(.started)
@@ -616,7 +619,12 @@ private final class StreamFinishState: @unchecked Sendable {
                 },
                 onEOF: {
                     guard finishState.finish() else { return }
-                    continuation.yield(.error(ExecutionError.processNotRunning))
+                    let errorDetail = stderrBuffer.summary()
+                    if errorDetail.isEmpty {
+                        continuation.yield(.error(ExecutionError.processNotRunning))
+                    } else {
+                        continuation.yield(.error(ExecutionError.processStopped(errorDetail)))
+                    }
                     continuation.finish()
                 },
                 handler: { json in
@@ -746,6 +754,7 @@ private final class StreamFinishState: @unchecked Sendable {
     private func setupOutputHandlers() {
         let dispatcher = stdoutDispatcher
         let lineBuffer = stdoutLineBuffer
+        let stderrBuffer = stderrBuffer
 
         stdoutPipe?.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -786,9 +795,18 @@ private final class StreamFinishState: @unchecked Sendable {
 
             let lines = output.components(separatedBy: .newlines)
             for line in lines where !line.isEmpty {
+                stderrBuffer.append(line)
                 VLMBridgeDiagnostics.log("[Python STDERR] \(line)")
             }
         }
+    }
+
+    private func stoppedProcessError() -> ExecutionError {
+        let errorDetail = stderrBuffer.summary()
+        if errorDetail.isEmpty {
+            return .processNotRunning
+        }
+        return .processStopped(errorDetail)
     }
 
     private nonisolated func waitForProcessExit(_ process: Process, timeout: TimeInterval) async -> Bool {
@@ -821,7 +839,7 @@ private final class StreamFinishState: @unchecked Sendable {
 
         if let execError = error as? ExecutionError {
             switch execError {
-            case .processCrashed, .processNotRunning, .timeout:
+            case .processCrashed, .processNotRunning, .processStopped, .timeout:
                 return true
             default:
                 return false
@@ -918,6 +936,41 @@ final class BridgeOutputDispatcher: @unchecked Sendable {
         let routes = Array(routes.values)
         lock.unlock()
         return routes
+    }
+}
+
+private final class BridgeStderrBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private let maxLines: Int
+    private var lines: [String] = []
+
+    init(maxLines: Int) {
+        self.maxLines = max(1, maxLines)
+    }
+
+    func append(_ line: String) {
+        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedLine.isEmpty else { return }
+
+        lock.lock()
+        lines.append(trimmedLine)
+        if lines.count > maxLines {
+            lines.removeFirst(lines.count - maxLines)
+        }
+        lock.unlock()
+    }
+
+    func clear() {
+        lock.lock()
+        lines.removeAll()
+        lock.unlock()
+    }
+
+    func summary() -> String {
+        lock.lock()
+        let snapshot = lines
+        lock.unlock()
+        return snapshot.joined(separator: "\n")
     }
 }
 

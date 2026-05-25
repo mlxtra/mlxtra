@@ -403,7 +403,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         }
 
         switch execError {
-        case .processCrashed, .processNotRunning, .timeout:
+        case .processCrashed, .processNotRunning, .processStopped, .timeout:
             return true
         default:
             return false

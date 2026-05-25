@@ -488,6 +488,24 @@ private struct RecoveryNotice {
     let action: RecoveryAction?
 
     init?(content: String) {
+        if content.hasPrefix("The local engine stopped before it could finish.\n\n") {
+            title = "Local engine stopped"
+            detail = content
+            systemImage = "exclamationmark.triangle"
+            actionTitle = "Restart"
+            action = .restart
+            return
+        }
+
+        if content.hasPrefix("The local engine reported an error.\n\n") {
+            title = "Local engine error"
+            detail = content
+            systemImage = "exclamationmark.triangle"
+            actionTitle = nil
+            action = nil
+            return
+        }
+
         switch content {
         case "The local engine stopped before it could finish. Restart it, then try again.":
             title = "Local engine stopped"

@@ -303,8 +303,11 @@ extension ChatViewModel {
         }
 
         switch execError {
-        case .pythonError,
-             .notInitialized,
+        case .pythonError(let message):
+            return "The local engine reported an error.\n\n\(Self.readableExecutionErrorDetail(message))"
+        case .processStopped(let message):
+            return "The local engine stopped before it could finish.\n\n\(Self.readableExecutionErrorDetail(message))"
+        case .notInitialized,
              .processNotRunning,
              .invalidResponse,
              .processCrashed,
@@ -330,14 +333,35 @@ extension ChatViewModel {
              .processNotRunning,
              .modelNotLoaded,
              .timeout,
+             .processStopped,
              .invalidResponse,
              .processCrashed,
              .encodingFailed,
              .decodingFailed,
              .requiresManualRetry,
              .pythonError:
+            if case .pythonError(let message) = execError {
+                return "Local engine error: \(Self.readableExecutionErrorDetail(message, maxLength: 180))"
+            }
+            if case .processStopped(let message) = execError {
+                return "Local engine stopped: \(Self.readableExecutionErrorDetail(message, maxLength: 180))"
+            }
             return "The local engine stopped. Restart to continue."
         }
+    }
+
+    static func readableExecutionErrorDetail(_ message: String, maxLength: Int = 420) -> String {
+        let normalizedLines = message
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let normalized = normalizedLines.joined(separator: "\n")
+        let detail = normalized.isEmpty ? "No additional detail was provided." : normalized
+
+        guard detail.count > maxLength else { return detail }
+        let endIndex = detail.index(detail.startIndex, offsetBy: maxLength)
+        return String(detail[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
     }
 }
 

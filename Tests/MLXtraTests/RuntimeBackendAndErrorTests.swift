@@ -45,6 +45,7 @@ final class RuntimeBackendAndErrorTests: XCTestCase {
         XCTAssertEqual(ExecutionError.timeout.localizedDescription, "Operation timed out")
         XCTAssertEqual(ExecutionError.invalidResponse.localizedDescription, "Invalid response from Python")
         XCTAssertEqual(ExecutionError.processCrashed(retryCount: 2).localizedDescription, "Python process crashed (retry 2)")
+        XCTAssertEqual(ExecutionError.processStopped("missing dependency").localizedDescription, "Python process stopped: missing dependency")
         XCTAssertEqual(ExecutionError.encodingFailed.localizedDescription, "Failed to encode request")
         XCTAssertEqual(ExecutionError.decodingFailed.localizedDescription, "Failed to decode response")
         XCTAssertEqual(ExecutionError.requiresManualRetry(ExecutionError.timeout).localizedDescription, "Requires manual retry")
@@ -61,6 +62,14 @@ final class RuntimeBackendAndErrorTests: XCTestCase {
         XCTAssertEqual(ExecutionError.processCrashed(retryCount: 0).localizedDescription, "Python process crashed (retry 0)")
         XCTAssertEqual(ExecutionError.processCrashed(retryCount: 1).localizedDescription, "Python process crashed (retry 1)")
         XCTAssertEqual(ExecutionError.processCrashed(retryCount: 99).localizedDescription, "Python process crashed (retry 99)")
+    }
+
+    func testExecutionErrorProcessStoppedFormatting() {
+        XCTAssertEqual(ExecutionError.processStopped("").localizedDescription, "Python process stopped")
+        XCTAssertEqual(
+            ExecutionError.processStopped("  traceback line  ").localizedDescription,
+            "Python process stopped: traceback line"
+        )
     }
 
     func testExecutionErrorPythonErrorWithEmptyString() {
