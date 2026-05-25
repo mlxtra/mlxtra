@@ -167,7 +167,7 @@ enum RuntimeBackend: String, Codable, CaseIterable {
     }
 }
 
-enum ExecutionError: Error {
+enum ExecutionError: LocalizedError {
     case notInitialized
     case processNotRunning
     case modelNotLoaded
@@ -202,5 +202,9 @@ enum ExecutionError: Error {
         case .pythonError(let message):
             return "Python error: \(message)"
         }
+    }
+
+    var errorDescription: String? {
+        localizedDescription
     }
 }

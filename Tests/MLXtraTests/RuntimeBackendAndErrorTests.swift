@@ -51,6 +51,12 @@ final class RuntimeBackendAndErrorTests: XCTestCase {
         XCTAssertEqual(ExecutionError.pythonError("test error").localizedDescription, "Python error: test error")
     }
 
+    func testExecutionErrorDescriptionSurvivesErrorErasure() {
+        let error: Error = ExecutionError.processNotRunning
+
+        XCTAssertEqual(error.localizedDescription, "Python process not running")
+    }
+
     func testExecutionErrorProcessCrashedFormatting() {
         XCTAssertEqual(ExecutionError.processCrashed(retryCount: 0).localizedDescription, "Python process crashed (retry 0)")
         XCTAssertEqual(ExecutionError.processCrashed(retryCount: 1).localizedDescription, "Python process crashed (retry 1)")

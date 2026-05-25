@@ -1284,8 +1284,7 @@ def handle_music_generation(request: dict) -> None:
         and Path(ace_python) != Path(sys.executable)
     ):
         helper_path = Path(__file__).with_name("acestep_bridge.py")
-        child = _ensure_music_subprocess(ace_python, helper_path)
-        _forward_music_request(child, request)
+        _forward_acestep_subprocess(ace_python, helper_path, request)
         return
 
     model_id = request.get("model", "ACE-Step/acestep-v15-turbo-continuous")

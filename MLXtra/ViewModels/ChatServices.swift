@@ -374,6 +374,40 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
             return .downloadRequired(plan.model)
         }
 
+        var lastError: Error?
+        for attempt in 0...1 {
+            do {
+                return try await executeMediaToolAttempt(plan: plan, onUpdate: onUpdate)
+            } catch {
+                lastError = error
+                guard attempt == 0, shouldRetryMediaTool(error) else {
+                    break
+                }
+                onUpdate(.progress("Restarting local engine..."))
+                await modelExecutor.terminate()
+            }
+        }
+
+        return .toolMessage("\(plan.unavailablePrefix): \(lastError?.localizedDescription ?? "Unknown error")")
+    }
+
+    private func shouldRetryMediaTool(_ error: Error) -> Bool {
+        guard let execError = error as? ExecutionError else {
+            return false
+        }
+
+        switch execError {
+        case .processCrashed, .processNotRunning, .timeout:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func executeMediaToolAttempt(
+        plan: ChatMediaToolExecutionPlan,
+        onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
+    ) async throws -> ChatToolExecutionOutcome {
         do {
             if !modelExecutor.isReady {
                 try await modelExecutor.initialize()
@@ -435,7 +469,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
 
             return .toolMessage(plan.noOutputMessage, metrics: metrics)
         } catch {
-            return .toolMessage("\(plan.unavailablePrefix): \(error.localizedDescription)")
+            throw error
         }
     }
 }

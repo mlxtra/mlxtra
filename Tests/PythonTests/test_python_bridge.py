@@ -776,6 +776,26 @@ python_bridge.main()
 
 
 class TestAceStepForwarding(unittest.TestCase):
+    def test_handle_music_generation_uses_one_shot_acestep_forwarder(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ace_python = Path(temp_dir) / "python"
+            ace_python.write_text("#!/bin/sh\n")
+
+            with patch.dict(os.environ, {"ACESTEP_PYTHON": str(ace_python)}), patch.object(
+                python_bridge, "_forward_acestep_subprocess", return_value=0
+            ) as forwarder:
+                python_bridge.handle_music_generation(
+                    {
+                        "request_id": "req-music",
+                        "type": "music.generate",
+                        "parameters": {"caption": "clockwork piano"},
+                    }
+                )
+
+            forwarder.assert_called_once()
+            assert forwarder.call_args.args[0] == str(ace_python)
+            assert forwarder.call_args.args[2]["request_id"] == "req-music"
+
     def test_forward_acestep_subprocess_round_trips_request_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             helper = Path(temp_dir) / "helper.py"

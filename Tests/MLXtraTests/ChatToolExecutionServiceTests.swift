@@ -109,6 +109,41 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests[0].modelId, "image-model")
     }
 
+    func testExecuteMediaToolRetriesWhenBridgeStopsAfterStreamStarts() async {
+        let assetURL = URL(fileURLWithPath: "/tmp/generated.wav")
+        let executor = MockChatModelExecutor(eventBatches: [
+            [.error(ExecutionError.processNotRunning)],
+            [
+                .audio(assetURL),
+                .complete("Generated speech.", usage: TokenUsage(promptTokens: 0, completionTokens: 0))
+            ]
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+        var updates: [ChatToolExecutionUpdate] = []
+
+        let outcome = await service.executeMediaTool(plan: makePlan(attachmentKind: .audio)) { update in
+            updates.append(update)
+        }
+
+        XCTAssertEqual(executor.receivedRequests.count, 2)
+        XCTAssertEqual(executor.terminateCount, 1)
+        XCTAssertEqual(executor.initializeCount, 1)
+        XCTAssertTrue(updates.contains(.progress("Restarting local engine...")))
+        XCTAssertTrue(updates.contains(.generatedAsset(assetURL, kind: .audio)))
+        guard case .toolMessage(let content, let metrics) = outcome else {
+            XCTFail("Expected tool message outcome")
+            return
+        }
+        XCTAssertEqual(content, "Generated speech.\nThe generated audio is already displayed in the app UI.")
+        XCTAssertNotNil(metrics)
+    }
+
     func testExecuteMediaToolInitializesExecutorWhenNeeded() async {
         let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
         let executor = MockChatModelExecutor(events: [
@@ -1444,7 +1479,10 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.terminateCount, 0)
     }
 
-    private func makePlan(model: DownloadableModel? = nil) -> ChatMediaToolExecutionPlan {
+    private func makePlan(
+        model: DownloadableModel? = nil,
+        attachmentKind: ChatGeneratedAssetKind = .image
+    ) -> ChatMediaToolExecutionPlan {
         let resolvedModel = model ?? DownloadableModel(
             id: "image-model",
             name: "Image Model",
@@ -1472,9 +1510,13 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             loadingStatus: "Generating image...",
             operationName: "Image generation",
             unavailablePrefix: "Image generation unavailable",
-            noOutputMessage: "Image generation finished without returning an image.",
-            completionHint: "The generated image is already displayed in the app UI.",
-            attachmentKind: .image
+            noOutputMessage: attachmentKind == .image
+                ? "Image generation finished without returning an image."
+                : "Speech generation finished without returning audio.",
+            completionHint: attachmentKind == .image
+                ? "The generated image is already displayed in the app UI."
+                : "The generated audio is already displayed in the app UI.",
+            attachmentKind: attachmentKind
         )
     }
 
