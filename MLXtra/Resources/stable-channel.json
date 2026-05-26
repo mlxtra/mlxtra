@@ -9,12 +9,12 @@
   },
   "runtimes": [
     {
-      "version": "0.1.3",
+      "version": "0.1.4",
       "platform": "macos",
       "arch": "arm64",
-      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.3/runtime-macos-arm64-0.1.3.zip",
-      "sha256": "18047cad778f6d1f35ac23581ae95bd3d840f1e5cd9b5b03067a3b51e1119d40",
-      "sizeBytes": 1073499379,
+      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.4/runtime-macos-arm64-0.1.4.zip",
+      "sha256": "4f59de39f03b5287262267363fc53eb14e1cf9b01aff3b40f11dde8f7d7db82d",
+      "sizeBytes": 1024386118,
       "compatibilityApi": 1,
       "minAppVersion": "1.0.6"
     }

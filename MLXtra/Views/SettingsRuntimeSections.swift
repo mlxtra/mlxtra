@@ -14,6 +14,8 @@ struct AppUpdateSettingsSection: View {
             tint: statusTint,
             badge: statusBadge,
             progress: nil,
+            isProgressIndeterminate: false,
+            progressLabel: nil,
             progressStats: nil,
             accessibilityIdentifier: "settings.appUpdates"
         ) {
@@ -123,6 +125,8 @@ struct RuntimeUpdateSettingsSection: View {
             tint: statusTint,
             badge: statusBadge,
             progress: runtimeProgress,
+            isProgressIndeterminate: isRuntimeProgressIndeterminate,
+            progressLabel: runtimeProgressLabel,
             progressStats: runtimeProgressStats,
             accessibilityIdentifier: "settings.runtimeUpdates"
         ) {
@@ -210,10 +214,7 @@ struct RuntimeUpdateSettingsSection: View {
         case .requiresAppUpdate(let requirement):
             return "Runtime \(requirement.runtime.version)"
         case .installing:
-            if let manifest = RuntimeManager.activeRuntimeManifest() {
-                return "Runtime \(manifest.runtimeVersion)"
-            }
-            return "Runtime setup"
+            return installingRuntimeSubtitle
         case .installed(let version):
             return "Runtime \(version)"
         default:
@@ -271,10 +272,53 @@ struct RuntimeUpdateSettingsSection: View {
     }
 
     private var runtimeProgress: Double? {
-        if case .installing(let progress) = manager.state {
+        if case .installing(let progress) = manager.state,
+           manager.installPhase == .downloading {
             return progress
         }
         return nil
+    }
+
+    private var isRuntimeProgressIndeterminate: Bool {
+        guard case .installing = manager.state else {
+            return false
+        }
+
+        switch manager.installPhase {
+        case .downloading:
+            return runtimeProgress == nil
+        case .verifying, .activating:
+            return true
+        case .idle:
+            return false
+        }
+    }
+
+    private var runtimeProgressLabel: String? {
+        guard case .installing = manager.state else {
+            return nil
+        }
+
+        switch manager.installPhase {
+        case .verifying:
+            return "Verifying"
+        case .activating:
+            return manager.runtimeActivationProgress?.title ?? "Preparing"
+        case .downloading where runtimeProgress == nil:
+            return "Downloading"
+        default:
+            return nil
+        }
+    }
+
+    private var installingRuntimeSubtitle: String {
+        if let asset = manager.installingRuntime {
+            return "Runtime \(asset.version)"
+        }
+        if let manifest = RuntimeManager.activeRuntimeManifest() {
+            return "Runtime \(manifest.runtimeVersion)"
+        }
+        return "Runtime setup"
     }
 
     private var runtimeProgressStats: RuntimeProgressStats? {
@@ -345,6 +389,8 @@ private struct UpdateSettingsCard<Action: View>: View {
     let tint: Color
     let badge: UpdateStatusBadge
     let progress: Double?
+    let isProgressIndeterminate: Bool
+    let progressLabel: String?
     let progressStats: RuntimeProgressStats?
     let accessibilityIdentifier: String
     @ViewBuilder var action: () -> Action
@@ -400,6 +446,17 @@ private struct UpdateSettingsCard<Action: View>: View {
                         if let progressStats {
                             RuntimeProgressStatsView(stats: progressStats)
                         }
+                    }
+                }
+            } else if isProgressIndeterminate {
+                VStack(alignment: .leading, spacing: MLXtraDesignSystem.Spacing.xs) {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+
+                    if let progressLabel {
+                        Text(progressLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

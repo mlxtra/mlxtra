@@ -54,6 +54,64 @@ verify_sha256() {
     fi
 }
 
+remove_external_symlinks() {
+    local scan_dir="$1"
+    local root_dir="$2"
+
+    /usr/bin/python3 - "${scan_dir}" "${root_dir}" <<'PY'
+import pathlib
+import sys
+
+scan = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).resolve()
+removed = []
+
+for path in scan.rglob("*"):
+    if not path.is_symlink():
+        continue
+    resolved = path.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        path.unlink()
+        removed.append(str(path.relative_to(root)))
+
+if removed:
+    print("Removed runtime symlinks that pointed outside the bundle:")
+    for entry in removed:
+        print(f"  {entry}")
+PY
+}
+
+validate_self_contained_symlinks() {
+    local root_dir="$1"
+
+    /usr/bin/python3 - "${root_dir}" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+bad = []
+
+for path in root.rglob("*"):
+    if not path.is_symlink():
+        continue
+    resolved = path.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        bad.append((str(path.relative_to(root)), str(resolved)))
+
+if bad:
+    print("Runtime contains symlinks that point outside the bundle:", file=sys.stderr)
+    for path, resolved in bad[:50]:
+        print(f"  {path} -> {resolved}", file=sys.stderr)
+    if len(bad) > 50:
+        print(f"  ... and {len(bad) - 50} more", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --build-dir)
@@ -279,8 +337,23 @@ mkdir -p "${OUTPUT_DIR}/python"
 if [ -d "${BUILD_DIR}/python/Frameworks" ]; then
     cp -R "${BUILD_DIR}/python/Frameworks" "${OUTPUT_DIR}/python/"
 fi
+remove_external_symlinks "${OUTPUT_DIR}/python/Frameworks" "${OUTPUT_DIR}"
 
 cp -R "${BUILD_DIR}/venv" "${OUTPUT_DIR}/venv"
+
+ACE_DOWNLOAD_HELPER_SOURCE="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py"
+ACE_DOWNLOAD_HELPER_DEST="${OUTPUT_DIR}/acestep_download_helper.py"
+if [ ! -f "${ACE_DOWNLOAD_HELPER_SOURCE}" ] && [ ! -f "${ACE_DOWNLOAD_HELPER_DEST}" ]; then
+    echo "ACE-Step download helper source is missing." >&2
+    exit 1
+fi
+if [ -f "${ACE_DOWNLOAD_HELPER_SOURCE}" ]; then
+    source_real="$(cd "$(dirname "${ACE_DOWNLOAD_HELPER_SOURCE}")" && pwd -P)/$(basename "${ACE_DOWNLOAD_HELPER_SOURCE}")"
+    dest_real="$(cd "${OUTPUT_DIR}" && pwd -P)/acestep_download_helper.py"
+    if [ "${source_real}" != "${dest_real}" ]; then
+        cp -f "${ACE_DOWNLOAD_HELPER_SOURCE}" "${ACE_DOWNLOAD_HELPER_DEST}"
+    fi
+fi
 
 echo "Creating isolated ACE-Step runtime..."
 create_build_venv "${BUILD_DIR}/acestep-venv"
@@ -449,6 +522,11 @@ PY
 
 validate_mlx_wheel_platform "${OUTPUT_DIR}/venv/lib/python3.12/site-packages"
 validate_mlx_wheel_platform "${OUTPUT_DIR}/acestep-venv/lib/python3.12/site-packages"
+if [ ! -f "${OUTPUT_DIR}/acestep_download_helper.py" ]; then
+    echo "ACE-Step download helper is missing from the runtime bundle." >&2
+    exit 1
+fi
+validate_self_contained_symlinks "${OUTPUT_DIR}"
 
 json_array_items() {
     local indent="$1"

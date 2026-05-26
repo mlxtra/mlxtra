@@ -66,7 +66,7 @@ struct RuntimeSetupStatusView: View {
         case .installed:
             EmptyView()
         case .installing(let progress):
-            if let progress {
+            if let progress, runtimeUpdateManager.installPhase == .downloading {
                 runtimeProgressView(progress)
             } else if runtimeUpdateManager.installPhase == .activating,
                       let progress = runtimeUpdateManager.runtimeActivationProgress {
@@ -115,12 +115,11 @@ struct RuntimeSetupStatusView: View {
 
     private func runtimeActivationView(_ progress: RuntimeActivationProgress) -> some View {
         VStack(alignment: .trailing, spacing: 6) {
-            ProgressView(value: progress.fractionCompleted)
+            ProgressView()
                 .progressViewStyle(.linear)
                 .frame(width: progressWidth)
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(progress.stepText)
                 Text(progress.title)
             }
             .font(.caption2)

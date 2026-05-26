@@ -527,6 +527,7 @@ final class RuntimeUpdateManager: ObservableObject {
     @Published private(set) var state: InstallState = .idle
     @Published private(set) var channel: ReleaseChannelManifest?
     @Published private(set) var newerRuntimeRequiringAppUpdate: RuntimeAppUpdateRequirement?
+    @Published private(set) var installingRuntime: RuntimeReleaseAsset?
     @Published private(set) var installPhase: RuntimeInstallPhase = .idle
     @Published private(set) var runtimeDownloadProgress: RuntimeDownloadProgress?
     @Published private(set) var runtimeActivationProgress: RuntimeActivationProgress?
@@ -636,6 +637,7 @@ final class RuntimeUpdateManager: ObservableObject {
             return
         }
 
+        installingRuntime = asset
         installPhase = .downloading
         resetRuntimeDownloadMetrics()
         runtimeDownloadProgress = asset.url.isFileURL
@@ -679,18 +681,21 @@ final class RuntimeUpdateManager: ObservableObject {
             runtimeActivationProgress = nil
             resetRuntimeDownloadMetrics()
             state = .installed(runtimeVersion)
+            installingRuntime = nil
         } catch is CancellationError {
             installPhase = .idle
             runtimeDownloadProgress = nil
             runtimeActivationProgress = nil
             resetRuntimeDownloadMetrics()
             state = .idle
+            installingRuntime = nil
         } catch {
             installPhase = .idle
             runtimeDownloadProgress = nil
             runtimeActivationProgress = nil
             resetRuntimeDownloadMetrics()
             state = .failed(error.localizedDescription)
+            installingRuntime = nil
         }
     }
 

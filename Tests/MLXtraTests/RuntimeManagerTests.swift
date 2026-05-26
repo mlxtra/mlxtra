@@ -793,9 +793,21 @@ final class RuntimeManagerTests: XCTestCase {
                 try RuntimeManager.installRuntimeArchive(archive, installRoot: installRoot)
             }
         )
+        let targetExpectation = expectation(description: "Runtime install target is published")
+        targetExpectation.assertForOverFulfill = false
+        var publishedTarget: RuntimeReleaseAsset?
+        let targetCancellable = manager.$installingRuntime.sink { target in
+            guard let target, publishedTarget == nil else { return }
+            publishedTarget = target
+            targetExpectation.fulfill()
+        }
+        defer { targetCancellable.cancel() }
 
         await manager.installRuntime(asset)
 
+        await fulfillment(of: [targetExpectation], timeout: 1)
+        XCTAssertEqual(publishedTarget?.version, "0.1.1")
+        XCTAssertNil(manager.installingRuntime)
         XCTAssertEqual(manager.state, .installed("0.1.1"))
         let currentURL = installRoot.appendingPathComponent("current")
         XCTAssertEqual(RuntimeManager.runtimeManifest(at: currentURL)?.runtimeVersion, "0.1.1")

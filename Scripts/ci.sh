@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/runtime-dependencies.sh"
 
 cd "${PROJECT_DIR}"
 
@@ -17,6 +18,7 @@ Steps:
   xcode-version       Print the active Xcode version
   metadata            Validate release metadata
   py-compile          Compile Python scripts used by CI
+  runtime-archive     Validate staged runtime release archive(s), if present
   python-tests        Run Python bridge unit tests
   swift-coverage      Run Swift tests with the core coverage gate
   build-app           Build the app shell with runtime validation skipped
@@ -44,6 +46,18 @@ run_py_compile() {
         Tests/IntegrationTests/test_music_bridge.py \
         Tests/IntegrationTests/test_music_generation.py \
         Tests/IntegrationTests/test_music_integration.py
+}
+
+run_runtime_archive() {
+    local archive=".build/release/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+    if [ ! -e "${archive}" ]; then
+        echo "No staged runtime release archive found; skipping runtime archive validation."
+        return 0
+    fi
+
+    Scripts/validate-runtime-release-archive.sh \
+        --expected-version "${RUNTIME_VERSION}" \
+        "${archive}"
 }
 
 run_python_tests() {
@@ -79,6 +93,9 @@ run_step() {
         py-compile)
             run_py_compile
             ;;
+        runtime-archive)
+            run_runtime_archive
+            ;;
         python-tests)
             run_python_tests
             ;;
@@ -106,6 +123,7 @@ run_all() {
     run_xcode_version
     run_metadata
     run_py_compile
+    run_runtime_archive
     run_python_tests
     run_swift_coverage
     run_build_app

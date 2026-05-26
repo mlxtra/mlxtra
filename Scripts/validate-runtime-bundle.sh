@@ -220,7 +220,48 @@ validate_download_helper_structure() {
     require_directory "${ACE_SITE_PACKAGES}/acestep" "ACE-Step runtime acestep package"
 }
 
+validate_self_contained_symlinks() {
+    /usr/bin/python3 - "${RUNTIME_DIR}" "${MANIFEST}" "${RUNTIME_VERSION}" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+manifest_path = pathlib.Path(sys.argv[2])
+expected_runtime_version = sys.argv[3]
+manifest = json.loads(manifest_path.read_text())
+runtime_version = manifest.get("runtimeVersion")
+
+if runtime_version != expected_runtime_version:
+    print(
+        f"warning: skipping self-contained symlink validation for bundled runtime {runtime_version}; "
+        f"new runtime builds must be {expected_runtime_version}",
+        file=sys.stderr,
+    )
+    raise SystemExit(0)
+
+bad = []
+
+for path in root.rglob("*"):
+    if not path.is_symlink():
+        continue
+    resolved = path.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        bad.append((str(path.relative_to(root)), str(resolved)))
+
+if bad:
+    for path, resolved in bad[:50]:
+        print(f"error: runtime symlink points outside bundle: {path} -> {resolved}", file=sys.stderr)
+    if len(bad) > 50:
+        print(f"error: and {len(bad) - 50} more invalid symlinks", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 validate_manifest
+validate_self_contained_symlinks
 
 if [ -n "${SCRIPT_INPUT_FILE_COUNT:-}" ]; then
     validate_download_helper_structure

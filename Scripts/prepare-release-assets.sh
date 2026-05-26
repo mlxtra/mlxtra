@@ -232,7 +232,15 @@ else
     RUNTIME_URL="https://github.com/${REPOSITORY}/releases/download/${RUNTIME_TAG}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
     echo "Creating ${RUNTIME_ARCHIVE}"
     rm -f "${RUNTIME_ARCHIVE}"
-    /usr/bin/ditto -c -k --sequesterRsrc --keepParent "${RUNTIME_DIR}" "${RUNTIME_ARCHIVE}"
+    COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent "${RUNTIME_DIR}" "${RUNTIME_ARCHIVE}"
+    if zipinfo -1 "${RUNTIME_ARCHIVE}" | grep -Eq '(^__MACOSX/|(^|/)\._[^/]+$)'; then
+        echo "Runtime archive contains macOS metadata sidecars; refusing to publish." >&2
+        exit 1
+    fi
+    "${SCRIPT_DIR}/validate-runtime-release-archive.sh" \
+        --expected-version "${RUNTIME_VERSION}" \
+        --expected-compatibility-api "${RUNTIME_COMPATIBILITY_API}" \
+        "${RUNTIME_ARCHIVE}"
     RUNTIME_SHA="$(sha256_file "${RUNTIME_ARCHIVE}")"
     RUNTIME_SIZE="$(file_size "${RUNTIME_ARCHIVE}")"
 fi
