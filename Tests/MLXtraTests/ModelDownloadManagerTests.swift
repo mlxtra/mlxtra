@@ -318,7 +318,7 @@ final class ModelDownloadManagerTests: XCTestCase {
         try FileManager.default.createDirectory(at: modelCachePath, withIntermediateDirectories: true)
         try Data("weights".utf8).write(to: modelCachePath.appendingPathComponent("model.safetensors"))
 
-        try ModelDownloadManager.removeLocalFiles(
+        try ModelDownloadStorage.removeLocalFiles(
             for: model,
             checkpointsPath: checkpointsPath,
             huggingFaceCacheRoot: cacheRoot
@@ -356,7 +356,7 @@ final class ModelDownloadManagerTests: XCTestCase {
         try FileManager.default.createDirectory(at: componentB, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
 
-        try ModelDownloadManager.removeLocalFiles(
+        try ModelDownloadStorage.removeLocalFiles(
             for: model,
             checkpointsPath: checkpointsPath,
             huggingFaceCacheRoot: cacheRoot

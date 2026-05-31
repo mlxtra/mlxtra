@@ -1,6 +1,4 @@
 import Foundation
-import Darwin
-
 @MainActor
 final class ModelDownloadManager: ObservableObject {
     static let shared = ModelDownloadManager()
@@ -18,9 +16,7 @@ final class ModelDownloadManager: ObservableObject {
     private let nativeDownloader: NativeModelDownloadService
     private let checkpointsPathOverride: URL?
     private let huggingFaceCacheRootOverride: URL?
-    private var tasks: [String: Task<Void, Never>] = [:]
-    private var processes: [String: Process] = [:]
-    private var stopReasons: [String: DownloadStopReason] = [:]
+    private let lifecycle = ModelDownloadLifecycle()
     private var lastProgress: [String: DownloadProgress] = [:]
     private let errorTracker = DownloadErrorTracker()
 #if DEBUG
@@ -133,7 +129,7 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     func cachePath(for model: DownloadableModel) -> String {
-        Self.storageURLs(
+        ModelDownloadStorage.storageURLs(
             for: model,
             checkpointsPath: checkpointsPath,
             huggingFaceCacheRoot: huggingFaceCacheRoot
@@ -146,10 +142,10 @@ final class ModelDownloadManager: ObservableObject {
 #if DEBUG
         guard !usesUITestDownloadStates else { return }
 #endif
-        guard tasks[model.id] == nil else { return }
+        guard !lifecycle.hasTask(for: model.id) else { return }
 
         errorTracker.clearErrorReceived(for: model.id)
-        stopReasons[model.id] = nil
+        lifecycle.clearStopReason(for: model.id)
         let initialProgress: DownloadProgress?
         if states[model.id]?.isPaused == true {
             initialProgress = states[model.id]?.progress ?? lastProgress[model.id]
@@ -158,7 +154,7 @@ final class ModelDownloadManager: ObservableObject {
             initialProgress = nil
         }
         states[model.id] = .downloading(initialProgress)
-        tasks[model.id] = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
 
             do {
@@ -176,7 +172,7 @@ final class ModelDownloadManager: ObservableObject {
                     lastProgress[model.id] = nil
                 }
             } catch {
-                if let stopReason = stopReasons[model.id] {
+                if let stopReason = lifecycle.stopReason(for: model.id) {
                     switch stopReason {
                     case .pause:
                         states[model.id] = .paused(lastProgress[model.id])
@@ -190,10 +186,9 @@ final class ModelDownloadManager: ObservableObject {
                 }
             }
 
-            tasks[model.id] = nil
-            processes[model.id] = nil
-            stopReasons[model.id] = nil
+            lifecycle.clearCompletionTracking(for: model.id)
         }
+        lifecycle.setTask(task, for: model.id)
     }
 
     func pause(_ model: DownloadableModel) {
@@ -232,7 +227,7 @@ final class ModelDownloadManager: ObservableObject {
         let huggingFaceCacheRoot = self.huggingFaceCacheRoot
         do {
             try await Task.detached(priority: .utility) {
-                try Self.removeLocalFiles(
+                try ModelDownloadStorage.removeLocalFiles(
                     for: model,
                     checkpointsPath: checkpointsPath,
                     huggingFaceCacheRoot: huggingFaceCacheRoot
@@ -245,40 +240,8 @@ final class ModelDownloadManager: ObservableObject {
         }
     }
 
-    nonisolated static func storageURLs(
-        for model: DownloadableModel,
-        checkpointsPath: URL,
-        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
-    ) -> [URL] {
-        if model.source.usesComponentBundle {
-            return model.source.components.map { checkpointsPath.appendingPathComponent($0) }
-        }
-
-        return [
-            RuntimeManager.modelCachePath(
-                modelId: model.source.downloadRepository ?? model.modelId,
-                huggingFaceCacheRoot: huggingFaceCacheRoot
-            )
-        ]
-    }
-
-    nonisolated static func removeLocalFiles(
-        for model: DownloadableModel,
-        checkpointsPath: URL,
-        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot(),
-        fileManager: FileManager = .default
-    ) throws {
-        for url in storageURLs(
-            for: model,
-            checkpointsPath: checkpointsPath,
-            huggingFaceCacheRoot: huggingFaceCacheRoot
-        ) where fileManager.fileExists(atPath: url.path) {
-            try fileManager.removeItem(at: url)
-        }
-    }
-
     private func stop(_ model: DownloadableModel, reason: DownloadStopReason) {
-        guard tasks[model.id] != nil else {
+        guard lifecycle.hasTask(for: model.id) else {
             if reason == .cancel {
                 lastProgress[model.id] = nil
                 states[model.id] = .notDownloaded
@@ -286,7 +249,7 @@ final class ModelDownloadManager: ObservableObject {
             return
         }
 
-        stopReasons[model.id] = reason
+        lifecycle.setStopReason(reason, for: model.id)
         switch reason {
         case .pause:
             states[model.id] = .paused(states[model.id]?.progress ?? lastProgress[model.id])
@@ -295,110 +258,46 @@ final class ModelDownloadManager: ObservableObject {
             states[model.id] = .notDownloaded
         }
 
-        if let process = processes[model.id] {
-            if process.isRunning {
-                tasks[model.id]?.cancel()
-                process.terminate()
-                let pid = process.processIdentifier
-                DispatchQueue.global().asyncAfter(deadline: .now() + Self.terminationKillFallbackDelay) { [weak process] in
-                    guard let process, process.isRunning else { return }
-                    var zombieCheck: Int32 = 0
-                    if waitpid(pid, &zombieCheck, WNOHANG) == 0 {
-                        kill(pid, SIGKILL)
-                        process.waitUntilExit()
-                    }
-                }
-                scheduleProcessTrackingCleanup(process, modelId: model.id)
-            }
-            if !process.isRunning {
-                tasks[model.id]?.cancel()
-                tasks[model.id] = nil
-                processes[model.id] = nil
-                stopReasons[model.id] = nil
-            }
-        } else {
-            tasks[model.id]?.cancel()
-        }
-    }
-
-    private func scheduleProcessTrackingCleanup(_ process: Process, modelId: String) {
-        Task { @MainActor [weak self, weak process] in
-            let timeout = Self.terminationKillFallbackDelay + Self.terminationCleanupDelay + 2.0
-            let deadline = Date().addingTimeInterval(timeout)
-            while Date() < deadline {
-                guard let self, let process, self.processes[modelId] === process else {
-                    return
-                }
-                if !process.isRunning {
-                    self.processes[modelId] = nil
-                    return
-                }
-                try? await Task.sleep(nanoseconds: 20_000_000)
-            }
-        }
+        lifecycle.cancelTrackedWork(
+            for: model.id,
+            killFallbackDelay: Self.terminationKillFallbackDelay,
+            cleanupDelay: Self.terminationCleanupDelay
+        )
     }
 
 #if DEBUG
     func installTestDownloadProcess(_ process: Process, for model: DownloadableModel) {
-        let modelId = model.id
         states[model.id] = .downloading(nil)
-        processes[model.id] = process
-        tasks[model.id] = Task { [weak self, weak process] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-            try? await Task.sleep(nanoseconds: UInt64(Self.terminationCleanupDelay * 1_000_000_000))
-            guard let self else { return }
-            if self.tasks[modelId]?.isCancelled == true {
-                self.tasks[modelId] = nil
-            }
-            if let process, self.processes[modelId] === process, !process.isRunning {
-                self.processes[modelId] = nil
-            }
-            self.stopReasons[modelId] = nil
-        }
+        lifecycle.installTestProcess(
+            process,
+            modelId: model.id,
+            cleanupDelay: Self.terminationCleanupDelay
+        )
     }
 
     func hasTrackedProcess(for model: DownloadableModel) -> Bool {
-        processes[model.id] != nil
+        lifecycle.hasTrackedProcess(for: model.id)
     }
 
     func hasTrackedTask(for model: DownloadableModel) -> Bool {
-        tasks[model.id] != nil
+        lifecycle.hasTrackedTask(for: model.id)
     }
 #endif
 
-    private func isModelDownloadedOffMain(modelId: String) async -> Bool {
-        let status = await modelStorageStatusOffMain(modelId: modelId)
-        return status.isDownloaded
-    }
-
     private func modelStorageStatusOffMain(modelId: String) async -> RuntimeManager.ModelStorageStatus {
-        if let model = DownloadableModel.embeddedModel(modelId: modelId) {
-            return await modelStorageStatusOffMain(model: model)
-        }
-
-        let checkpointsPath = self.checkpointsPath
-        let huggingFaceCacheRoot = self.huggingFaceCacheRoot
-        return await Task.detached(priority: .utility) {
-            RuntimeManager.modelStorageStatus(
-                modelId: modelId,
-                checkpointsPath: checkpointsPath,
-                huggingFaceCacheRoot: huggingFaceCacheRoot
-            )
-        }.value
+        await ModelDownloadStorage.status(
+            for: modelId,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: huggingFaceCacheRoot
+        )
     }
 
     private func modelStorageStatusOffMain(model: DownloadableModel) async -> RuntimeManager.ModelStorageStatus {
-        let checkpointsPath = self.checkpointsPath
-        let huggingFaceCacheRoot = self.huggingFaceCacheRoot
-        return await Task.detached(priority: .utility) {
-            RuntimeManager.modelStorageStatus(
-                model: model,
-                checkpointsPath: checkpointsPath,
-                huggingFaceCacheRoot: huggingFaceCacheRoot
-            )
-        }.value
+        await ModelDownloadStorage.status(
+            for: model,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: huggingFaceCacheRoot
+        )
     }
 
     private func runAceStepDownload(model: DownloadableModel) async throws {
@@ -423,23 +322,12 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     private func cleanupNativePartialDownloads(for model: DownloadableModel) async {
-        let roots: [URL]
-        if model.source.usesComponentBundle {
-            roots = [checkpointsPath]
-        } else {
-            roots = [
-                RuntimeManager.modelCachePath(
-                    modelId: model.source.downloadRepository ?? model.modelId,
-                    huggingFaceCacheRoot: huggingFaceCacheRoot
-                )
-            ]
-        }
-        let nativeDownloader = self.nativeDownloader
-        await Task.detached(priority: .utility) {
-            for root in roots {
-                try? nativeDownloader.removePartialDownloads(at: root)
-            }
-        }.value
+        await ModelDownloadStorage.cleanupPartialDownloads(
+            for: model,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: huggingFaceCacheRoot,
+            nativeDownloader: nativeDownloader
+        )
     }
 
     private func runAceStepContractValidation(model: DownloadableModel, plan: AceStepDownloadPlan) async throws {
@@ -487,7 +375,7 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     private func handleNativeDownloadProgress(_ nativeProgress: NativeModelDownloadProgress, modelId: String) {
-        guard stopReasons[modelId] == nil,
+        guard lifecycle.stopReason(for: modelId) == nil,
               states[modelId]?.isTerminal != true else {
             return
         }
@@ -517,14 +405,14 @@ final class ModelDownloadManager: ObservableObject {
                 arguments: arguments,
                 environment: environment,
                 onProcessStarted: { [weak self] process in
-                    self?.processes[modelId] = process
+                    self?.lifecycle.setProcess(process, for: modelId)
                 },
                 onOutputLine: { [weak self] line in
                     self?.handleDownloadEventLine(line, modelId: modelId)
                 }
             )
         } catch {
-            processes[modelId] = nil
+            lifecycle.clearProcess(for: modelId)
             throw error
         }
     }
@@ -534,10 +422,10 @@ final class ModelDownloadManager: ObservableObject {
         modelId: String,
         failureMessage: String
     ) throws {
-        processes[modelId] = nil
+        lifecycle.clearProcess(for: modelId)
         handleDownloadEventLines(result.output, modelId: modelId)
 
-        if stopReasons[modelId] != nil {
+        if lifecycle.stopReason(for: modelId) != nil {
             throw ModelDownloadError.stoppedByUser
         }
 
@@ -555,7 +443,7 @@ final class ModelDownloadManager: ObservableObject {
     }
 
     func handleDownloadEventLine(_ line: String, modelId: String) {
-        guard stopReasons[modelId] == nil else { return }
+        guard lifecycle.stopReason(for: modelId) == nil else { return }
 
         guard let event = Self.parseDownloadEventLine(line) else {
             return
