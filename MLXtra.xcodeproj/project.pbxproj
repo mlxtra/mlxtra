@@ -32,6 +32,10 @@
 		8A0900010000000000000006 /* SHA256Checksum.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001006 /* SHA256Checksum.swift */; };
 		8A0900010000000000000007 /* RuntimeManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001007 /* RuntimeManifest.swift */; };
 		8A0900010000000000000008 /* RuntimeUpdateTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001008 /* RuntimeUpdateTypes.swift */; };
+		8A0900010000000000000009 /* RuntimeUpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001009 /* RuntimeUpdateManager.swift */; };
+		8A090001000000000000000A /* RuntimeBundleLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000100A /* RuntimeBundleLocator.swift */; };
+		8A090001000000000000000B /* RuntimeBundleInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000100B /* RuntimeBundleInstaller.swift */; };
+		8A090001000000000000000C /* ModelStorageProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000100C /* ModelStorageProbe.swift */; };
 		8A0900010000000000000002 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
@@ -196,6 +200,10 @@
 		8A0900010000000000001006 /* SHA256Checksum.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SHA256Checksum.swift; sourceTree = "<group>"; };
 		8A0900010000000000001007 /* RuntimeManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeManifest.swift; sourceTree = "<group>"; };
 		8A0900010000000000001008 /* RuntimeUpdateTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeUpdateTypes.swift; sourceTree = "<group>"; };
+		8A0900010000000000001009 /* RuntimeUpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeUpdateManager.swift; sourceTree = "<group>"; };
+		8A090001000000000000100A /* RuntimeBundleLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeBundleLocator.swift; sourceTree = "<group>"; };
+		8A090001000000000000100B /* RuntimeBundleInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeBundleInstaller.swift; sourceTree = "<group>"; };
+		8A090001000000000000100C /* ModelStorageProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStorageProbe.swift; sourceTree = "<group>"; };
 		8A0500010000000000001018 /* StreamingMarkdownSplitter+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamingMarkdownSplitter+Parsing.swift"; sourceTree = "<group>"; };
 		8A0700010000000000001001 /* AppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -393,6 +401,10 @@
 				8A0900010000000000001006 /* SHA256Checksum.swift */,
 				8A0900010000000000001007 /* RuntimeManifest.swift */,
 				8A0900010000000000001008 /* RuntimeUpdateTypes.swift */,
+				8A0900010000000000001009 /* RuntimeUpdateManager.swift */,
+				8A090001000000000000100A /* RuntimeBundleLocator.swift */,
+				8A090001000000000000100B /* RuntimeBundleInstaller.swift */,
+				8A090001000000000000100C /* ModelStorageProbe.swift */,
 				8A010001000000000000100F /* RuntimeManager.swift */,
 				8A0100010000000000001017 /* ModelDownloadManager.swift */,
 				8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */,
@@ -594,6 +606,10 @@
 				8A0900010000000000000006 /* SHA256Checksum.swift in Sources */,
 				8A0900010000000000000007 /* RuntimeManifest.swift in Sources */,
 				8A0900010000000000000008 /* RuntimeUpdateTypes.swift in Sources */,
+				8A0900010000000000000009 /* RuntimeUpdateManager.swift in Sources */,
+				8A090001000000000000000A /* RuntimeBundleLocator.swift in Sources */,
+				8A090001000000000000000B /* RuntimeBundleInstaller.swift in Sources */,
+				8A090001000000000000000C /* ModelStorageProbe.swift in Sources */,
 				8A010001000000000000000F /* RuntimeManager.swift in Sources */,
 				8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */,
 				8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */,
