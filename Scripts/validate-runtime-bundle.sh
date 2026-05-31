@@ -26,6 +26,8 @@ write_validation_stamp() {
     fi
 }
 
+validate_runtime_dependency_lock
+
 if [ "${MLXTRA_SKIP_RUNTIME_VALIDATION:-0}" = "1" ]; then
     echo "Skipping MLXtra runtime validation because MLXTRA_SKIP_RUNTIME_VALIDATION=1"
     write_validation_stamp

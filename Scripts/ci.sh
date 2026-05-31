@@ -16,7 +16,7 @@ With no steps, runs the full CI sequence.
 
 Steps:
   xcode-version       Print the active Xcode version
-  metadata            Validate release metadata
+  metadata            Validate release metadata with strict runtime/channel parity
   py-compile          Compile Python scripts used by CI
   runtime-archive     Validate staged runtime release archive(s), if present
   python-tests        Run Python bridge unit tests
@@ -31,7 +31,8 @@ run_xcode_version() {
 }
 
 run_metadata() {
-    python3 Scripts/validate-release-metadata.py --allow-runtime-version-drift
+    # Keep PR/release CI strict; use the validator's drift override only for manual staged-runtime checks.
+    python3 Scripts/validate-release-metadata.py
 }
 
 run_py_compile() {

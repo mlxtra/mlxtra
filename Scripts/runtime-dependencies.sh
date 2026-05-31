@@ -3,6 +3,12 @@
 # Shared runtime dependency pins for the embedded macOS Python bundle.
 # Keep runtime upgrades here so the builder, validator, and generated manifest stay in sync.
 
+RUNTIME_DEPENDENCIES_DIR="$(
+    cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+)"
+RUNTIME_DEPENDENCY_LOCK_FILE="${RUNTIME_DEPENDENCIES_DIR}/runtime-locks/macos-arm64.lock.json"
+RUNTIME_DEPENDENCY_LOCK_VALIDATOR="${RUNTIME_DEPENDENCIES_DIR}/runtime-locks/validate-runtime-lock.py"
+
 RUNTIME_VERSION="0.1.4"
 PYTHON_VERSION="3.12.8"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-macos11.pkg"
@@ -93,3 +99,9 @@ RUNTIME_AUDIO_ADAPTERS=(
     "kugelaudio"
     "kokoro"
 )
+
+validate_runtime_dependency_lock() {
+    /usr/bin/python3 "${RUNTIME_DEPENDENCY_LOCK_VALIDATOR}" \
+        --dependencies "${RUNTIME_DEPENDENCIES_DIR}/runtime-dependencies.sh" \
+        --lock-file "${RUNTIME_DEPENDENCY_LOCK_FILE}"
+}

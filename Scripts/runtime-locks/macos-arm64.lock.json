@@ -1,0 +1,67 @@
+{
+  "lockVersion": 1,
+  "runtime": {
+    "version": "0.1.4",
+    "pythonVersion": "3.12.8",
+    "mlxWheelPlatform": "macosx_14_0_arm64"
+  },
+  "pythonPackage": {
+    "url": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg",
+    "name": "python-3.12.8-macos11.pkg",
+    "sha256": "c411b5372d563532f5e6b589af7eb16e95613d61bd5af7bfe78563467130bbff"
+  },
+  "pins": {
+    "MLX_VERSION": "0.31.2",
+    "MLX_METAL_VERSION": "0.31.2",
+    "MLX_VLM_VERSION": "0.5.0",
+    "MLX_AUDIO_VERSION": "0.4.3",
+    "MISAKI_VERSION": "0.9.4",
+    "MFLUX_VERSION": "0.17.5",
+    "TRANSFORMERS_VERSION": "5.8.0",
+    "HUGGINGFACE_HUB_VERSION": "1.14.0",
+    "PILLOW_VERSION": "12.2.0",
+    "NUMPY_VERSION": "2.4.4",
+    "TORCH_VERSION": "2.11.0",
+    "TORCHVISION_VERSION": "0.26.0",
+    "ACE_STEP_REF": "6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
+  },
+  "packages": {
+    "forcedBinaryPyPI": [
+      "mlx==0.31.2",
+      "mlx-metal==0.31.2"
+    ],
+    "mainPyPI": [
+      "mlx-vlm==0.5.0",
+      "mlx-audio==0.4.3",
+      "misaki[en]==0.9.4",
+      "mflux==0.17.5",
+      "transformers==5.8.0",
+      "huggingface-hub==1.14.0",
+      "pillow==12.2.0",
+      "numpy==2.4.4"
+    ],
+    "torch": [
+      "torch==2.11.0",
+      "torchvision==0.26.0"
+    ],
+    "main": [
+      "mlx==0.31.2",
+      "mlx-vlm==0.5.0",
+      "mlx-audio==0.4.3",
+      "misaki[en]==0.9.4",
+      "mflux==0.17.5",
+      "transformers==5.8.0",
+      "huggingface-hub==1.14.0",
+      "pillow==12.2.0",
+      "numpy==2.4.4",
+      "torch==2.11.0",
+      "torchvision==0.26.0"
+    ]
+  },
+  "isolatedPackages": {
+    "aceStep": {
+      "ref": "6c1b2ef130bb7a7705a2abc61c11a258202b9ed2",
+      "package": "git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
+    }
+  }
+}

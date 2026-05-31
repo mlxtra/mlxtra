@@ -163,6 +163,8 @@ CACHE_DIR="$(absolute_path "${CACHE_DIR}")"
 OUTPUT_DIR="$(absolute_path "${OUTPUT_DIR}")"
 FORCED_WHEELHOUSE="${BUILD_DIR}/forced-wheelhouse"
 
+validate_runtime_dependency_lock
+
 echo "=== MLX-VLM Runtime Bundle Builder v${RUNTIME_VERSION} ==="
 echo ""
 

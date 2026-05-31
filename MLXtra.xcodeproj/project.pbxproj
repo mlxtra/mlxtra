@@ -26,6 +26,12 @@
 		8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001017 /* ModelDownloadManager.swift */; };
 		8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */; };
 		8A0900010000000000000001 /* NativeModelDownloadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001001 /* NativeModelDownloadService.swift */; };
+		8A0900010000000000000003 /* StreamingFileDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001003 /* StreamingFileDownloader.swift */; };
+		8A0900010000000000000004 /* RuntimeDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001004 /* RuntimeDiagnostics.swift */; };
+		8A0900010000000000000005 /* ProcessPipeReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001005 /* ProcessPipeReader.swift */; };
+		8A0900010000000000000006 /* SHA256Checksum.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001006 /* SHA256Checksum.swift */; };
+		8A0900010000000000000007 /* RuntimeManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001007 /* RuntimeManifest.swift */; };
+		8A0900010000000000000008 /* RuntimeUpdateTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001008 /* RuntimeUpdateTypes.swift */; };
 		8A0900010000000000000002 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
@@ -184,6 +190,12 @@
 		8A0500010000000000001016 /* ChatViewModel+Streaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Streaming.swift"; sourceTree = "<group>"; };
 		8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadHelperProcessRunner.swift; sourceTree = "<group>"; };
 		8A0900010000000000001001 /* NativeModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelDownloadService.swift; sourceTree = "<group>"; };
+		8A0900010000000000001003 /* StreamingFileDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingFileDownloader.swift; sourceTree = "<group>"; };
+		8A0900010000000000001004 /* RuntimeDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDiagnostics.swift; sourceTree = "<group>"; };
+		8A0900010000000000001005 /* ProcessPipeReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessPipeReader.swift; sourceTree = "<group>"; };
+		8A0900010000000000001006 /* SHA256Checksum.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SHA256Checksum.swift; sourceTree = "<group>"; };
+		8A0900010000000000001007 /* RuntimeManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeManifest.swift; sourceTree = "<group>"; };
+		8A0900010000000000001008 /* RuntimeUpdateTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeUpdateTypes.swift; sourceTree = "<group>"; };
 		8A0500010000000000001018 /* StreamingMarkdownSplitter+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamingMarkdownSplitter+Parsing.swift"; sourceTree = "<group>"; };
 		8A0700010000000000001001 /* AppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -376,10 +388,16 @@
 		8A0100010000000000003012 /* Runtime */ = {
 			isa = PBXGroup;
 			children = (
+				8A0900010000000000001004 /* RuntimeDiagnostics.swift */,
+				8A0900010000000000001005 /* ProcessPipeReader.swift */,
+				8A0900010000000000001006 /* SHA256Checksum.swift */,
+				8A0900010000000000001007 /* RuntimeManifest.swift */,
+				8A0900010000000000001008 /* RuntimeUpdateTypes.swift */,
 				8A010001000000000000100F /* RuntimeManager.swift */,
 				8A0100010000000000001017 /* ModelDownloadManager.swift */,
 				8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */,
 				8A0900010000000000001001 /* NativeModelDownloadService.swift */,
+				8A0900010000000000001003 /* StreamingFileDownloader.swift */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
@@ -571,10 +589,16 @@
 				8A010001000000000000001C /* PromptConfiguration.swift in Sources */,
 				8A010001000000000000000D /* ModelExecutor.swift in Sources */,
 				8A010001000000000000000E /* VLMExecutor.swift in Sources */,
+				8A0900010000000000000004 /* RuntimeDiagnostics.swift in Sources */,
+				8A0900010000000000000005 /* ProcessPipeReader.swift in Sources */,
+				8A0900010000000000000006 /* SHA256Checksum.swift in Sources */,
+				8A0900010000000000000007 /* RuntimeManifest.swift in Sources */,
+				8A0900010000000000000008 /* RuntimeUpdateTypes.swift in Sources */,
 				8A010001000000000000000F /* RuntimeManager.swift in Sources */,
 				8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */,
 				8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */,
 				8A0900010000000000000001 /* NativeModelDownloadService.swift in Sources */,
+				8A0900010000000000000003 /* StreamingFileDownloader.swift in Sources */,
 				8A0700010000000000000001 /* AppUpdateController.swift in Sources */,
 				8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */,
 				8A0100010000000000000024 /* ImageCache.swift in Sources */,

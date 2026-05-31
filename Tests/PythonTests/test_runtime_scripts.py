@@ -19,6 +19,8 @@ RUNTIME_MANIFEST = REPO_ROOT / "MLXtra/Resources/runtime/macos-arm64/runtime-man
 MODEL_CATALOG = REPO_ROOT / "MLXtra/Resources/model-catalog.json"
 STABLE_CHANNEL = REPO_ROOT / "MLXtra/Resources/stable-channel.json"
 HF_DOWNLOAD_HELPER = REPO_ROOT / "MLXtra/Resources/runtime/macos-arm64/hf_download_helper.py"
+RUNTIME_LOCK_VALIDATOR = SCRIPTS_DIR / "runtime-locks/validate-runtime-lock.py"
+RUNTIME_LOCK = SCRIPTS_DIR / "runtime-locks/macos-arm64.lock.json"
 
 
 def bash_array(name: str) -> list[str]:
@@ -88,6 +90,46 @@ class RuntimeScriptTests(unittest.TestCase):
                     cwd=REPO_ROOT,
                     check=True,
                 )
+
+    def test_runtime_lock_validator_is_valid_python(self):
+        subprocess.run(
+            ["python3", "-m", "py_compile", str(RUNTIME_LOCK_VALIDATOR)],
+            cwd=REPO_ROOT,
+            check=True,
+        )
+
+    def test_runtime_dependency_lock_matches_generated_content(self):
+        result = subprocess.run(
+            ["python3", str(RUNTIME_LOCK_VALIDATOR)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_runtime_dependency_lock_detects_drift(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            lock_path = Path(temporary_directory) / "macos-arm64.lock.json"
+            lock = json.loads(RUNTIME_LOCK.read_text())
+            lock["pythonPackage"]["sha256"] = "0" * 64
+            lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(RUNTIME_LOCK_VALIDATOR),
+                    "--lock-file",
+                    str(lock_path),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("runtime dependency lock is out of date", result.stderr)
+            self.assertIn("sha256", result.stderr)
 
     def test_runtime_manifest_uses_shared_dependency_pins(self):
         manifest = json.loads(RUNTIME_MANIFEST.read_text())

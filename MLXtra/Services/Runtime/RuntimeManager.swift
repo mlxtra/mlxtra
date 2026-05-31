@@ -1,45 +1,5 @@
 import Foundation
 import Combine
-import CryptoKit
-
-private enum RuntimeDiagnostics {
-    static var isEnabled: Bool {
-        ProcessInfo.processInfo.environment["MLXTRA_RUNTIME_DEBUG"] == "1"
-            || UserDefaults.standard.bool(forKey: "MLXtra.runtimeDebug")
-    }
-
-    static func log(_ message: @autoclosure () -> String) {
-        guard isEnabled else { return }
-        print(message())
-    }
-}
-
-private final class PipeDataReader: @unchecked Sendable {
-    private let handle: FileHandle
-    private let lock = NSLock()
-    private var data = Data()
-
-    init(handle: FileHandle) {
-        self.handle = handle
-    }
-
-    func start(on queue: DispatchQueue, group: DispatchGroup) {
-        group.enter()
-        queue.async {
-            let readData = self.handle.readDataToEndOfFile()
-            self.lock.lock()
-            self.data = readData
-            self.lock.unlock()
-            group.leave()
-        }
-    }
-
-    func collectedData() -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return data
-    }
-}
 
 private struct DownloadSupportValidationContext: Sendable {
     let runtimeBundleURL: URL
@@ -49,486 +9,6 @@ private struct DownloadSupportValidationContext: Sendable {
     let importPackages: [String]
     let importContext: String
     let environment: [String: String]
-}
-
-struct RuntimeImageRuntimes: Codable, Equatable {
-    let mflux: RuntimeMFluxCapabilities?
-
-    init(mflux: RuntimeMFluxCapabilities? = nil) {
-        self.mflux = mflux
-    }
-}
-
-struct RuntimeMFluxCapabilities: Codable, Equatable {
-    let configs: [String]
-    let classes: [String]
-    let quantizeBits: [Int]
-
-    init(configs: [String] = [], classes: [String] = [], quantizeBits: [Int] = []) {
-        self.configs = configs
-        self.classes = classes
-        self.quantizeBits = quantizeBits
-    }
-
-    func supports(_ options: MFluxRuntimeOptions) -> Bool {
-        if !configs.isEmpty && !configs.contains(options.config) {
-            return false
-        }
-        if !classes.isEmpty {
-            guard classes.contains(options.textToImageClass),
-                  classes.contains(options.editClass) else {
-                return false
-            }
-        }
-        if let quantize = options.quantize,
-           !quantizeBits.isEmpty,
-           !quantizeBits.contains(quantize) {
-            return false
-        }
-        return true
-    }
-}
-
-struct RuntimeAudioRuntimes: Codable, Equatable {
-    let adapters: [String]
-
-    init(adapters: [String] = []) {
-        self.adapters = adapters
-    }
-
-    func supports(_ options: AudioRuntimeOptions) -> Bool {
-        adapters.isEmpty || adapters.contains(options.adapter)
-    }
-}
-
-struct RuntimeManifest: Codable, Equatable {
-    let runtimeVersion: String
-    let compatibilityApi: Int
-    let platform: String
-    let arch: String
-    let channel: String?
-    let pythonVersion: String?
-    let pythonPath: String?
-    let executables: [String: String]?
-    let packages: [String]
-    let isolatedPackages: [String]
-    let supportedModels: [String]?
-    let supportedBackends: [RuntimeBackend]
-    let capabilities: [String]
-    let imageRuntimes: RuntimeImageRuntimes?
-    let audioRuntimes: RuntimeAudioRuntimes?
-
-    init(
-        runtimeVersion: String,
-        compatibilityApi: Int,
-        platform: String = "macos",
-        arch: String = "arm64",
-        channel: String? = "stable",
-        pythonVersion: String? = nil,
-        pythonPath: String? = nil,
-        executables: [String: String]? = nil,
-        packages: [String] = [],
-        isolatedPackages: [String] = [],
-        supportedModels: [String]? = nil,
-        supportedBackends: [RuntimeBackend] = [],
-        capabilities: [String] = [],
-        imageRuntimes: RuntimeImageRuntimes? = nil,
-        audioRuntimes: RuntimeAudioRuntimes? = nil
-    ) {
-        self.runtimeVersion = runtimeVersion
-        self.compatibilityApi = compatibilityApi
-        self.platform = platform
-        self.arch = arch
-        self.channel = channel
-        self.pythonVersion = pythonVersion
-        self.pythonPath = pythonPath
-        self.executables = executables
-        self.packages = packages
-        self.isolatedPackages = isolatedPackages
-        self.supportedModels = supportedModels
-        self.supportedBackends = supportedBackends
-        self.capabilities = capabilities
-        self.imageRuntimes = imageRuntimes
-        self.audioRuntimes = audioRuntimes
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case runtimeVersion
-        case compatibilityApi
-        case platform
-        case arch
-        case channel
-        case pythonVersion
-        case pythonPath
-        case executables
-        case packages
-        case isolatedPackages
-        case supportedModels
-        case supportedBackends
-        case capabilities
-        case imageRuntimes
-        case audioRuntimes
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        runtimeVersion = try container.decode(String.self, forKey: .runtimeVersion)
-        compatibilityApi = try container.decode(Int.self, forKey: .compatibilityApi)
-        platform = try container.decodeIfPresent(String.self, forKey: .platform) ?? "macos"
-        arch = try container.decodeIfPresent(String.self, forKey: .arch) ?? "arm64"
-        channel = try container.decodeIfPresent(String.self, forKey: .channel)
-        pythonVersion = try container.decodeIfPresent(String.self, forKey: .pythonVersion)
-        pythonPath = try container.decodeIfPresent(String.self, forKey: .pythonPath)
-        executables = try container.decodeIfPresent([String: String].self, forKey: .executables)
-        packages = try container.decodeIfPresent([String].self, forKey: .packages) ?? []
-        isolatedPackages = try container.decodeIfPresent([String].self, forKey: .isolatedPackages) ?? []
-        supportedModels = try container.decodeIfPresent([String].self, forKey: .supportedModels)
-        supportedBackends = try container.decodeIfPresent([RuntimeBackend].self, forKey: .supportedBackends) ?? []
-        capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
-        imageRuntimes = try container.decodeIfPresent(RuntimeImageRuntimes.self, forKey: .imageRuntimes)
-        audioRuntimes = try container.decodeIfPresent(RuntimeAudioRuntimes.self, forKey: .audioRuntimes)
-    }
-
-    func supports(backend: RuntimeBackend) -> Bool {
-        if supportedBackends.isEmpty {
-            return true
-        }
-        return supportedBackends.contains(backend)
-    }
-
-    func supports(profile: ModelCapabilityProfile) -> Bool {
-        profile.runtime.isSatisfied(by: self)
-            && supports(backend: profile.backend)
-            && supports(runtimeOptions: profile.runtimeOptions)
-            && (supportedModels?.contains(profile.modelId) ?? true)
-    }
-
-    func supports(runtimeOptions: ModelRuntimeOptions?) -> Bool {
-        guard let runtimeOptions else {
-            return true
-        }
-        if let mflux = runtimeOptions.mflux {
-            guard let capabilities = imageRuntimes?.mflux else {
-                return true
-            }
-            guard capabilities.supports(mflux) else {
-                return false
-            }
-        }
-        if let audio = runtimeOptions.audio,
-           let capabilities = audioRuntimes,
-           !capabilities.supports(audio) {
-            return false
-        }
-        return true
-    }
-}
-
-enum SHA256Checksum {
-    static func hexDigest(for data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    static func hexDigest(for url: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-
-        var hasher = SHA256()
-        while true {
-            let chunk = try handle.read(upToCount: 1024 * 1024) ?? Data()
-            if chunk.isEmpty {
-                break
-            }
-            hasher.update(data: chunk)
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-struct RuntimeDownloadProgress: Equatable {
-    let downloadedBytes: Int64
-    let totalBytes: Int64?
-    let bytesPerSecond: Double?
-    let estimatedSecondsRemaining: TimeInterval?
-
-    init(downloadedBytes: Int64, totalBytes: Int64?, bytesPerSecond: Double? = nil) {
-        self.downloadedBytes = downloadedBytes
-        self.totalBytes = totalBytes
-        self.bytesPerSecond = bytesPerSecond
-
-        if let totalBytes,
-           let bytesPerSecond,
-           bytesPerSecond > 0,
-           totalBytes > downloadedBytes {
-            estimatedSecondsRemaining = Double(totalBytes - downloadedBytes) / bytesPerSecond
-        } else {
-            estimatedSecondsRemaining = nil
-        }
-    }
-
-    var fractionCompleted: Double? {
-        guard let totalBytes, totalBytes > 0 else {
-            return nil
-        }
-        return min(max(Double(downloadedBytes) / Double(totalBytes), 0), 1)
-    }
-}
-
-struct RuntimeActivationProgress: Equatable {
-    let title: String
-    let detail: String?
-    let completedStep: Int
-    let totalSteps: Int
-
-    var fractionCompleted: Double {
-        guard totalSteps > 0 else { return 0 }
-        return min(max(Double(completedStep) / Double(totalSteps), 0), 1)
-    }
-
-    var stepText: String {
-        "Step \(completedStep) of \(totalSteps)"
-    }
-}
-
-typealias RuntimeArchiveInstaller = @Sendable (
-    _ archiveURL: URL,
-    _ progressHandler: @escaping @Sendable (RuntimeActivationProgress) -> Void
-) throws -> URL
-
-private struct RuntimeArchiveDownloadResult {
-    let response: URLResponse
-    let downloadedBytes: Int64
-}
-
-private final class RuntimeArchiveDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let sourceURL: URL
-    private let destinationURL: URL
-    private let partialURL: URL
-    private let resumeOffset: Int64
-    private let expectedBytes: Int64?
-    private let configuration: URLSessionConfiguration
-    private let progressHandler: @Sendable (RuntimeDownloadProgress) -> Void
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<RuntimeArchiveDownloadResult, Error>?
-    private var session: URLSession?
-    private var task: URLSessionDataTask?
-    private var fileHandle: FileHandle?
-    private var response: URLResponse?
-    private var downloadedBytes: Int64 = 0
-    private var didComplete = false
-
-    init(
-        sourceURL: URL,
-        destinationURL: URL,
-        partialURL: URL,
-        resumeOffset: Int64,
-        expectedBytes: Int64?,
-        configuration: URLSessionConfiguration,
-        progressHandler: @escaping @Sendable (RuntimeDownloadProgress) -> Void
-    ) {
-        self.sourceURL = sourceURL
-        self.destinationURL = destinationURL
-        self.partialURL = partialURL
-        self.resumeOffset = max(0, resumeOffset)
-        self.expectedBytes = expectedBytes
-        self.configuration = configuration
-        self.progressHandler = progressHandler
-    }
-
-    func start() async throws -> URL {
-        try preparePartialFile()
-
-        return try await withTaskCancellationHandler {
-            let result = try await withCheckedThrowingContinuation { continuation in
-                lock.lock()
-                self.continuation = continuation
-                let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-                let task = session.dataTask(with: request())
-                self.session = session
-                self.task = task
-                lock.unlock()
-
-                task.resume()
-            }
-            try validateHTTPResponse(result.response)
-            try finalizePartialDownload()
-            return destinationURL
-        } onCancel: {
-            self.cancel()
-        }
-    }
-
-    private func preparePartialFile() throws {
-        try FileManager.default.createDirectory(
-            at: partialURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if resumeOffset == 0 || !FileManager.default.fileExists(atPath: partialURL.path) {
-            try Data().write(to: partialURL, options: [.atomic])
-        }
-        let handle = try FileHandle(forWritingTo: partialURL)
-        try handle.seekToEnd()
-        lock.lock()
-        fileHandle = handle
-        downloadedBytes = resumeOffset
-        lock.unlock()
-        if resumeOffset > 0 {
-            progressHandler(RuntimeDownloadProgress(downloadedBytes: resumeOffset, totalBytes: expectedBytes))
-        }
-    }
-
-    private func request() -> URLRequest {
-        var request = URLRequest(url: sourceURL)
-        if resumeOffset > 0 {
-            request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
-        }
-        return request
-    }
-
-    func cancel() {
-        lock.lock()
-        let task = task
-        lock.unlock()
-        task?.cancel()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
-        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
-    ) {
-        var restartError: Error?
-        let shouldRestartFromZero = resumeOffset > 0
-            && (response as? HTTPURLResponse)?.statusCode == 200
-        lock.lock()
-        self.response = response
-        if shouldRestartFromZero {
-            do {
-                downloadedBytes = 0
-                try fileHandle?.truncate(atOffset: 0)
-                try fileHandle?.seek(toOffset: 0)
-            } catch {
-                restartError = error
-            }
-        }
-        lock.unlock()
-
-        if let restartError {
-            complete(.failure(restartError))
-            completionHandler(.cancel)
-            return
-        }
-
-        if shouldRestartFromZero {
-            progressHandler(RuntimeDownloadProgress(downloadedBytes: 0, totalBytes: expectedBytes))
-        }
-
-        completionHandler(.allow)
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive data: Data
-    ) {
-        do {
-            let bytes = try appendDownloadedData(data)
-            progressHandler(RuntimeDownloadProgress(downloadedBytes: bytes, totalBytes: expectedBytes))
-        } catch {
-            complete(.failure(error))
-            dataTask.cancel()
-        }
-    }
-
-    private func appendDownloadedData(_ data: Data) throws -> Int64 {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let fileHandle else {
-            throw URLError(.cannotWriteToFile)
-        }
-        try fileHandle.write(contentsOf: data)
-        downloadedBytes += Int64(data.count)
-        return downloadedBytes
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: Error?
-    ) {
-        if let error {
-            complete(.failure(error))
-            return
-        }
-
-        lock.lock()
-        let response = self.response
-        let downloadedBytes = self.downloadedBytes
-        lock.unlock()
-
-        guard let response else {
-            complete(.failure(URLError(.badServerResponse)))
-            return
-        }
-
-        complete(.success(RuntimeArchiveDownloadResult(response: response, downloadedBytes: downloadedBytes)))
-    }
-
-    private func validateHTTPResponse(_ response: URLResponse) throws {
-        guard let httpResponse = response as? HTTPURLResponse else { return }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-    }
-
-    private func finalizePartialDownload() throws {
-        try fileHandle?.close()
-        fileHandle = nil
-
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
-        try FileManager.default.moveItem(at: partialURL, to: destinationURL)
-        if let expectedBytes {
-            progressHandler(RuntimeDownloadProgress(downloadedBytes: expectedBytes, totalBytes: expectedBytes))
-        }
-    }
-
-    private func complete(_ result: Result<RuntimeArchiveDownloadResult, Error>) {
-        lock.lock()
-        guard !didComplete else {
-            lock.unlock()
-            return
-        }
-        didComplete = true
-        let continuation = continuation
-        self.continuation = nil
-        task = nil
-        let session = session
-        self.session = nil
-        let fileHandle = fileHandle
-        self.fileHandle = nil
-        lock.unlock()
-
-        try? fileHandle?.close()
-        session?.finishTasksAndInvalidate()
-        continuation?.resume(with: result)
-    }
-}
-
-enum RuntimeInstallPhase: Equatable {
-    case idle
-    case downloading
-    case verifying
-    case activating
-}
-
-struct RuntimeAppUpdateRequirement: Equatable {
-    let runtime: RuntimeReleaseAsset
-    let requiredAppVersion: String
-    let currentAppVersion: String?
 }
 
 @MainActor
@@ -884,21 +364,34 @@ final class RuntimeUpdateManager: ObservableObject {
         while attempt < 4 {
             attempt += 1
             let resumeOffset = resumableRuntimeArchiveSize(at: partial, expectedBytes: asset.sizeBytes)
-            let downloader = RuntimeArchiveDownloader(
-                sourceURL: asset.url,
-                destinationURL: destination,
-                partialURL: partial,
+            if resumeOffset > 0 {
+                updateRuntimeDownloadProgress(
+                    RuntimeDownloadProgress(downloadedBytes: resumeOffset, totalBytes: asset.sizeBytes)
+                )
+            }
+
+            let downloader = StreamingFileDownload(
+                request: URLRequest(url: asset.url),
+                temporaryURL: partial,
                 resumeOffset: resumeOffset,
-                expectedBytes: asset.sizeBytes,
                 configuration: runtimeArchiveDownloadConfiguration
-            ) { [weak self] progress in
+            ) { [weak self] bytesWritten in
                 Task { @MainActor in
-                    self?.updateRuntimeDownloadProgress(progress)
+                    self?.updateRuntimeDownloadProgress(
+                        RuntimeDownloadProgress(downloadedBytes: bytesWritten, totalBytes: asset.sizeBytes)
+                    )
                 }
             }
 
             do {
-                return try await downloader.start()
+                let result = try await downloader.start()
+                try validateRuntimeArchiveHTTPResponse(result.response)
+                try finalizeRuntimeArchiveDownload(
+                    partialURL: partial,
+                    destinationURL: destination,
+                    expectedBytes: asset.sizeBytes
+                )
+                return destination
             } catch {
                 lastError = error
                 guard shouldRetryRuntimeArchiveDownload(after: error), attempt < 4 else {
@@ -910,6 +403,29 @@ final class RuntimeUpdateManager: ObservableObject {
         }
 
         throw lastError ?? URLError(.unknown)
+    }
+
+    private func validateRuntimeArchiveHTTPResponse(_ response: URLResponse) throws {
+        guard let httpResponse = response as? HTTPURLResponse else { return }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    private func finalizeRuntimeArchiveDownload(
+        partialURL: URL,
+        destinationURL: URL,
+        expectedBytes: Int64?
+    ) throws {
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+        try FileManager.default.moveItem(at: partialURL, to: destinationURL)
+        if let expectedBytes {
+            updateRuntimeDownloadProgress(
+                RuntimeDownloadProgress(downloadedBytes: expectedBytes, totalBytes: expectedBytes)
+            )
+        }
     }
 
     private func fileSize(_ url: URL) -> Int64? {
@@ -944,26 +460,6 @@ final class RuntimeUpdateManager: ObservableObject {
             .cannotFindHost,
             .dnsLookupFailed
         ].contains(urlError.code)
-    }
-}
-
-enum RuntimeUpdateError: LocalizedError {
-    case channelUnavailable
-    case checksumMismatch
-    case invalidRuntime
-    case unsupportedArchive
-
-    var errorDescription: String? {
-        switch self {
-        case .channelUnavailable:
-            return "No runtime update channel is available yet"
-        case .checksumMismatch:
-            return "Runtime archive checksum did not match"
-        case .invalidRuntime:
-            return "Downloaded runtime did not pass validation"
-        case .unsupportedArchive:
-            return "Runtime archive format is not supported"
-        }
     }
 }
 
