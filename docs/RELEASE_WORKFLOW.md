@@ -149,25 +149,36 @@ Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --skip-runtime-archive
 
 ## Runtime Update
 
-1. Build the runtime bundle:
+1. Update runtime dependency pins in `Scripts/runtime-dependencies.sh`, then
+   regenerate the checked runtime dependency lock:
+
+```bash
+Scripts/generate-runtime-lockfiles.sh
+```
+
+The generated `Scripts/runtime-locks/macos-arm64.lock.json` must be committed
+with the dependency pin change. CI validates that the lock still matches the
+shared runtime dependency script.
+
+2. Build the runtime bundle:
 
 ```bash
 Scripts/build-runtime-bundle.sh
 ```
 
-2. Validate it:
+3. Validate it:
 
 ```bash
 Scripts/validate-runtime-bundle.sh
 ```
 
-3. Stage and publish the release assets:
+4. Stage and publish the release assets:
 
 ```bash
 Scripts/publish-release-assets.sh --repo mlxtra/mlxtra --write-channel
 ```
 
-4. Commit the checked-in channel update after the publish succeeds:
+5. Commit the checked-in channel update after the publish succeeds:
 
 ```bash
 git status --short
@@ -180,7 +191,7 @@ This keeps the bundled fallback channel aligned with the public `stable`
 release asset. Do not commit a channel file that points at assets that were not
 successfully uploaded.
 
-5. Run one smoke test per backend before announcing the release:
+6. Run one smoke test per backend before announcing the release:
 
 ```bash
 swift test

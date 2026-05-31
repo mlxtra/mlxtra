@@ -183,6 +183,44 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertNotNil(metrics)
     }
 
+    func testExecuteMediaToolDoesNotPublishAssetFromIncompleteAttempt() async {
+        let staleAssetURL = URL(fileURLWithPath: "/tmp/stale-generated.png")
+        let freshAssetURL = URL(fileURLWithPath: "/tmp/fresh-generated.png")
+        let executor = MockChatModelExecutor(eventBatches: [
+            [
+                .image(staleAssetURL)
+            ],
+            [
+                .image(freshAssetURL),
+                .complete("Generated image.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
+            ]
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+        var updates: [ChatToolExecutionUpdate] = []
+
+        let outcome = await service.executeMediaTool(plan: makePlan()) { update in
+            updates.append(update)
+        }
+
+        XCTAssertEqual(executor.receivedRequests.count, 2)
+        XCTAssertEqual(executor.terminateCount, 1)
+        XCTAssertFalse(updates.contains(.generatedAsset(staleAssetURL, kind: .image)))
+        XCTAssertTrue(updates.contains(.progress("Restarting local engine...")))
+        XCTAssertTrue(updates.contains(.generatedAsset(freshAssetURL, kind: .image)))
+        guard case .toolMessage(let content, let metrics) = outcome else {
+            XCTFail("Expected tool message outcome")
+            return
+        }
+        XCTAssertEqual(content, "Generated image.\nThe generated image is already displayed in the app UI.")
+        XCTAssertNotNil(metrics)
+    }
+
     func testCompletedMediaToolWithoutAssetDoesNotRetry() async {
         let executor = MockChatModelExecutor(events: [
             .complete("", usage: TokenUsage(promptTokens: 1, completionTokens: 0))
@@ -1496,8 +1534,9 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         [chorus]
         Oxford, carry my heart back home
         """
+        let rawToolJSON = #"{"name":"generate_music","parameters":{"caption":"pop song about Oxford with vocals","instrumental":false}}"#
         let executor = MockChatModelExecutor(eventBatches: [
-            [.toolCalls([toolCall])],
+            [.token(rawToolJSON), .toolCalls([toolCall])],
             [.complete(lyrics, usage: TokenUsage(promptTokens: 1, completionTokens: 2))]
         ])
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
@@ -1519,6 +1558,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let messages = viewModel.chats.first?.messages ?? []
         XCTAssertTrue(toolExecutor.mediaPlans.isEmpty)
         XCTAssertEqual(messages.last?.content, lyrics)
+        XCTAssertFalse(messages.last?.content.contains(rawToolJSON) ?? true)
         XCTAssertFalse(messages.contains { $0.content.contains("Do not call generate_music") })
         XCTAssertTrue(
             executor.receivedRequests[1].messages.contains {

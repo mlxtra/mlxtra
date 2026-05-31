@@ -430,7 +430,7 @@ final class ModelDownloadManager: ObservableObject {
         }
         guard lifecycle.stopReason(for: modelId) == nil else { return }
 
-        guard let event = Self.parseDownloadEventLine(line) else {
+        guard let event = ModelDownloadEventParser.parseDownloadEventLine(line) else {
             return
         }
 

@@ -110,7 +110,7 @@ final class ModelDownloadHelperExecutor {
             return "Download helper exited with status \(result.terminationStatus)."
         }
 
-        let parsedEvents = stdoutLines.compactMap(ModelDownloadManager.parseDownloadEventLine)
+        let parsedEvents = stdoutLines.compactMap(ModelDownloadEventParser.parseDownloadEventLine)
         if parsedEvents.count == stdoutLines.count {
             return "Download helper exited with status \(result.terminationStatus) while \(lastStatusDescription(from: parsedEvents))."
         }
@@ -125,7 +125,7 @@ final class ModelDownloadHelperExecutor {
     }
 
     private nonisolated static func errorMessage(from line: String) -> String? {
-        guard case .error(let message) = ModelDownloadManager.parseDownloadEventLine(line) else {
+        guard case .error(let message) = ModelDownloadEventParser.parseDownloadEventLine(line) else {
             return nil
         }
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -656,8 +656,8 @@ final class ModelDownloadManagerTests: XCTestCase {
             "percent_reliable": false
         ]
 
-        XCTAssertNil(ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "files"))
-        XCTAssertNil(ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "bytes"))
+        XCTAssertNil(ModelDownloadEventParser.reliableDownloadPercent(from: event, progressKind: "files"))
+        XCTAssertNil(ModelDownloadEventParser.reliableDownloadPercent(from: event, progressKind: "bytes"))
     }
 
     func testDownloadManagerAcceptsReliableAggregateBytePercent() {
@@ -667,7 +667,7 @@ final class ModelDownloadManagerTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "bytes"),
+            ModelDownloadEventParser.reliableDownloadPercent(from: event, progressKind: "bytes"),
             42.5
         )
     }
@@ -679,21 +679,21 @@ final class ModelDownloadManagerTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            ModelDownloadManager.reliableDownloadPercent(from: event, progressKind: "activity"),
+            ModelDownloadEventParser.reliableDownloadPercent(from: event, progressKind: "activity"),
             12.0
         )
     }
 
     func testDownloadManagerClampsReliablePercent() {
         XCTAssertEqual(
-            ModelDownloadManager.reliableDownloadPercent(
+            ModelDownloadEventParser.reliableDownloadPercent(
                 from: ["percent": 142.0, "percent_reliable": true],
                 progressKind: "activity"
             ),
             100.0
         )
         XCTAssertEqual(
-            ModelDownloadManager.reliableDownloadPercent(
+            ModelDownloadEventParser.reliableDownloadPercent(
                 from: ["percent": -12.0, "percent_reliable": true],
                 progressKind: "activity"
             ),
@@ -702,7 +702,7 @@ final class ModelDownloadManagerTests: XCTestCase {
     }
 
     func testDownloadEventParserBuildsTypedProgressEvent() {
-        let event = ModelDownloadManager.parseDownloadEventLine(
+        let event = ModelDownloadEventParser.parseDownloadEventLine(
             #"{"type":"download.progress","status":"Downloading","description":"model.safetensors","unit":"B","progress_kind":"bytes","downloaded":1024,"total":2048,"percent":50,"progress_scope":"aggregate"}"#
         )
 
@@ -721,9 +721,9 @@ final class ModelDownloadManagerTests: XCTestCase {
     }
 
     func testDownloadEventParserRejectsMalformedAndUnknownEvents() {
-        XCTAssertNil(ModelDownloadManager.parseDownloadEventLine("not json"))
-        XCTAssertNil(ModelDownloadManager.parseDownloadEventLine(#"{"type":"download.ignored"}"#))
-        XCTAssertNil(ModelDownloadManager.parseDownloadEventLine(#"{"type":"download.error"}"#))
+        XCTAssertNil(ModelDownloadEventParser.parseDownloadEventLine("not json"))
+        XCTAssertNil(ModelDownloadEventParser.parseDownloadEventLine(#"{"type":"download.ignored"}"#))
+        XCTAssertNil(ModelDownloadEventParser.parseDownloadEventLine(#"{"type":"download.error"}"#))
     }
 
     @MainActor

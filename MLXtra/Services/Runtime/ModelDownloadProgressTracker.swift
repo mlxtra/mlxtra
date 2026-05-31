@@ -38,7 +38,7 @@ final class ModelDownloadProgressTracker {
             progressKind: nativeProgress.downloadedBytes == nil ? nil : "bytes",
             downloadedBytes: nativeProgress.downloadedBytes,
             totalBytes: nativeProgress.totalBytes,
-            percent: ModelDownloadManager.monotonicPercent(
+            percent: ModelDownloadEventParser.monotonicPercent(
                 nativeProgress.percent,
                 previous: lastProgress[modelId]?.percent
             )
@@ -51,7 +51,7 @@ final class ModelDownloadProgressTracker {
         _ event: ModelDownloadEvent,
         modelId: String
     ) -> ModelDownloadManager.DownloadProgress? {
-        guard let progress = ModelDownloadManager.downloadProgress(
+        guard let progress = ModelDownloadEventParser.downloadProgress(
             for: event,
             previousPercent: lastProgress[modelId]?.percent
         ) else {

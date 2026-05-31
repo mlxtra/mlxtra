@@ -27,11 +27,15 @@ protocol ChatModelExecuting: ModelExecutor {
     var currentModelId: String? { get }
     var currentModelBackend: RuntimeBackend? { get }
     var delegate: VLMExecutionDelegate? { get set }
-    func preload(modelId: String, backend: RuntimeBackend) async throws
+    func preload(modelId: String, backend: RuntimeBackend, parameters: [String: Any]?) async throws
 }
 
 extension ChatModelExecuting {
     func preload(modelId: String, backend: RuntimeBackend) async throws {
+        try await preload(modelId: modelId, backend: backend, parameters: nil)
+    }
+
+    func preload(modelId: String, backend: RuntimeBackend, parameters: [String: Any]?) async throws {
     }
 }
 

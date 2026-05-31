@@ -2,8 +2,8 @@ import Foundation
 
 @MainActor
 extension ChatViewModel {
-    func loadModel(_ modelId: String, backend: RuntimeBackend) async throws {
-        try await vlmExecutor.preload(modelId: modelId, backend: backend)
+    func loadModel(_ modelId: String, backend: RuntimeBackend, parameters: [String: Any]? = nil) async throws {
+        try await vlmExecutor.preload(modelId: modelId, backend: backend, parameters: parameters)
     }
 
     func ownsActiveGeneration(_ generationID: UUID?) -> Bool {
@@ -188,7 +188,8 @@ extension ChatViewModel {
             return true
         }
 
-        guard toolDepth < maxAutoToolDepth else {
+        let terminalMediaToolCalls = executableToolCalls.filter { isTerminalMediaTool($0.function.name) }
+        guard toolDepth < maxAutoToolDepth || !terminalMediaToolCalls.isEmpty else {
             finishStreamWithMessage(
                 messageId,
                 content: "Maximum tool call depth reached. Cannot execute more tool calls.",
@@ -200,9 +201,11 @@ extension ChatViewModel {
             return true
         }
 
+        let toolCallsToExecute = toolDepth < maxAutoToolDepth ? executableToolCalls : terminalMediaToolCalls
         var hasExecutedTerminalMediaTool = false
         var hasBlockedTerminalMediaTool = false
-        for toolCall in executableToolCalls {
+        updateStreamingMessage(messageId, content: "")
+        for toolCall in toolCallsToExecute {
             currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
             let executionResult = await executeToolCall(
                 toolCall,
@@ -257,6 +260,8 @@ extension ChatViewModel {
         var fullResponse = ""
         var renderedResponse = ""
         var pendingRenderDelta = ""
+        var pendingGeneratedImageURLs: [URL] = []
+        var pendingGeneratedAudioURLs: [URL] = []
         var lastRenderTime = Date.distantPast
         let minimumRenderInterval: TimeInterval = 1.0 / 60.0
         var performanceTracker = ChatStreamPerformanceTracker()
@@ -368,11 +373,19 @@ extension ChatViewModel {
 
             case .image(let imageURL):
                 performanceTracker.recordNonTokenOutput()
-                appendGeneratedImage(imageURL, toMessage: messageId)
+                if isImageGeneration {
+                    pendingGeneratedImageURLs.append(imageURL)
+                } else {
+                    appendGeneratedImage(imageURL, toMessage: messageId)
+                }
 
             case .audio(let audioURL):
                 performanceTracker.recordNonTokenOutput()
-                appendGeneratedAudio(audioURL, toMessage: messageId)
+                if isSpeechGeneration {
+                    pendingGeneratedAudioURLs.append(audioURL)
+                } else {
+                    appendGeneratedAudio(audioURL, toMessage: messageId)
+                }
 
             case .complete(let response, let usage):
 #if DEBUG
@@ -399,6 +412,12 @@ extension ChatViewModel {
                 }
 
                 guard ownsActiveGeneration(generationID) else { return }
+                for imageURL in pendingGeneratedImageURLs {
+                    appendGeneratedImage(imageURL, toMessage: messageId)
+                }
+                for audioURL in pendingGeneratedAudioURLs {
+                    appendGeneratedAudio(audioURL, toMessage: messageId)
+                }
                 finalizeMessage(
                     messageId,
                     content: (isImageGeneration || isSpeechGeneration) ? "" : fullResponse,
@@ -453,8 +472,25 @@ extension ChatViewModel {
             return
         }
 
+        let streamStoppedError = ExecutionError.processStopped("The local engine stream ended before reporting completion.")
+        if !hasTools,
+           !isImageGeneration,
+           !isSpeechGeneration,
+           !fullResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            renderStreamingResponse(force: true)
+            localEngineErrorMessage = "Local engine stopped: The local engine stream ended before reporting completion."
+            finalizeMessage(
+                messageId,
+                content: fullResponse,
+                usage: TokenUsage(promptTokens: 0, completionTokens: 0),
+                performanceMetrics: currentPerformanceMetrics(usage: TokenUsage(promptTokens: 0, completionTokens: 0))
+            )
+            finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
+            return
+        }
+
         handleGenerationError(
-            ExecutionError.processStopped("The local engine stream ended before reporting completion."),
+            streamStoppedError,
             replacingMessageId: messageId,
             generationID: generationID,
             isMusicGeneration: isMusicGeneration

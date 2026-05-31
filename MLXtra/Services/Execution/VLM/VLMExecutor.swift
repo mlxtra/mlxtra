@@ -149,7 +149,7 @@ class VLMExecutor: NSObject, ModelExecutor {
         }
     }
 
-    func preload(modelId: String, backend: RuntimeBackend) async throws {
+    func preload(modelId: String, backend: RuntimeBackend, parameters: [String: Any]? = nil) async throws {
         if !isReady {
             try await initialize()
         }
@@ -160,7 +160,7 @@ class VLMExecutor: NSObject, ModelExecutor {
         }
 
         isModelLoaded = false
-        try await loadModel(modelId, backend: backend)
+        try await loadModel(modelId, backend: backend, parameters: parameters)
         currentModelCacheKey = modelCacheKey
         currentModelId = modelId
         currentModelBackend = backend

@@ -16,7 +16,7 @@ enum ModelDownloadEvent: Equatable {
     case error(String)
 }
 
-extension ModelDownloadManager {
+enum ModelDownloadEventParser {
     nonisolated static func parseDownloadEventLine(_ line: String) -> ModelDownloadEvent? {
         guard let data = line.data(using: .utf8),
               let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -53,10 +53,10 @@ extension ModelDownloadManager {
     nonisolated static func downloadProgress(
         for event: ModelDownloadEvent,
         previousPercent: Double?
-    ) -> DownloadProgress? {
+    ) -> ModelDownloadManager.DownloadProgress? {
         switch event {
         case .started:
-            return DownloadProgress(
+            return ModelDownloadManager.DownloadProgress(
                 status: "Preparing",
                 description: nil,
                 unit: nil,
@@ -74,7 +74,7 @@ extension ModelDownloadManager {
             let totalBytes,
             let percent
         ):
-            return DownloadProgress(
+            return ModelDownloadManager.DownloadProgress(
                 status: status,
                 description: description,
                 unit: unit,
@@ -84,7 +84,7 @@ extension ModelDownloadManager {
                 percent: monotonicPercent(percent, previous: previousPercent)
             )
         case .verified(let hashCount):
-            return DownloadProgress(
+            return ModelDownloadManager.DownloadProgress(
                 status: "Verifying",
                 description: hashCount > 0 ? "Local files and hashes verified" : "Local files verified",
                 unit: nil,
@@ -94,7 +94,7 @@ extension ModelDownloadManager {
                 percent: nil
             )
         case .complete:
-            return DownloadProgress(
+            return ModelDownloadManager.DownloadProgress(
                 status: "Finalizing",
                 description: nil,
                 unit: nil,

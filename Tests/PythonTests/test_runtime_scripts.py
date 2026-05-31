@@ -81,6 +81,7 @@ class RuntimeScriptTests(unittest.TestCase):
     def test_runtime_scripts_are_valid_bash(self):
         for script_name in (
             "runtime-dependencies.sh",
+            "generate-runtime-lockfiles.sh",
             "build-runtime-bundle.sh",
             "validate-runtime-bundle.sh",
         ):

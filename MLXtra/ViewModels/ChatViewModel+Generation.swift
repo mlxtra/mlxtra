@@ -12,6 +12,7 @@ private struct ChatGenerationExecutionContext {
     let activeModelName: String
     let activeBackend: RuntimeBackend
     let modelWillLoad: Bool
+    let modelLoadParameters: [String: Any]?
     let requiredModel: DownloadableModel
 
     var requiredOperationName: String {
@@ -461,6 +462,9 @@ extension ChatViewModel {
         let executionProfile = (isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile
         let resolvedModelId = executionProfile.modelId
         let activeBackend = executionProfile.backend
+        let modelLoadParameters = (isImageGeneration || isSpeechGeneration)
+            ? request.executionParameters(for: executionProfile)
+            : nil
 
         return ChatGenerationExecutionContext(
             prompt: request.prompt,
@@ -474,6 +478,7 @@ extension ChatViewModel {
             activeModelName: executionProfile.name,
             activeBackend: activeBackend,
             modelWillLoad: !isLoadedEngineModel(modelId: resolvedModelId, backend: activeBackend),
+            modelLoadParameters: modelLoadParameters,
             requiredModel: executionProfile.downloadableModel
         )
     }
@@ -541,7 +546,11 @@ extension ChatViewModel {
         )
 
         do {
-            try await loadModel(context.resolvedModelId, backend: context.activeBackend)
+            try await loadModel(
+                context.resolvedModelId,
+                backend: context.activeBackend,
+                parameters: context.modelLoadParameters
+            )
             return ownsActiveGeneration(generationID)
         } catch {
             if ownsActiveGeneration(generationID) {

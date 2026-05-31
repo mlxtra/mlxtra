@@ -97,6 +97,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
             let stream = try await modelExecutor.execute(request: plan.request)
             try Task.checkCancellation()
             var generatedAssetURL: URL?
+            var generatedAssetKind: ChatGeneratedAssetKind?
             var generationSummary = "\(plan.operationName) completed."
             var didComplete = false
 
@@ -113,11 +114,11 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
                 case .image(let imageURL) where plan.attachmentKind == .image:
                     firstOutputAt = firstOutputAt ?? Date()
                     generatedAssetURL = imageURL
-                    onUpdate(.generatedAsset(imageURL, kind: .image))
+                    generatedAssetKind = .image
                 case .audio(let audioURL) where plan.attachmentKind == .audio:
                     firstOutputAt = firstOutputAt ?? Date()
                     generatedAssetURL = audioURL
-                    onUpdate(.generatedAsset(audioURL, kind: .audio))
+                    generatedAssetKind = .audio
                 case .token(let token):
                     guard !token.isEmpty else { break }
                     firstOutputAt = firstOutputAt ?? Date()
@@ -144,12 +145,13 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
                 backendTokensPerSecond: backendTokensPerSecond
             )
 
-            if generatedAssetURL != nil {
-                return .toolMessage("\(generationSummary)\n\(plan.completionHint)", metrics: metrics)
-            }
-
             guard didComplete else {
                 throw ExecutionError.processStopped("\(plan.operationName) stream ended before reporting completion.")
+            }
+
+            if let generatedAssetURL, let generatedAssetKind {
+                onUpdate(.generatedAsset(generatedAssetURL, kind: generatedAssetKind))
+                return .toolMessage("\(generationSummary)\n\(plan.completionHint)", metrics: metrics)
             }
 
             return .toolMessage(plan.noOutputMessage, metrics: metrics)
