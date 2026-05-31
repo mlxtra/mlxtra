@@ -346,28 +346,18 @@ final class NativeModelDownloadService: @unchecked Sendable {
         var request = URLRequest(url: sourceURL)
         applyAuthorizationHeader(to: &request)
 
-        try fileManager.createDirectory(
-            at: destinationURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
+        let downloader = StreamingFileDownloader(
+            configuration: downloadSessionConfiguration,
+            fileManager: fileManager,
+            shouldPreservePartial: { StreamingFileDownloader.shouldPreservePartialDownload(after: $0) }
         )
-
-        let temporaryURL = partialDownloadURL(for: destinationURL)
-        let resumeOffset = resumablePartialSize(at: temporaryURL, manifestFile: manifestFile)
-        var didMoveTemporaryFile = false
-        var shouldRemoveTemporaryFile = true
-        defer {
-            if !didMoveTemporaryFile,
-               shouldRemoveTemporaryFile,
-               fileManager.fileExists(atPath: temporaryURL.path) {
-                try? fileManager.removeItem(at: temporaryURL)
-            }
-        }
-
-        let streamingDownload = StreamingFileDownload(
+        let result = try await downloader.download(
             request: request,
-            temporaryURL: temporaryURL,
-            resumeOffset: resumeOffset,
-            configuration: downloadSessionConfiguration
+            destinationURL: destinationURL,
+            expectedBytes: manifestFile.size,
+            validateResponse: { [self] response in
+                try validateHTTPResponse(response, context: manifestFile.path)
+            }
         ) { bytesWritten in
             Task {
                 await progressAggregator.updateActiveBytes(
@@ -377,28 +367,12 @@ final class NativeModelDownloadService: @unchecked Sendable {
                 )
             }
         }
-        let result: StreamingFileDownloadResult
-        do {
-            result = try await streamingDownload.start()
-            try validateHTTPResponse(result.response, context: manifestFile.path)
-        } catch {
-            if shouldPreservePartialDownload(after: error) {
-                shouldRemoveTemporaryFile = false
-            }
-            throw error
-        }
 
         await progressAggregator.updateActiveBytes(
             fileID: manifestFile.path,
             bytesWritten: result.bytesWritten,
             description: manifestFile.path
         )
-
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try fileManager.removeItem(at: destinationURL)
-        }
-        try fileManager.moveItem(at: temporaryURL, to: destinationURL)
-        didMoveTemporaryFile = true
     }
 
     private func downloadFilesConcurrently(
@@ -597,40 +571,6 @@ final class NativeModelDownloadService: @unchecked Sendable {
             return nil
         }
         return size.int64Value
-    }
-
-    private func partialDownloadURL(for destinationURL: URL) -> URL {
-        destinationURL
-            .deletingLastPathComponent()
-            .appendingPathComponent(".\(destinationURL.lastPathComponent).download")
-    }
-
-    private func resumablePartialSize(at partialURL: URL, manifestFile: HuggingFaceManifestFile) -> Int64 {
-        guard let partialSize = fileSize(partialURL), partialSize > 0 else {
-            return 0
-        }
-
-        if let expectedSize = manifestFile.size, partialSize >= expectedSize {
-            try? fileManager.removeItem(at: partialURL)
-            return 0
-        }
-
-        return partialSize
-    }
-
-    private func shouldPreservePartialDownload(after error: Error) -> Bool {
-        guard let urlError = error as? URLError else {
-            return false
-        }
-        return [
-            .cancelled,
-            .networkConnectionLost,
-            .timedOut,
-            .notConnectedToInternet,
-            .cannotConnectToHost,
-            .cannotFindHost,
-            .dnsLookupFailed
-        ].contains(urlError.code)
     }
 
     private func validateHTTPResponse(_ response: URLResponse, context: String) throws {

@@ -345,110 +345,43 @@ final class RuntimeUpdateManager: ObservableObject {
             .appendingPathExtension("\(archiveExtension).download")
 
         if let expectedBytes = asset.sizeBytes,
-           fileSize(destination) == expectedBytes {
+           StreamingFileDownloader.fileSize(destination) == expectedBytes {
             return destination
         }
 
-        var attempt = 0
-        var lastError: Error?
-        while attempt < 4 {
-            attempt += 1
-            let resumeOffset = resumableRuntimeArchiveSize(at: partial, expectedBytes: asset.sizeBytes)
-            if resumeOffset > 0 {
-                updateRuntimeDownloadProgress(
-                    RuntimeDownloadProgress(downloadedBytes: resumeOffset, totalBytes: asset.sizeBytes)
-                )
+        let downloader = StreamingFileDownloader(
+            configuration: runtimeArchiveDownloadConfiguration,
+            maxAttempts: 4,
+            shouldRetry: { StreamingFileDownloader.isTransientNetworkError($0) },
+            shouldPreservePartial: { StreamingFileDownloader.shouldPreservePartialDownload(after: $0) },
+            retryDelay: { attempt in
+                try await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
             }
+        )
 
-            let downloader = StreamingFileDownload(
-                request: URLRequest(url: asset.url),
-                temporaryURL: partial,
-                resumeOffset: resumeOffset,
-                configuration: runtimeArchiveDownloadConfiguration
-            ) { [weak self] bytesWritten in
-                Task { @MainActor in
-                    self?.updateRuntimeDownloadProgress(
-                        RuntimeDownloadProgress(downloadedBytes: bytesWritten, totalBytes: asset.sizeBytes)
-                    )
-                }
+        _ = try await downloader.download(
+            request: URLRequest(url: asset.url),
+            destinationURL: destination,
+            temporaryURL: partial,
+            expectedBytes: asset.sizeBytes,
+            validateResponse: { response in
+                try Self.validateRuntimeArchiveHTTPResponse(response)
             }
-
-            do {
-                let result = try await downloader.start()
-                try validateRuntimeArchiveHTTPResponse(result.response)
-                try finalizeRuntimeArchiveDownload(
-                    partialURL: partial,
-                    destinationURL: destination,
-                    expectedBytes: asset.sizeBytes
+        ) { [weak self] bytesWritten in
+            Task { @MainActor in
+                self?.updateRuntimeDownloadProgress(
+                    RuntimeDownloadProgress(downloadedBytes: bytesWritten, totalBytes: asset.sizeBytes)
                 )
-                return destination
-            } catch {
-                lastError = error
-                guard shouldRetryRuntimeArchiveDownload(after: error), attempt < 4 else {
-                    throw error
-                }
-
-                try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
             }
         }
 
-        throw lastError ?? URLError(.unknown)
+        return destination
     }
 
-    private func validateRuntimeArchiveHTTPResponse(_ response: URLResponse) throws {
+    private nonisolated static func validateRuntimeArchiveHTTPResponse(_ response: URLResponse) throws {
         guard let httpResponse = response as? HTTPURLResponse else { return }
         guard (200...299).contains(httpResponse.statusCode) else {
             throw URLError(.badServerResponse)
         }
-    }
-
-    private func finalizeRuntimeArchiveDownload(
-        partialURL: URL,
-        destinationURL: URL,
-        expectedBytes: Int64?
-    ) throws {
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
-        try FileManager.default.moveItem(at: partialURL, to: destinationURL)
-        if let expectedBytes {
-            updateRuntimeDownloadProgress(
-                RuntimeDownloadProgress(downloadedBytes: expectedBytes, totalBytes: expectedBytes)
-            )
-        }
-    }
-
-    private func fileSize(_ url: URL) -> Int64? {
-        guard let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber else {
-            return nil
-        }
-        return size.int64Value
-    }
-
-    private func resumableRuntimeArchiveSize(at partialURL: URL, expectedBytes: Int64?) -> Int64 {
-        guard let partialSize = fileSize(partialURL), partialSize > 0 else {
-            return 0
-        }
-
-        if let expectedBytes, partialSize >= expectedBytes {
-            try? FileManager.default.removeItem(at: partialURL)
-            return 0
-        }
-
-        return partialSize
-    }
-
-    private func shouldRetryRuntimeArchiveDownload(after error: Error) -> Bool {
-        guard let urlError = error as? URLError else {
-            return false
-        }
-        return [
-            .networkConnectionLost,
-            .timedOut,
-            .notConnectedToInternet,
-            .cannotConnectToHost,
-            .cannotFindHost,
-            .dnsLookupFailed
-        ].contains(urlError.code)
     }
 }
