@@ -149,6 +149,93 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertNotNil(metrics)
     }
 
+    func testExecuteMediaToolRetriesWhenStreamEndsWithoutCompletion() async {
+        let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
+        let executor = MockChatModelExecutor(eventBatches: [
+            [],
+            [
+                .image(assetURL),
+                .complete("Generated image.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
+            ]
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+        var updates: [ChatToolExecutionUpdate] = []
+
+        let outcome = await service.executeMediaTool(plan: makePlan()) { update in
+            updates.append(update)
+        }
+
+        XCTAssertEqual(executor.receivedRequests.count, 2)
+        XCTAssertEqual(executor.terminateCount, 1)
+        XCTAssertTrue(updates.contains(.progress("Restarting local engine...")))
+        XCTAssertTrue(updates.contains(.generatedAsset(assetURL, kind: .image)))
+        guard case .toolMessage(let content, let metrics) = outcome else {
+            XCTFail("Expected tool message outcome")
+            return
+        }
+        XCTAssertEqual(content, "Generated image.\nThe generated image is already displayed in the app UI.")
+        XCTAssertNotNil(metrics)
+    }
+
+    func testCompletedMediaToolWithoutAssetDoesNotRetry() async {
+        let executor = MockChatModelExecutor(events: [
+            .complete("", usage: TokenUsage(promptTokens: 1, completionTokens: 0))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+
+        let outcome = await service.executeMediaTool(plan: makePlan()) { _ in }
+
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(executor.terminateCount, 0)
+        guard case .toolMessage(let content, let metrics) = outcome else {
+            XCTFail("Expected tool message outcome")
+            return
+        }
+        XCTAssertEqual(content, "Image generation finished without returning an image.")
+        XCTAssertNotNil(metrics)
+    }
+
+    func testExecuteMediaToolReturnsFailureWhenStreamEndsWithoutCompletionTwice() async {
+        let executor = MockChatModelExecutor(eventBatches: [[], []])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+
+        let outcome = await service.executeMediaTool(plan: makePlan()) { _ in }
+
+        XCTAssertEqual(executor.receivedRequests.count, 2)
+        XCTAssertEqual(executor.terminateCount, 1)
+        guard case .failedToolMessage(let content, let engineMessage, let metrics) = outcome else {
+            XCTFail("Expected failed tool message outcome")
+            return
+        }
+        XCTAssertEqual(
+            content,
+            "Image generation unavailable: Python process stopped: Image generation stream ended before reporting completion."
+        )
+        XCTAssertEqual(
+            engineMessage,
+            "Local engine stopped: Python process stopped: Image generation stream ended before reporting completion."
+        )
+        XCTAssertNil(metrics)
+    }
+
     func testExecuteMediaToolReturnsCancelledWithoutRetryWhenTaskIsCancelled() async {
         let executor = ControlledMediaChatModelExecutor()
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
@@ -720,6 +807,47 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             viewModel.localEngineStatus.detail,
             "Local engine stopped: Traceback\nModuleNotFoundError: No module named 'mlx_vlm'"
         )
+    }
+
+    func testMediaToolFailureMarksLocalEngineNeedsAttention() async {
+        let toolCall = ExecutionToolCall(
+            id: "call_image",
+            function: ExecutionToolCallFunction(
+                name: "generate_image",
+                arguments: #"{"prompt":"Draw a quiet studio desk"}"#
+            )
+        )
+        let executor = MockChatModelExecutor(events: [
+            .toolCalls([toolCall])
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let toolExecutor = MockChatToolExecutionService(
+            mediaOutcome: .failedToolMessage(
+                "Image generation unavailable: Python process stopped",
+                localEngineErrorMessage: "Local engine stopped: Python process stopped"
+            )
+        )
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        XCTAssertEqual(
+            viewModel.chats.first?.messages.last?.content,
+            "Image generation unavailable: Python process stopped"
+        )
+        XCTAssertEqual(viewModel.localEngineStatus.state, .needsAttention)
+        XCTAssertEqual(viewModel.localEngineStatus.primaryAction, .restart)
+        XCTAssertEqual(viewModel.localEngineStatus.detail, "Local engine stopped: Python process stopped")
     }
 
     func testFreeLocalEngineMemoryTerminatesExecutorAndUpdatesStatus() async {

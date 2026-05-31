@@ -847,6 +847,84 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testLyricsDraftStreamEndingWithoutCompletionMarksEngineError() async {
+        let executor = SuspendedLyricsDraftExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Write a vocal synthpop song"
+
+        viewModel.draftMusicLyrics()
+        let didStartDraft = await waitUntil {
+            executor.streamCount == 1 && viewModel.isDraftingMusicLyrics
+        }
+        XCTAssertTrue(didStartDraft)
+        let task = viewModel.lyricsDraftTask
+
+        executor.finishStream(at: 0, events: [])
+        await task?.value
+
+        XCTAssertFalse(viewModel.isDraftingMusicLyrics)
+        XCTAssertNil(viewModel.lyricsDraftTask)
+        XCTAssertNil(viewModel.lyricsDraftToken)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+        XCTAssertEqual(viewModel.musicLyricsText, "")
+        XCTAssertFalse(viewModel.musicLyricsApproved)
+        XCTAssertEqual(
+            viewModel.localEngineErrorMessage,
+            "The local engine stopped before lyrics finished. Restart to continue."
+        )
+        XCTAssertEqual(viewModel.localEngineStatus.state, .needsAttention)
+        XCTAssertEqual(viewModel.localEngineStatus.primaryAction, .restart)
+    }
+
+    @MainActor
+    func testLyricsDraftStreamEndingAfterTokensKeepsPartialDraftAndMarksEngineError() async {
+        let executor = SuspendedLyricsDraftExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Write a vocal synthpop song"
+
+        viewModel.draftMusicLyrics()
+        let didStartDraft = await waitUntil {
+            executor.streamCount == 1 && viewModel.isDraftingMusicLyrics
+        }
+        XCTAssertTrue(didStartDraft)
+        let task = viewModel.lyricsDraftTask
+
+        executor.finishStream(
+            at: 0,
+            events: [
+                .token("```lyrics\n[verse]\nA partial line"),
+                .token("\n```")
+            ]
+        )
+        await task?.value
+
+        XCTAssertFalse(viewModel.isDraftingMusicLyrics)
+        XCTAssertNil(viewModel.lyricsDraftTask)
+        XCTAssertNil(viewModel.lyricsDraftToken)
+        XCTAssertTrue(viewModel.isMusicLyricsEditorVisible)
+        XCTAssertEqual(viewModel.musicLyricsText, "[verse]\nA partial line")
+        XCTAssertFalse(viewModel.musicLyricsApproved)
+        XCTAssertEqual(
+            viewModel.localEngineErrorMessage,
+            "The local engine stopped before lyrics finished. Restart to continue."
+        )
+        XCTAssertEqual(viewModel.localEngineStatus.state, .needsAttention)
+        XCTAssertEqual(viewModel.localEngineStatus.primaryAction, .restart)
+    }
+
+    @MainActor
     func testForegroundGenerationPreloadsModelBeforeExecute() async {
         let executor = QuickPromptTestExecutor()
         let viewModel = ChatViewModel(

@@ -52,7 +52,6 @@ final class ModelDownloadHelperExecutor {
         try finishDownloadHelperRun(
             result,
             modelId: modelId,
-            failureMessage: result.output.isEmpty ? result.errorOutput : result.output,
             onOutputLine: onOutputLine
         )
     }
@@ -81,7 +80,6 @@ final class ModelDownloadHelperExecutor {
     private func finishDownloadHelperRun(
         _ result: DownloadHelperProcessResult,
         modelId: String,
-        failureMessage: String,
         onOutputLine: @escaping @MainActor @Sendable (String) -> Void
     ) throws {
         lifecycle.clearProcess(for: modelId)
@@ -92,7 +90,68 @@ final class ModelDownloadHelperExecutor {
         }
 
         guard result.terminationStatus == 0 else {
-            throw ModelDownloadError.downloadFailed(failureMessage)
+            throw ModelDownloadError.downloadFailed(Self.failureMessage(for: result))
+        }
+    }
+
+    nonisolated static func failureMessage(for result: DownloadHelperProcessResult) -> String {
+        let stdoutLines = trimmedLines(from: result.output)
+
+        if let errorMessage = stdoutLines.compactMap(errorMessage).last {
+            return errorMessage
+        }
+
+        let stderr = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stderr.isEmpty {
+            return stderr
+        }
+
+        guard !stdoutLines.isEmpty else {
+            return "Download helper exited with status \(result.terminationStatus)."
+        }
+
+        let parsedEvents = stdoutLines.compactMap(ModelDownloadManager.parseDownloadEventLine)
+        if parsedEvents.count == stdoutLines.count {
+            return "Download helper exited with status \(result.terminationStatus) while \(lastStatusDescription(from: parsedEvents))."
+        }
+
+        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated static func trimmedLines(from text: String) -> [String] {
+        text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private nonisolated static func errorMessage(from line: String) -> String? {
+        guard case .error(let message) = ModelDownloadManager.parseDownloadEventLine(line) else {
+            return nil
+        }
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private nonisolated static func lastStatusDescription(from events: [ModelDownloadEvent]) -> String {
+        guard let event = events.last else { return "running" }
+
+        switch event {
+        case .started:
+            return "preparing"
+        case .progress(let status, let description, _, _, _, _, _):
+            let trimmedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedDescription = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if trimmedStatus.isEmpty {
+                return trimmedDescription.isEmpty ? "downloading" : trimmedDescription
+            }
+            return trimmedDescription.isEmpty ? trimmedStatus : "\(trimmedStatus): \(trimmedDescription)"
+        case .verified:
+            return "verifying"
+        case .complete:
+            return "finalizing"
+        case .error(let message):
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "failed" : trimmed
         }
     }
 

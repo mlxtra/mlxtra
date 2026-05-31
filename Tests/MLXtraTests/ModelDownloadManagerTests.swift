@@ -449,6 +449,54 @@ final class ModelDownloadManagerTests: XCTestCase {
         XCTAssertEqual(result.terminationStatus, 0)
     }
 
+    func testHelperFailureMessageUsesDownloadErrorEvent() {
+        let result = DownloadHelperProcessResult(
+            output: """
+            {"type":"download.started"}
+            {"type":"download.error","message":"component manifest missing"}
+            """,
+            errorOutput: "lower-level stderr",
+            terminationStatus: 2
+        )
+
+        XCTAssertEqual(
+            ModelDownloadHelperExecutor.failureMessage(for: result),
+            "component manifest missing"
+        )
+    }
+
+    func testHelperFailureMessagePrefersStderrOverStructuredProgressOutput() {
+        let result = DownloadHelperProcessResult(
+            output: """
+            {"type":"download.started"}
+            {"type":"download.progress","status":"Downloading","description":"model.safetensors"}
+            """,
+            errorOutput: "Traceback\nModuleNotFoundError: No module named 'huggingface_hub'",
+            terminationStatus: 2
+        )
+
+        XCTAssertEqual(
+            ModelDownloadHelperExecutor.failureMessage(for: result),
+            "Traceback\nModuleNotFoundError: No module named 'huggingface_hub'"
+        )
+    }
+
+    func testHelperFailureMessageAvoidsRawStructuredProgressWhenNoStderrExists() {
+        let result = DownloadHelperProcessResult(
+            output: """
+            {"type":"download.started"}
+            {"type":"download.complete"}
+            """,
+            errorOutput: "",
+            terminationStatus: 3
+        )
+
+        XCTAssertEqual(
+            ModelDownloadHelperExecutor.failureMessage(for: result),
+            "Download helper exited with status 3 while finalizing."
+        )
+    }
+
     @MainActor
     func testHelperExecutorUsesStderrForEmptyOutputFailure() async throws {
         let lifecycle = ModelDownloadLifecycle()

@@ -385,6 +385,7 @@ extension ChatViewModel {
             let stream = try await vlmExecutor.execute(request: request)
             guard ownsActiveLyricsDraft(draftToken) else { return }
             var draft = ""
+            var didComplete = false
             for await event in stream {
                 if Task.isCancelled || !ownsActiveLyricsDraft(draftToken) { return }
 
@@ -392,6 +393,7 @@ extension ChatViewModel {
                 case .token(let token):
                     draft += token
                 case .complete(let response, _):
+                    didComplete = true
                     draft = response
                 case .progress(let message):
                     loadingMessage = message
@@ -406,6 +408,15 @@ extension ChatViewModel {
 
             guard ownsActiveLyricsDraft(draftToken) else { return }
             let cleanedDraft = cleanLyricsDraft(draft)
+            guard didComplete else {
+                if !cleanedDraft.isEmpty {
+                    musicLyricsText = cleanedDraft
+                    musicLyricsApproved = false
+                }
+                isMusicLyricsEditorVisible = true
+                throw ExecutionError.processStopped("Lyrics draft stream ended before reporting completion.")
+            }
+
             if !cleanedDraft.isEmpty {
                 musicLyricsText = cleanedDraft
                 musicLyricsApproved = false
@@ -416,7 +427,25 @@ extension ChatViewModel {
         } catch {
             if Task.isCancelled || !ownsActiveLyricsDraft(draftToken) { return }
             isMusicLyricsEditorVisible = true
-            localEngineErrorMessage = "Could not generate lyrics. Paste lyrics or try again."
+            localEngineErrorMessage = lyricsDraftErrorMessage(for: error)
+        }
+    }
+
+    private func lyricsDraftErrorMessage(for error: Error) -> String {
+        guard let executionError = error as? ExecutionError else {
+            return "Could not generate lyrics. Paste lyrics or try again."
+        }
+
+        switch executionError {
+        case .processCrashed, .processNotRunning, .processStopped, .pipeWriteFailed, .timeout:
+            return "The local engine stopped before lyrics finished. Restart to continue."
+        case .pythonError(let message):
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty
+                ? "Could not generate lyrics. Paste lyrics or try again."
+                : "Could not generate lyrics: \(trimmed)"
+        default:
+            return "Could not generate lyrics. Paste lyrics or try again."
         }
     }
 

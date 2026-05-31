@@ -106,6 +106,17 @@ extension ChatViewModel {
                 toolCallId: toolCall.id,
                 name: plan.functionName
             ))
+        case .failedToolMessage(let content, let engineMessage, let metrics):
+            localEngineErrorMessage = engineMessage
+            if let messageId = targetMessageId, let metrics {
+                updateMessagePerformanceMetrics(messageId, metrics: metrics)
+            }
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: content,
+                toolCallId: toolCall.id,
+                name: plan.functionName
+            ))
         }
     }
 

@@ -54,7 +54,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
             }
         }
 
-        return .toolMessage("\(plan.unavailablePrefix): \(lastError?.localizedDescription ?? "Unknown error")")
+        return failedMediaToolOutcome(plan: plan, error: lastError)
     }
 
     private func shouldRetryMediaTool(_ error: Error) -> Bool {
@@ -68,6 +68,15 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         default:
             return false
         }
+    }
+
+    private func failedMediaToolOutcome(plan: ChatMediaToolExecutionPlan, error: Error?) -> ChatToolExecutionOutcome {
+        let rawDetail = error?.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let detail = rawDetail.isEmpty ? "Unknown error" : rawDetail
+        return .failedToolMessage(
+            "\(plan.unavailablePrefix): \(detail)",
+            localEngineErrorMessage: "Local engine stopped: \(detail)"
+        )
     }
 
     private func executeMediaToolAttempt(
@@ -89,6 +98,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
             try Task.checkCancellation()
             var generatedAssetURL: URL?
             var generationSummary = "\(plan.operationName) completed."
+            var didComplete = false
 
             for await event in stream {
                 if Task.isCancelled {
@@ -113,6 +123,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
                     firstOutputAt = firstOutputAt ?? Date()
                     observedTokenEvents += 1
                 case .complete(let response, let usage):
+                    didComplete = true
                     if !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         generationSummary = response
                     }
@@ -135,6 +146,10 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
 
             if generatedAssetURL != nil {
                 return .toolMessage("\(generationSummary)\n\(plan.completionHint)", metrics: metrics)
+            }
+
+            guard didComplete else {
+                throw ExecutionError.processStopped("\(plan.operationName) stream ended before reporting completion.")
             }
 
             return .toolMessage(plan.noOutputMessage, metrics: metrics)

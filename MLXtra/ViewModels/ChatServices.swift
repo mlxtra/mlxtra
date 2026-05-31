@@ -77,6 +77,7 @@ enum ChatToolExecutionUpdate: Equatable {
 
 enum ChatToolExecutionOutcome: Equatable {
     case toolMessage(String, metrics: GenerationPerformanceMetrics? = nil)
+    case failedToolMessage(String, localEngineErrorMessage: String, metrics: GenerationPerformanceMetrics? = nil)
     case downloadRequired(DownloadableModel)
     case cancelled
 }
