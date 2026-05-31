@@ -47,8 +47,21 @@ class VLMExecutor: NSObject, ModelExecutor {
     private var stderrPipe: Pipe?
 
     private let stdoutDispatcher = BridgeOutputDispatcher()
-    private let stdoutLineBuffer = BridgeLineBuffer()
     private let stderrBuffer = BridgeStderrBuffer(maxLines: 24)
+    private lazy var outputProcessor = VLMBridgeOutputProcessor(
+        dispatcher: stdoutDispatcher,
+        stderrBuffer: stderrBuffer,
+        log: { message in
+#if DEBUG
+            if VLMStreamDiagnostics.isEnabled {
+                VLMBridgeDiagnostics.log(message)
+            }
+#else
+            _ = message
+#endif
+        }
+    )
+    private let runtimeProvider: any VLMBridgeRuntimeProviding
     private var currentRequest: ExecutionRequest?
     private var currentModelCacheKey: String?
     private var retryCount: Int = 0
@@ -57,7 +70,8 @@ class VLMExecutor: NSObject, ModelExecutor {
     weak var delegate: VLMExecutionDelegate?
 
 
-    override init() {
+    init(runtimeProvider: any VLMBridgeRuntimeProviding = RuntimeManager()) {
+        self.runtimeProvider = runtimeProvider
         super.init()
     }
 
@@ -193,7 +207,7 @@ class VLMExecutor: NSObject, ModelExecutor {
 
 
     private func startBridge() async throws {
-        let runtimeManager = RuntimeManager()
+        let runtimeManager = runtimeProvider
         try await runtimeManager.initialize()
 
         let pythonPath = runtimeManager.pythonExecutablePath()
@@ -204,36 +218,12 @@ class VLMExecutor: NSObject, ModelExecutor {
         process?.arguments = [bridgePath.path]
         stderrBuffer.clear()
 
-        var cleanEnv = ProcessInfo.processInfo.environment
-        cleanEnv.removeValue(forKey: "PYTHONPATH")
-        cleanEnv.removeValue(forKey: "VIRTUAL_ENV")
-        cleanEnv.removeValue(forKey: "CONDA_PREFIX")
-        cleanEnv.removeValue(forKey: "CONDA_DEFAULT_ENV")
-        cleanEnv.removeValue(forKey: "PYENV_ROOT")
-        cleanEnv.removeValue(forKey: "PYENV_VERSION")
-
-        // Set PYTHONHOME to the bundled framework so the venv can find
-        // the standard library and C extension modules (math, select, etc.)
-        cleanEnv["PYTHONHOME"] = runtimeManager.pythonHomePath().path
-
-        cleanEnv["PYTHONDONTWRITEBYTECODE"] = "1"
-        cleanEnv["PYTHONUNBUFFERED"] = "1"
-        if VLMBridgeDiagnostics.isEnabled {
-            cleanEnv["MLXTRA_BRIDGE_DEBUG"] = "1"
-        } else {
-            cleanEnv.removeValue(forKey: "MLXTRA_BRIDGE_DEBUG")
-        }
-        cleanEnv["HF_HOME"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path
-        cleanEnv["HF_HUB_CACHE"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path
-        cleanEnv["ACESTEP_CHECKPOINTS_DIR"] = runtimeManager.checkpointsPath.path
-        cleanEnv["ACESTEP_PYTHON"] = runtimeManager.acestepPythonExecutablePath().path
-
-        // Disable Metal validation to prevent crashes with ACE-Step/MLX
-        // Metal validation can trigger false positives with certain compute shaders
-        cleanEnv["MTL_DEBUG_LAYER"] = "0"
-        cleanEnv["MTL_SHADER_VALIDATION"] = "0"
-
-        process?.environment = cleanEnv
+        process?.environment = VLMBridgeEnvironment.make(
+            pythonHomePath: runtimeManager.pythonHomePath(),
+            checkpointsPath: runtimeManager.checkpointsPath,
+            acestepPythonPath: runtimeManager.acestepPythonExecutablePath(),
+            bridgeDebugEnabled: VLMBridgeDiagnostics.isEnabled
+        )
 
         VLMBridgeDiagnostics.log("[VLMExecutor] Starting Python bridge at \(pythonPath.path)")
         VLMBridgeDiagnostics.log("[VLMExecutor] Bridge script at \(bridgePath.path)")
@@ -255,6 +245,7 @@ class VLMExecutor: NSObject, ModelExecutor {
             try await waitForReady(readyWaiter, timeout: 30.0)
         } catch {
             stdoutDispatcher.unregister(readyWaiter.handlerID)
+            await terminate()
             throw error
         }
     }
@@ -287,10 +278,11 @@ class VLMExecutor: NSObject, ModelExecutor {
                 guard let type = json["type"] as? String else { return }
                 if type == "system.ready" {
                     VLMBridgeDiagnostics.log("[VLMExecutor] Bridge is ready")
-                    Task { await readyState?.setReady() }
+                    readyState?.setReady()
                 } else if type == "error" {
                     let message = json["message"] as? String ?? "Unknown error"
                     VLMBridgeDiagnostics.log("[VLMExecutor] Bridge initialization error: \(message)")
+                    readyState?.setError(message)
                 }
             }
         )
@@ -301,7 +293,10 @@ class VLMExecutor: NSObject, ModelExecutor {
         let startTime = Date()
         defer { stdoutDispatcher.unregister(waiter.handlerID) }
 
-        while !(await waiter.state.isReady) {
+        while !waiter.state.isReady {
+            if let error = waiter.state.errorMessage {
+                throw ExecutionError.pythonError("Bridge initialization failed: \(error)")
+            }
             if process?.isRunning == false {
                 throw stoppedProcessError()
             }
@@ -312,81 +307,6 @@ class VLMExecutor: NSObject, ModelExecutor {
             try await Task.sleep(nanoseconds: 100_000_000) // 100ms
         }
     }
-
-/// Thread-safe ready state
-private actor ReadyState {
-    private(set) var isReady: Bool = false
-
-    func setReady() {
-        isReady = true
-    }
-}
-
-private struct ReadyWaiter {
-    let state: ReadyState
-    let handlerID: UUID
-}
-
-/// Thread-safe model loaded state using a class with lock for sync access from handlers
-private class ModelLoadedState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _isLoaded: Bool = false
-    private var _errorMessage: String? = nil
-
-    var isLoaded: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _isLoaded
-    }
-
-    var errorMessage: String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return _errorMessage
-    }
-
-    func setLoaded() {
-        lock.lock()
-        defer { lock.unlock() }
-        _isLoaded = true
-    }
-
-    func setError(_ message: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        _errorMessage = message
-    }
-}
-
-private struct ModelLoadWaiter {
-    let state: ModelLoadedState
-    let handlerID: UUID
-}
-
-private struct ResponseStreamHandle {
-    let stream: AsyncStream<ExecutionEvent>
-    let handlerID: UUID
-}
-
-private final class StreamFinishState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var finished = false
-
-    var isFinished: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return finished
-    }
-
-    func finish() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard !finished else { return false }
-        finished = true
-        return true
-    }
-}
 
     private func attemptExecute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
         currentRequest = request
@@ -404,45 +324,7 @@ private final class StreamFinishState: @unchecked Sendable {
             currentModelBackend = request.backend
         }
 
-        let messages = request.messages.map { $0.toDictionary() }
-        var payload: [String: Any] = [
-            "request_id": request.requestID,
-            "type": Self.messageType(for: request.backend),
-            "model": request.modelId,
-            "messages": messages,
-            "max_tokens": request.maxTokens,
-            "temperature": request.temperature,
-            "images": request.images?.map { $0.path } ?? []
-        ]
-
-        if let outputDirectory = request.outputDirectory {
-            payload["output_dir"] = outputDirectory.path
-        }
-
-        if let topP = request.topP {
-            payload["top_p"] = topP
-        }
-        if let topK = request.topK {
-            payload["top_k"] = topK
-        }
-        if let minP = request.minP {
-            payload["min_p"] = minP
-        }
-        if let repetitionPenalty = request.repetitionPenalty {
-            payload["repetition_penalty"] = repetitionPenalty
-        }
-
-        if let chatTemplateKwargs = request.chatTemplateKwargs {
-            payload["chat_template_kwargs"] = chatTemplateKwargs
-        }
-
-        if let tools = request.tools {
-            payload["tools"] = tools
-        }
-
-        if let parameters = request.parameters {
-            payload["parameters"] = parameters
-        }
+        let payload = VLMRequestPayloadBuilder.executionPayload(for: request)
 
         let responseStream = makeResponseStream(
             requestID: request.requestID,
@@ -475,15 +357,12 @@ private final class StreamFinishState: @unchecked Sendable {
         )
 
         let requestID = UUID().uuidString
-        var payload: [String: Any] = [
-            "request_id": requestID,
-            "type": "init",
-            "model_id": modelId,
-            "backend": backend.rawValue
-        ]
-        if let parameters {
-            payload["parameters"] = parameters
-        }
+        let payload = VLMRequestPayloadBuilder.modelLoadPayload(
+            requestID: requestID,
+            modelId: modelId,
+            backend: backend,
+            parameters: parameters
+        )
 
         let waiter = installModelLoadHandler(requestID: requestID, modelId: modelId, backend: backend)
 
@@ -510,7 +389,7 @@ private final class StreamFinishState: @unchecked Sendable {
                     || type == "model.loading"
                     || type == "error"
             },
-            handler: { [weak self, weak loadedState] json in
+            handler: { [weak loadedState] json in
                 guard let type = json["type"] as? String else { return }
                 switch type {
                 case "model.loaded", "model.initialized":
@@ -522,9 +401,7 @@ private final class StreamFinishState: @unchecked Sendable {
                         fallbackModelId: modelId,
                         fallbackBackend: backend
                     )
-                    Task { @MainActor in
-                        self?.delegate?.modelLoadingProgress(progress)
-                    }
+                    loadedState?.appendProgress(progress)
                     if let status = json["status"] as? String {
                         VLMBridgeDiagnostics.log("[VLMExecutor] Model loading status: \(status)")
                     }
@@ -548,7 +425,11 @@ private final class StreamFinishState: @unchecked Sendable {
 
         defer { stdoutDispatcher.unregister(waiter.handlerID) }
 
-        while !waiter.state.isLoaded {
+        while true {
+            emitPendingModelLoadProgress(from: waiter)
+            if waiter.state.isLoaded {
+                break
+            }
             if Task.isCancelled {
                 VLMBridgeDiagnostics.log("[VLMExecutor] waitForModelLoaded detected Task.isCancelled")
                 throw CancellationError()
@@ -565,36 +446,33 @@ private final class StreamFinishState: @unchecked Sendable {
             }
             try await Task.sleep(nanoseconds: 100_000_000) // 100ms
         }
+        emitPendingModelLoadProgress(from: waiter)
         VLMBridgeDiagnostics.log("[VLMExecutor] Model load complete, isModelLoaded will be set to true")
     }
 
-    private func sendRequest(_ payload: [String: Any]) async throws {
-        guard stdinPipe != nil else {
-            throw stoppedProcessError()
-        }
-
-        let data = try JSONSerialization.data(withJSONObject: payload)
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw ExecutionError.encodingFailed
-        }
-
-        let line = json + "\n"
-        guard let lineData = line.data(using: .utf8) else {
-            throw ExecutionError.encodingFailed
-        }
-
-        do {
-            try stdinPipe?.fileHandleForWriting.write(contentsOf: lineData)
-        } catch {
-            if process?.isRunning == false {
-                throw stoppedProcessError()
-            }
-            throw ExecutionError.pipeWriteFailed(error.localizedDescription)
+    private func emitPendingModelLoadProgress(from waiter: ModelLoadWaiter) {
+        for progress in waiter.state.drainProgress() {
+            delegate?.modelLoadingProgress(progress)
         }
     }
 
+    private func sendRequest(_ payload: [String: Any]) async throws {
+        guard let stdinHandle = stdinPipe?.fileHandleForWriting else {
+            throw stoppedProcessError()
+        }
+
+        try VLMBridgeRequestWriter.write(
+            payload,
+            to: stdinHandle,
+            processIsRunning: { [weak self] in self?.process?.isRunning },
+            stoppedProcessError: { [weak self] in
+                self?.stoppedProcessError() ?? .processNotRunning
+            }
+        )
+    }
+
     private func makeResponseStream(requestID: String, modelId: String, backend: RuntimeBackend) -> ResponseStreamHandle {
-        let responseBuilder = ResponseBuilder()
+        let responseParser = VLMResponseEventParser(modelId: modelId, backend: backend)
         let finishState = StreamFinishState()
         let handlerID = UUID()
         let dispatcher = stdoutDispatcher
@@ -607,15 +485,7 @@ private final class StreamFinishState: @unchecked Sendable {
                 id: handlerID,
                 requestID: requestID,
                 shouldHandle: { json in
-                    guard let type = json["type"] as? String else { return false }
-                    return type == "chat.completion.chunk"
-                        || type == "chat.completion.complete"
-                        || type == "chat.completion.tool_calls"
-                        || type == "image.generated"
-                        || type == "audio.generated"
-                        || type == "model.loading"
-                        || type == "model.loaded"
-                        || type == "error"
+                    VLMResponseEventParser.handles(json)
                 },
                 onEOF: {
                     guard finishState.finish() else { return }
@@ -635,109 +505,41 @@ private final class StreamFinishState: @unchecked Sendable {
                     VLMStreamDiagnostics.log("dispatch.received requestID=\(requestID) type=\(type)")
 #endif
 
-                    switch type {
-                    case "chat.completion.chunk":
-                        if let choices = json["choices"] as? [[String: Any]],
-                           let first = choices.first,
-                           let delta = first["delta"] as? [String: Any],
-                           let content = delta["content"] as? String {
-#if DEBUG
-                            let yieldStartedAt = VLMStreamDiagnostics.now()
-                            VLMStreamDiagnostics.log("chunk.received requestID=\(requestID) tokenChars=\(content.count)")
-#endif
-                            responseBuilder.append(content)
-                            continuation.yield(.token(content))
-#if DEBUG
-                            let yieldFinishedAt = VLMStreamDiagnostics.now()
-                            VLMStreamDiagnostics.log("chunk.yielded requestID=\(requestID) tokenChars=\(content.count) elapsedMs=\(String(format: "%.2f", (yieldFinishedAt - yieldStartedAt) * 1000))")
-#endif
-                        }
+                    guard let parsedResponse = responseParser.parse(json) else { return }
 
-                    case "chat.completion.complete":
-#if DEBUG
-                        VLMStreamDiagnostics.log("complete.received requestID=\(requestID)")
-#endif
-                        let completedContent: String
-                        if responseBuilder.fullResponse.isEmpty,
-                           let choices = json["choices"] as? [[String: Any]],
-                           let first = choices.first,
-                           let message = first["message"] as? [String: Any],
-                           let content = message["content"] as? String {
-                            completedContent = content
-                        } else {
-                            completedContent = responseBuilder.fullResponse
-                        }
-                        let usage = json["usage"] as? [String: Any]
-                        let performance = json["performance"] as? [String: Any]
-                        let tokenUsage = TokenUsage(
-                            promptTokens: usage?["prompt_tokens"] as? Int ?? 0,
-                            completionTokens: usage?["completion_tokens"] as? Int ?? 0,
-                            promptTokensPerSecond: bridgeDouble(performance?["prompt_tokens_per_second"]),
-                            generationTokensPerSecond: bridgeDouble(performance?["generation_tokens_per_second"])
-                                ?? bridgeDouble(performance?["tokens_per_second"]),
-                            peakMemoryGB: bridgeDouble(performance?["peak_memory_gb"])
-                        )
-                        continuation.yield(.complete(completedContent, usage: tokenUsage))
-                        if finishState.finish() {
-                            continuation.finish()
-                        }
-
-                    case "chat.completion.tool_calls":
-                        if let toolCallDicts = json["tool_calls"] as? [[String: Any]] {
-                            var parsedToolCalls: [ExecutionToolCall] = []
-                            for tcDict in toolCallDicts {
-                                if let id = tcDict["id"] as? String,
-                                   let fnDict = tcDict["function"] as? [String: Any],
-                                   let name = fnDict["name"] as? String,
-                                   let arguments = fnDict["arguments"] as? String {
-                                    parsedToolCalls.append(
-                                        ExecutionToolCall(
-                                            id: id,
-                                            function: ExecutionToolCallFunction(name: name, arguments: arguments)
-                                        )
-                                    )
-                                }
-                            }
-                            if !parsedToolCalls.isEmpty {
-                                continuation.yield(.toolCalls(parsedToolCalls))
-                            }
-                            if finishState.finish() {
-                                continuation.finish()
-                            }
-                        }
-
-                    case "image.generated":
-                        if let path = json["path"] as? String {
-                            continuation.yield(.image(URL(fileURLWithPath: path)))
-                        }
-
-                    case "audio.generated":
-                        if let path = json["path"] as? String {
-                            continuation.yield(.audio(URL(fileURLWithPath: path)))
-                        }
-
-                    case "model.loading":
-                        let progress = ModelLoadProgress.bridgeEvent(
-                            json,
-                            fallbackModelId: modelId,
-                            fallbackBackend: backend
-                        )
-                        continuation.yield(.progress(progress.detail ?? progress.phase.displayTitle))
-                        continuation.yield(.modelLoadProgress(progress))
-
-                    case "model.loaded":
+                    if type == "model.loaded" {
                         VLMBridgeDiagnostics.log("[VLMExecutor] Model load confirmed: \(json["model"] ?? "unknown")")
-
-                    case "error":
+                    } else if type == "error" {
                         let errorMessage = json["message"] as? String ?? "Unknown Python error"
                         VLMBridgeDiagnostics.log("[Python Error] \(errorMessage)")
-                        continuation.yield(.error(ExecutionError.pythonError(errorMessage)))
-                        if finishState.finish() {
-                            continuation.finish()
-                        }
+                    }
 
-                    default:
-                        break
+#if DEBUG
+                    if type == "chat.completion.chunk",
+                       case .token(let content) = parsedResponse.events.first {
+                            let yieldStartedAt = VLMStreamDiagnostics.now()
+                            VLMStreamDiagnostics.log("chunk.received requestID=\(requestID) tokenChars=\(content.count)")
+                            for event in parsedResponse.events {
+                                continuation.yield(event)
+                            }
+                            let yieldFinishedAt = VLMStreamDiagnostics.now()
+                            VLMStreamDiagnostics.log("chunk.yielded requestID=\(requestID) tokenChars=\(content.count) elapsedMs=\(String(format: "%.2f", (yieldFinishedAt - yieldStartedAt) * 1000))")
+                        } else {
+                            if type == "chat.completion.complete" {
+                                VLMStreamDiagnostics.log("complete.received requestID=\(requestID)")
+                            }
+                            for event in parsedResponse.events {
+                                continuation.yield(event)
+                            }
+                        }
+#else
+                    for event in parsedResponse.events {
+                        continuation.yield(event)
+                    }
+#endif
+
+                    if parsedResponse.finishesStream, finishState.finish() {
+                        continuation.finish()
                     }
                 }
             )
@@ -752,52 +554,26 @@ private final class StreamFinishState: @unchecked Sendable {
     }
 
     private func setupOutputHandlers() {
-        let dispatcher = stdoutDispatcher
-        let lineBuffer = stdoutLineBuffer
-        let stderrBuffer = stderrBuffer
+        let outputProcessor = outputProcessor
 
         stdoutPipe?.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
-                dispatcher.handleEOF()
+                outputProcessor.finishStdout()
                 return
             }
-            guard let output = String(data: data, encoding: .utf8),
-                  !output.isEmpty else { return }
 
-            for line in lineBuffer.append(output) {
-#if DEBUG
-                if VLMStreamDiagnostics.isEnabled {
-                    VLMBridgeDiagnostics.log("[VLMExecutor] Received: \(line.prefix(200))...")
-                }
-#endif
-
-                do {
-                    guard let lineData = line.data(using: .utf8),
-                          let json = try JSONSerialization.jsonObject(with: lineData) as? BridgeJSONMessage else {
-                        VLMBridgeDiagnostics.log("[VLMExecutor] Could not parse JSON or missing type field")
-                        continue
-                    }
-                    dispatcher.dispatch(json)
-                } catch {
-                    VLMBridgeDiagnostics.log("[VLMExecutor] Parse error: \(error)")
-                }
-            }
+            outputProcessor.appendStdout(data)
         }
 
         stderrPipe?.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
+                outputProcessor.finishStderr()
                 return
             }
-            guard let output = String(data: data, encoding: .utf8),
-                  !output.isEmpty else { return }
 
-            let lines = output.components(separatedBy: .newlines)
-            for line in lines where !line.isEmpty {
-                stderrBuffer.append(line)
-                VLMBridgeDiagnostics.log("[Python STDERR] \(line)")
-            }
+            outputProcessor.appendStderr(data)
         }
     }
 
@@ -818,16 +594,7 @@ private final class StreamFinishState: @unchecked Sendable {
     }
 
     nonisolated static func messageType(for backend: RuntimeBackend) -> String {
-        switch backend {
-        case .image:
-            return "image.generate"
-        case .audio:
-            return "audio.speech"
-        case .music:
-            return "music.generate"
-        case .vlm, .llm:
-            return "chat.completions"
-        }
+        VLMRequestPayloadBuilder.messageType(for: backend)
     }
 
     private func shouldRetry(error: Error, retryCount: Int) -> Bool {
@@ -847,172 +614,6 @@ private final class StreamFinishState: @unchecked Sendable {
         }
 
         return false
-    }
-}
-
-typealias BridgeJSONMessage = [String: Any]
-
-private func bridgeDouble(_ value: Any?) -> Double? {
-    if let value = value as? Double {
-        return value.isFinite ? value : nil
-    }
-    if let value = value as? Int {
-        return Double(value)
-    }
-    if let value = value as? NSNumber {
-        let doubleValue = value.doubleValue
-        return doubleValue.isFinite ? doubleValue : nil
-    }
-    return nil
-}
-
-struct BridgeOutputRoute {
-    let requestID: String?
-    let shouldHandle: @Sendable (BridgeJSONMessage) -> Bool
-    let onEOF: @Sendable () -> Void
-    let handler: @Sendable (BridgeJSONMessage) -> Void
-}
-
-final class BridgeOutputDispatcher: @unchecked Sendable {
-    private let lock = NSLock()
-    private var routes: [UUID: BridgeOutputRoute] = [:]
-
-    @discardableResult
-    func register(
-        id: UUID = UUID(),
-        requestID: String? = nil,
-        shouldHandle: @escaping @Sendable (BridgeJSONMessage) -> Bool = { _ in true },
-        onEOF: @escaping @Sendable () -> Void = {},
-        handler: @escaping @Sendable (BridgeJSONMessage) -> Void
-    ) -> UUID {
-        lock.lock()
-        routes[id] = BridgeOutputRoute(
-            requestID: requestID,
-            shouldHandle: shouldHandle,
-            onEOF: onEOF,
-            handler: handler
-        )
-        lock.unlock()
-        return id
-    }
-
-    func unregister(_ id: UUID) {
-        lock.lock()
-        routes.removeValue(forKey: id)
-        lock.unlock()
-    }
-
-    func removeAll() {
-        lock.lock()
-        routes.removeAll()
-        lock.unlock()
-    }
-
-    func dispatch(_ json: BridgeJSONMessage) {
-        let requestID = json["request_id"] as? String
-        let routes = snapshotRoutes()
-
-        for route in routes {
-            if let routeRequestID = route.requestID {
-                guard routeRequestID == requestID else { continue }
-            } else if requestID != nil {
-                continue
-            }
-
-            if route.shouldHandle(json) {
-                route.handler(json)
-            }
-        }
-    }
-
-    func handleEOF() {
-        for route in snapshotRoutes() {
-            route.onEOF()
-        }
-    }
-
-    private func snapshotRoutes() -> [BridgeOutputRoute] {
-        lock.lock()
-        let routes = Array(routes.values)
-        lock.unlock()
-        return routes
-    }
-}
-
-private final class BridgeStderrBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private let maxLines: Int
-    private var lines: [String] = []
-
-    init(maxLines: Int) {
-        self.maxLines = max(1, maxLines)
-    }
-
-    func append(_ line: String) {
-        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedLine.isEmpty else { return }
-
-        lock.lock()
-        lines.append(trimmedLine)
-        if lines.count > maxLines {
-            lines.removeFirst(lines.count - maxLines)
-        }
-        lock.unlock()
-    }
-
-    func clear() {
-        lock.lock()
-        lines.removeAll()
-        lock.unlock()
-    }
-
-    func summary() -> String {
-        lock.lock()
-        let snapshot = lines
-        lock.unlock()
-        return snapshot.joined(separator: "\n")
-    }
-}
-
-final class BridgeLineBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pending = ""
-
-    func append(_ output: String) -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-
-        pending += output
-        var lines: [String] = []
-
-        while let newlineRange = pending.range(of: "\n") {
-            let line = String(pending[..<newlineRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            pending.removeSubrange(...newlineRange.lowerBound)
-
-            if !line.isEmpty {
-                lines.append(line)
-            }
-        }
-
-        return lines
-    }
-}
-
-final class ResponseBuilder: @unchecked Sendable {
-    private var parts: [String] = []
-    private let lock = NSLock()
-
-    var fullResponse: String {
-        lock.lock()
-        defer { lock.unlock() }
-        return parts.joined()
-    }
-
-    func append(_ token: String) {
-        lock.lock()
-        parts.append(token)
-        lock.unlock()
     }
 }
 

@@ -50,6 +50,58 @@ enum StreamingMessageContentMutation {
     case replace(String)
 }
 
+struct ChatStreamPerformanceTracker {
+    let startedAt: Date
+    private(set) var firstOutputAt: Date?
+    private(set) var observedTokenEvents = 0
+
+    init(startedAt: Date = Date()) {
+        self.startedAt = startedAt
+    }
+
+    mutating func recordTokenOutput(at date: Date = Date()) {
+        recordFirstOutputIfNeeded(at: date)
+        observedTokenEvents += 1
+    }
+
+    mutating func recordNonTokenOutput(at date: Date = Date()) {
+        recordFirstOutputIfNeeded(at: date)
+    }
+
+    func appMeasuredMetrics(
+        usage: TokenUsage,
+        completedAt: Date = Date()
+    ) -> GenerationPerformanceMetrics {
+        GenerationPerformanceMetrics.measured(
+            startedAt: startedAt,
+            firstOutputAt: firstOutputAt,
+            completedAt: completedAt,
+            outputTokenCount: outputTokenCount(for: usage)
+        )
+    }
+
+    func metrics(
+        usage: TokenUsage,
+        completedAt: Date = Date()
+    ) -> GenerationPerformanceMetrics {
+        GenerationPerformanceMetrics.measured(
+            startedAt: startedAt,
+            firstOutputAt: firstOutputAt,
+            completedAt: completedAt,
+            outputTokenCount: outputTokenCount(for: usage),
+            backendTokensPerSecond: usage.tokensPerSecond
+        )
+    }
+
+    private mutating func recordFirstOutputIfNeeded(at date: Date) {
+        firstOutputAt = firstOutputAt ?? date
+    }
+
+    private func outputTokenCount(for usage: TokenUsage) -> Int {
+        usage.completionTokens > 0 ? usage.completionTokens : observedTokenEvents
+    }
+}
+
 @MainActor
 final class StreamingMessageContentStore {
     private var entries: [UUID: StreamingMessageContent] = [:]

@@ -500,6 +500,11 @@ def _coerce_int_parameter(value: Any, default: int) -> int:
     return number
 
 
+def _coerce_positive_int_parameter(value: Any, default: int) -> int:
+    number = _coerce_int_parameter(value, default)
+    return number if number > 0 else default
+
+
 def _first_present_parameter(*values: Any, default: Any = None) -> Any:
     for value in values:
         if value is None:
@@ -929,10 +934,6 @@ def handle_chat_completion(request: dict) -> None:
     """Handle chat.completions request - transparent proxy to mlx-vlm"""
     request_started_at = time.perf_counter()
     imports_started_at = time.perf_counter()
-    from mlx_vlm import stream_generate
-    from mlx_vlm.prompt_utils import apply_chat_template
-    import mlx.core as mx
-    send_timing("chat.imports", imports_started_at, request=request)
 
     _mono = time.monotonic
     _last_flush = _mono()
@@ -952,6 +953,10 @@ def handle_chat_completion(request: dict) -> None:
     chat_template_kwargs = request.get("chat_template_kwargs", {})
 
     try:
+        from mlx_vlm import stream_generate
+        from mlx_vlm.prompt_utils import apply_chat_template
+        send_timing("chat.imports", imports_started_at, request=request)
+
         model_was_cached = model_id in MODEL_REGISTRY
         model_ready_started_at = time.perf_counter()
         model, processor, config = load_model_if_needed(model_id, request=request)
@@ -1204,8 +1209,6 @@ def _generate_speech_segments(
 
 def handle_image_generation(request: dict) -> None:
     """Handle image.generate request via mflux"""
-    import mlx.core as mx
-
     model_id = request.get("model")
     if not model_id:
         send_json({"type": "error", "message": "No model provided for image generation"}, request=request)
@@ -1217,16 +1220,30 @@ def handle_image_generation(request: dict) -> None:
     parameters = request.get("parameters", {}) or {}
     if not isinstance(parameters, dict):
         parameters = {}
-    width = int(parameters.get("width") or request.get("width", 1024))
-    height = int(parameters.get("height") or request.get("height", 1024))
-    steps = int(parameters.get("steps") or request.get("steps", 4))
-    guidance = float(parameters.get("guidance") or request.get("guidance", 1.0))
-    seed = int(
-        _first_present_parameter(
-            parameters.get("seed"),
-            request.get("seed"),
-            default=time.time_ns() % 2_147_483_647,
-        )
+    width_value = _first_present_parameter(
+        parameters.get("width"), request.get("width"), default=1024
+    )
+    height_value = _first_present_parameter(
+        parameters.get("height"), request.get("height"), default=1024
+    )
+    steps_value = _first_present_parameter(
+        parameters.get("steps"), request.get("steps"), default=4
+    )
+    guidance_value = _first_present_parameter(
+        parameters.get("guidance"), request.get("guidance"), default=1.0
+    )
+    default_seed = time.time_ns() % 2_147_483_647
+    seed_value = _first_present_parameter(
+        parameters.get("seed"), request.get("seed"), default=default_seed
+    )
+
+    width = _coerce_positive_int_parameter(width_value, 1024)
+    height = _coerce_positive_int_parameter(height_value, 1024)
+    steps = _coerce_positive_int_parameter(steps_value, 4)
+    guidance = _coerce_float_parameter(guidance_value, 1.0)
+    seed = _coerce_int_parameter(
+        seed_value,
+        default_seed,
     )
 
     if not prompt:
@@ -1311,8 +1328,6 @@ def handle_image_generation(request: dict) -> None:
 
 def handle_audio_speech(request: dict) -> None:
     """Handle text-to-speech request via mlx-audio."""
-    import mlx.core as mx
-
     model_id = request.get("model")
     if not model_id:
         send_json({"type": "error", "message": "No model provided for speech generation"}, request=request)
@@ -1395,6 +1410,7 @@ def handle_audio_speech(request: dict) -> None:
         if len(audio_segments) == 1:
             audio = audio_segments[0]
         else:
+            import mlx.core as mx
             audio = mx.concatenate(audio_segments, axis=0)
 
         _write_wav(output_path, audio, sample_rate=sample_rate)

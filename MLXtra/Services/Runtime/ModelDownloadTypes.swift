@@ -40,6 +40,101 @@ final class DownloadErrorTracker: @unchecked Sendable {
     }
 }
 
+@MainActor
+struct ModelDownloadStateCoordinator {
+    struct RefreshSnapshot: Equatable {
+        let stateVersion: Int
+        let refreshVersion: Int
+    }
+
+    private var stateVersions: [String: Int] = [:]
+    private var refreshVersions: [String: Int] = [:]
+    private var downloadTokens: [String: UUID] = [:]
+
+    mutating func captureRefreshSnapshot(for modelId: String) -> RefreshSnapshot {
+        refreshVersions[modelId, default: 0] += 1
+        return RefreshSnapshot(
+            stateVersion: stateVersions[modelId] ?? 0,
+            refreshVersion: refreshVersions[modelId] ?? 0
+        )
+    }
+
+    func canApplyRefresh(
+        _ snapshot: RefreshSnapshot,
+        for modelId: String,
+        currentState: ModelDownloadManager.DownloadState?
+    ) -> Bool {
+        (stateVersions[modelId] ?? 0) == snapshot.stateVersion
+            && (refreshVersions[modelId] ?? 0) == snapshot.refreshVersion
+            && currentState?.isDownloading != true
+            && currentState?.isPaused != true
+    }
+
+    mutating func recordStateChange(for modelId: String) {
+        stateVersions[modelId, default: 0] += 1
+    }
+
+    mutating func beginDownload(for modelId: String) -> UUID {
+        let token = UUID()
+        downloadTokens[modelId] = token
+        return token
+    }
+
+    func isActiveDownload(_ token: UUID, for modelId: String) -> Bool {
+        downloadTokens[modelId] == token
+    }
+
+    mutating func finishDownload(_ token: UUID, for modelId: String) -> Bool {
+        guard isActiveDownload(token, for: modelId) else { return false }
+        downloadTokens[modelId] = nil
+        return true
+    }
+}
+
+enum ModelDownloadFailureAction: Equatable {
+    case pause(ModelDownloadManager.DownloadProgress?)
+    case cancel
+    case fail(String)
+    case suppress
+}
+
+@MainActor
+struct ModelDownloadFailureResolver {
+    private let progressTracker: ModelDownloadProgressTracker
+
+    init(progressTracker: ModelDownloadProgressTracker) {
+        self.progressTracker = progressTracker
+    }
+
+    func action(
+        for error: Error,
+        modelId: String,
+        stopReason: DownloadStopReason?,
+        currentState: ModelDownloadManager.DownloadState?,
+        helperErrorWasReceived: Bool
+    ) -> ModelDownloadFailureAction {
+        if let stopReason {
+            switch stopReason {
+            case .pause:
+                return .pause(
+                    progressTracker.pauseProgress(
+                        for: modelId,
+                        currentState: currentState
+                    )
+                )
+            case .cancel:
+                return .cancel
+            }
+        }
+
+        guard !helperErrorWasReceived else {
+            return .suppress
+        }
+
+        return .fail(error.localizedDescription)
+    }
+}
+
 extension ModelDownloadManager {
     struct DownloadProgress: Equatable {
         let status: String
@@ -193,12 +288,15 @@ extension ModelDownloadManager {
 
 enum ModelDownloadError: LocalizedError {
     case downloadFailed(String)
+    case removalStillStopping
     case stoppedByUser
 
     var errorDescription: String? {
         switch self {
         case .downloadFailed(let message):
             return message
+        case .removalStillStopping:
+            return "Model removal is still waiting for the active download to stop. Try again in a moment."
         case .stoppedByUser:
             return "Download stopped."
         }

@@ -15,8 +15,16 @@ extension ChatViewModel {
         streamingContentStore.content(for: messageId)
     }
 
-    func beginToolCallProgress(toolName: String, status: String, icon: String, details: [ToolCallDetail] = []) {
-        guard let messageId = streamingMessageId else { return }
+    func beginToolCallProgress(
+        toolName: String,
+        status: String,
+        icon: String,
+        details: [ToolCallDetail] = [],
+        messageId: UUID? = nil,
+        generationID: UUID? = nil
+    ) {
+        guard ownsActiveGeneration(generationID),
+              let messageId = messageId ?? streamingMessageId else { return }
 
         appendToolCall(
             ToolCall(
@@ -40,18 +48,28 @@ extension ChatViewModel {
         return details + [ToolCallDetail(label: "Model", value: trimmedModelName)]
     }
 
-    func executeMediaToolCall(_ toolCall: ExecutionToolCall, messages: inout [ExecutionMessage], plan: ChatMediaToolExecutionPlan) async {
+    func executeMediaToolCall(
+        _ toolCall: ExecutionToolCall,
+        messages: inout [ExecutionMessage],
+        plan: ChatMediaToolExecutionPlan,
+        generationID: UUID? = nil
+    ) async {
+        guard ownsActiveGeneration(generationID) else { return }
+        let targetMessageId = streamingMessageId
+
         loadingMessage = plan.loadingStatus
         setActiveEngineModel(name: plan.model.name, role: localEngineModelRole(for: plan))
         beginToolCallProgress(
             toolName: plan.toolName,
             status: plan.status,
             icon: plan.icon,
-            details: toolCallDetails(plan.details, includingModel: plan.model.name)
+            details: toolCallDetails(plan.details, includingModel: plan.model.name),
+            messageId: targetMessageId,
+            generationID: generationID
         )
 
         let outcome = await toolExecutor.executeMediaTool(plan: plan) { [weak self] update in
-            guard let self else { return }
+            guard let self, self.ownsActiveGeneration(generationID) else { return }
 
             switch update {
             case .progress(let message):
@@ -60,13 +78,16 @@ extension ChatViewModel {
                 self.modelLoadProgress = progress
                 self.loadingMessage = progress.detail ?? progress.phase.displayTitle
             case .generatedAsset(let url, let kind):
-                if let messageId = self.streamingMessageId {
+                if let messageId = targetMessageId {
                     self.attachGeneratedAsset(url, kind: kind, toMessage: messageId)
                 }
             }
         }
 
+        guard ownsActiveGeneration(generationID) else { return }
         switch outcome {
+        case .cancelled:
+            return
         case .downloadRequired(let model):
             requestDownloadBeforeUse(model: model)
             messages.append(ExecutionMessage(
@@ -76,7 +97,7 @@ extension ChatViewModel {
                 name: plan.functionName
             ))
         case .toolMessage(let content, let metrics):
-            if let messageId = streamingMessageId, let metrics {
+            if let messageId = targetMessageId, let metrics {
                 updateMessagePerformanceMetrics(messageId, metrics: metrics)
             }
             messages.append(ExecutionMessage(
@@ -245,18 +266,21 @@ extension ChatViewModel {
         }
     }
 
-    func contextMessages(from chat: Chat, excluding excludedMessageId: UUID) -> [Message] {
-        let completedMessages = chat.messages.filter { message in
-            message.id != excludedMessageId && !message.isStreaming
-        }
+    func handleGenerationError(
+        _ error: Error,
+        replacingMessageId messageId: UUID? = nil,
+        generationID: UUID? = nil,
+        isMusicGeneration: Bool = false
+    ) {
+        guard ownsActiveGeneration(generationID) else { return }
 
-        return Array(completedMessages.suffix(20))
-    }
-
-    func handleGenerationError(_ error: Error, replacingMessageId messageId: UUID? = nil) {
         if error is CancellationError {
             print("[ChatVM] Ignoring cancellation error: \(error)")
             return
+        }
+
+        if isMusicGeneration {
+            activeMusicGenerationDraft = nil
         }
 
         print("Generation error: \(error)")
@@ -291,11 +315,13 @@ extension ChatViewModel {
         }
 
         isGenerating = false
+        isPythonLoading = false
         isModelLoading = false
         streamingMessageId = nil
         generationTask = nil
         activeGenerationID = nil
         loadingMessage = ""
+        modelLoadProgress = nil
     }
 
     private func userFacingErrorMessage(for error: Error) -> String {
@@ -374,6 +400,7 @@ extension ChatViewModel {
 
 extension ChatViewModel: VLMExecutionDelegate {
     func modelLoadingStarted(modelId: String) {
+        guard acceptsModelLoadStart(modelId: modelId) else { return }
         if modelLoadProgress == nil {
             modelLoadProgress = ModelLoadProgress(
                 modelId: modelId,
@@ -385,20 +412,40 @@ extension ChatViewModel: VLMExecutionDelegate {
     }
 
     func modelLoadingProgress(_ progress: ModelLoadProgress) {
+        guard acceptsModelLoadProgress(progress) else { return }
         modelLoadProgress = progress
         loadingMessage = progress.detail ?? progress.phase.displayTitle
     }
 
     func modelLoadingCompleted(modelId: String) {
+        guard acceptsModelLoadEvent(modelId: modelId) else { return }
         isModelLoading = false
         loadingMessage = ""
         modelLoadProgress = nil
     }
 
     func modelLoadingFailed(modelId: String, error: Error) {
+        guard acceptsModelLoadEvent(modelId: modelId) else { return }
         isModelLoading = false
         loadingMessage = ""
         modelLoadProgress = nil
+    }
+
+    private func acceptsModelLoadProgress(_ progress: ModelLoadProgress) -> Bool {
+        guard let currentProgress = modelLoadProgress else {
+            return isModelLoading || isPreloadingLocalModel || isPythonLoading
+        }
+        return currentProgress.modelId == progress.modelId
+    }
+
+    private func acceptsModelLoadStart(modelId: String) -> Bool {
+        guard let currentProgress = modelLoadProgress else { return true }
+        return currentProgress.modelId == modelId
+    }
+
+    private func acceptsModelLoadEvent(modelId: String) -> Bool {
+        guard let currentProgress = modelLoadProgress else { return false }
+        return currentProgress.modelId == modelId
     }
 
     func executionWillRetry(attempt: Int) {

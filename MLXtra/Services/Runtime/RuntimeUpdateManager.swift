@@ -25,17 +25,21 @@ final class RuntimeUpdateManager: ObservableObject {
 
     private let currentManifestProvider: () -> RuntimeManifest?
     private let appVersionProvider: () -> String?
+    private let channelSession: URLSession
     private let runtimeArchiveInstaller: RuntimeArchiveInstaller
     private let runtimeArchiveDownloadConfiguration: URLSessionConfiguration
     private let runtimeArchiveCacheDirectory: URL
     private var backgroundTask: Task<Void, Never>?
-    private var runtimeDownloadSpeedSamples: [(date: Date, bytes: Int64)] = []
+    private var activeRefreshID: UUID?
+    private var activeInstallID: UUID?
+    private var runtimeDownloadSpeedTracker = RuntimeDownloadSpeedTracker()
 
     init(
         currentManifestProvider: @escaping () -> RuntimeManifest? = { RuntimeManager.activeRuntimeManifest() },
         appVersionProvider: @escaping () -> String? = {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         },
+        channelSession: URLSession = .shared,
         runtimeArchiveInstaller: @escaping RuntimeArchiveInstaller = { archiveURL, progressHandler in
             try RuntimeManager.installRuntimeArchive(archiveURL, progressHandler: progressHandler)
         },
@@ -46,6 +50,7 @@ final class RuntimeUpdateManager: ObservableObject {
     ) {
         self.currentManifestProvider = currentManifestProvider
         self.appVersionProvider = appVersionProvider
+        self.channelSession = channelSession
         self.runtimeArchiveInstaller = runtimeArchiveInstaller
         self.runtimeArchiveDownloadConfiguration = runtimeArchiveDownloadConfiguration
         self.runtimeArchiveCacheDirectory = runtimeArchiveCacheDirectory
@@ -94,16 +99,22 @@ final class RuntimeUpdateManager: ObservableObject {
         channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
         reportFailures: Bool = true
     ) async {
+        guard !isInstalling else { return }
+
+        let refreshID = UUID()
+        activeRefreshID = refreshID
         state = .checking
         newerRuntimeRequiringAppUpdate = nil
         do {
-            let (data, response) = try await URLSession.shared.data(from: channelURL)
+            let (data, response) = try await channelSession.data(from: channelURL)
+            guard isCurrentRefresh(refreshID) else { return }
             if let httpResponse = response as? HTTPURLResponse,
                !(200...299).contains(httpResponse.statusCode) {
                 throw RuntimeUpdateError.channelUnavailable
             }
 
             let manifest = try JSONDecoder().decode(ReleaseChannelManifest.self, from: data)
+            guard isCurrentRefresh(refreshID) else { return }
             channel = manifest
 
             let selection = runtimeUpdateSelection(in: manifest)
@@ -116,10 +127,15 @@ final class RuntimeUpdateManager: ObservableObject {
             } else {
                 state = .idle
             }
+            finishRefresh(refreshID)
         } catch is CancellationError {
+            guard isCurrentRefresh(refreshID) else { return }
             state = .idle
+            finishRefresh(refreshID)
         } catch {
+            guard isCurrentRefresh(refreshID) else { return }
             state = reportFailures ? .failed(error.localizedDescription) : .idle
+            finishRefresh(refreshID)
         }
     }
 
@@ -128,6 +144,9 @@ final class RuntimeUpdateManager: ObservableObject {
             return
         }
 
+        let installID = UUID()
+        activeInstallID = installID
+        activeRefreshID = nil
         installingRuntime = asset
         installPhase = .downloading
         resetRuntimeDownloadMetrics()
@@ -136,13 +155,15 @@ final class RuntimeUpdateManager: ObservableObject {
             : RuntimeDownloadProgress(downloadedBytes: 0, totalBytes: asset.sizeBytes)
         state = asset.url.isFileURL || asset.sizeBytes == nil ? .installing(nil) : .installing(0)
         do {
-            let archiveURL = try await fetchRuntimeArchive(asset)
+            let archiveURL = try await fetchRuntimeArchive(asset, installID: installID)
+            guard isCurrentInstall(installID) else { return }
             let expectedSHA256 = asset.sha256
             installPhase = .verifying
             state = .installing(nil)
             let actualChecksum = try await Task.detached(priority: .utility) {
                 try SHA256Checksum.hexDigest(for: archiveURL)
             }.value
+            guard isCurrentInstall(installID) else { return }
             guard actualChecksum.caseInsensitiveCompare(expectedSHA256) == .orderedSame else {
                 try? FileManager.default.removeItem(at: archiveURL)
                 throw RuntimeUpdateError.checksumMismatch
@@ -155,56 +176,84 @@ final class RuntimeUpdateManager: ObservableObject {
                 completedStep: 1,
                 totalSteps: 5
             )
-            let installer = runtimeArchiveInstaller
-            let installedURL = try await Task.detached(priority: .utility) {
-                try installer(archiveURL) { progress in
-                    Task { @MainActor [weak self] in
-                        self?.updateRuntimeActivationProgress(progress)
-                    }
-                }
-            }.value
+            let installedURL = try await installRuntimeArchiveWithStructuredProgress(archiveURL, installID: installID)
+            guard isCurrentInstall(installID) else { return }
             guard let manifest = RuntimeManager.runtimeManifest(at: installedURL) else {
                 throw RuntimeUpdateError.invalidRuntime
             }
             let runtimeVersion = manifest.runtimeVersion
-            installPhase = .idle
-            runtimeDownloadProgress = nil
-            runtimeActivationProgress = nil
-            resetRuntimeDownloadMetrics()
+            clearInstallProgress()
             state = .installed(runtimeVersion)
             installingRuntime = nil
+            finishInstall(installID)
         } catch is CancellationError {
-            installPhase = .idle
-            runtimeDownloadProgress = nil
-            runtimeActivationProgress = nil
-            resetRuntimeDownloadMetrics()
+            guard isCurrentInstall(installID) else { return }
+            clearInstallProgress()
             state = .idle
             installingRuntime = nil
+            finishInstall(installID)
         } catch {
-            installPhase = .idle
-            runtimeDownloadProgress = nil
-            runtimeActivationProgress = nil
-            resetRuntimeDownloadMetrics()
+            guard isCurrentInstall(installID) else { return }
+            clearInstallProgress()
             state = .failed(error.localizedDescription)
             installingRuntime = nil
+            finishInstall(installID)
         }
     }
 
-    private func updateRuntimeActivationProgress(_ progress: RuntimeActivationProgress) {
-        guard case .installing = state, installPhase == .activating else {
+    private var isInstalling: Bool {
+        if case .installing = state {
+            return true
+        }
+        return activeInstallID != nil
+    }
+
+    private func isCurrentRefresh(_ refreshID: UUID) -> Bool {
+        activeRefreshID == refreshID
+    }
+
+    private func finishRefresh(_ refreshID: UUID) {
+        if activeRefreshID == refreshID {
+            activeRefreshID = nil
+        }
+    }
+
+    private func isCurrentInstall(_ installID: UUID) -> Bool {
+        activeInstallID == installID
+    }
+
+    private func finishInstall(_ installID: UUID) {
+        if activeInstallID == installID {
+            activeInstallID = nil
+        }
+    }
+
+    private func clearInstallProgress() {
+        installPhase = .idle
+        runtimeDownloadProgress = nil
+        runtimeActivationProgress = nil
+        resetRuntimeDownloadMetrics()
+    }
+
+    private func updateRuntimeActivationProgress(_ progress: RuntimeActivationProgress, installID: UUID) {
+        guard isCurrentInstall(installID),
+              case .installing = state,
+              installPhase == .activating else {
             return
         }
         runtimeActivationProgress = progress
         state = .installing(progress.fractionCompleted)
     }
 
-    private func updateRuntimeDownloadProgress(_ progress: RuntimeDownloadProgress) {
-        guard case .installing = state, installPhase == .downloading else {
+    private func updateRuntimeDownloadProgress(_ progress: RuntimeDownloadProgress, installID: UUID) {
+        guard isCurrentInstall(installID),
+              case .installing = state,
+              installPhase == .downloading else {
             return
         }
 
         let now = Date()
-        let bytesPerSecond = measuredRuntimeDownloadSpeed(for: progress, at: now)
+        let bytesPerSecond = runtimeDownloadSpeedTracker.bytesPerSecond(for: progress, at: now)
         let measuredProgress = RuntimeDownloadProgress(
             downloadedBytes: progress.downloadedBytes,
             totalBytes: progress.totalBytes,
@@ -214,41 +263,8 @@ final class RuntimeUpdateManager: ObservableObject {
         state = .installing(measuredProgress.fractionCompleted)
     }
 
-    private func measuredRuntimeDownloadSpeed(
-        for progress: RuntimeDownloadProgress,
-        at date: Date
-    ) -> Double? {
-        let downloadedBytes = progress.downloadedBytes
-        if let lastSample = runtimeDownloadSpeedSamples.last {
-            if downloadedBytes < lastSample.bytes || date.timeIntervalSince(lastSample.date) > 12 {
-                runtimeDownloadSpeedSamples.removeAll()
-            }
-        }
-
-        if runtimeDownloadSpeedSamples.last?.bytes != downloadedBytes {
-            runtimeDownloadSpeedSamples.append((date, downloadedBytes))
-        }
-
-        let cutoff = date.addingTimeInterval(-8)
-        while runtimeDownloadSpeedSamples.count > 2,
-              let secondSample = runtimeDownloadSpeedSamples.dropFirst().first,
-              secondSample.date < cutoff {
-            runtimeDownloadSpeedSamples.removeFirst()
-        }
-
-        guard let firstSample = runtimeDownloadSpeedSamples.first,
-              let lastSample = runtimeDownloadSpeedSamples.last,
-              lastSample.bytes > firstSample.bytes else {
-            return nil
-        }
-
-        let seconds = lastSample.date.timeIntervalSince(firstSample.date)
-        guard seconds >= 0.05 else { return nil }
-        return Double(lastSample.bytes - firstSample.bytes) / seconds
-    }
-
     private func resetRuntimeDownloadMetrics() {
-        runtimeDownloadSpeedSamples.removeAll()
+        runtimeDownloadSpeedTracker.reset()
     }
 
     private func startBackgroundTask(_ operation: @escaping @MainActor (RuntimeUpdateManager) async -> Void) {
@@ -328,7 +344,7 @@ final class RuntimeUpdateManager: ObservableObject {
         )
     }
 
-    private func fetchRuntimeArchive(_ asset: RuntimeReleaseAsset) async throws -> URL {
+    private func fetchRuntimeArchive(_ asset: RuntimeReleaseAsset, installID: UUID) async throws -> URL {
         if asset.url.isFileURL {
             return asset.url
         }
@@ -359,23 +375,90 @@ final class RuntimeUpdateManager: ObservableObject {
             }
         )
 
-        _ = try await downloader.download(
-            request: URLRequest(url: asset.url),
-            destinationURL: destination,
-            temporaryURL: partial,
-            expectedBytes: asset.sizeBytes,
-            validateResponse: { response in
-                try Self.validateRuntimeArchiveHTTPResponse(response)
-            }
-        ) { [weak self] bytesWritten in
-            Task { @MainActor in
+        _ = try await downloadRuntimeArchive(
+            downloader: downloader,
+            asset: asset,
+            destination: destination,
+            partial: partial,
+            installID: installID
+        )
+
+        return destination
+    }
+
+    private func downloadRuntimeArchive(
+        downloader: StreamingFileDownloader,
+        asset: RuntimeReleaseAsset,
+        destination: URL,
+        partial: URL,
+        installID: UUID
+    ) async throws -> StreamingFileDownloadResult {
+        let (progressStream, progressContinuation) = AsyncStream.makeStream(
+            of: Int64.self,
+            bufferingPolicy: .unbounded
+        )
+        let progressTask = Task<Void, Never> { @MainActor [weak self] in
+            for await bytesWritten in progressStream {
                 self?.updateRuntimeDownloadProgress(
-                    RuntimeDownloadProgress(downloadedBytes: bytesWritten, totalBytes: asset.sizeBytes)
+                    RuntimeDownloadProgress(downloadedBytes: bytesWritten, totalBytes: asset.sizeBytes),
+                    installID: installID
                 )
             }
         }
 
-        return destination
+        do {
+            let result = try await downloader.download(
+                request: URLRequest(url: asset.url),
+                destinationURL: destination,
+                temporaryURL: partial,
+                expectedBytes: asset.sizeBytes,
+                validateResponse: { response in
+                    try Self.validateRuntimeArchiveHTTPResponse(response)
+                },
+                onProgress: { bytesWritten in
+                    progressContinuation.yield(bytesWritten)
+                }
+            )
+            progressContinuation.finish()
+            await progressTask.value
+            return result
+        } catch {
+            progressContinuation.finish()
+            progressTask.cancel()
+            await progressTask.value
+            throw error
+        }
+    }
+
+    private func installRuntimeArchiveWithStructuredProgress(_ archiveURL: URL, installID: UUID) async throws -> URL {
+        let installer = runtimeArchiveInstaller
+        let (progressStream, progressContinuation) = AsyncStream.makeStream(
+            of: RuntimeActivationProgress.self,
+            bufferingPolicy: .unbounded
+        )
+        let progressTask = Task<Void, Never> { @MainActor [weak self] in
+            for await progress in progressStream {
+                self?.updateRuntimeActivationProgress(progress, installID: installID)
+            }
+        }
+        let installerTask = Task.detached(priority: .utility) {
+            defer { progressContinuation.finish() }
+            return try installer(archiveURL) { progress in
+                progressContinuation.yield(progress)
+            }
+        }
+
+        do {
+            let installedURL = try await installerTask.value
+            await progressTask.value
+            return installedURL
+        } catch {
+            installerTask.cancel()
+            progressContinuation.finish()
+            progressTask.cancel()
+            await progressTask.value
+            throw error
+        }
     }
 
     private nonisolated static func validateRuntimeArchiveHTTPResponse(_ response: URLResponse) throws {

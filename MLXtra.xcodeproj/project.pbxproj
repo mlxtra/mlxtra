@@ -19,6 +19,12 @@
 		8A010001000000000000000B /* Tool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100B /* Tool.swift */; };
 		8A010001000000000000000D /* ModelExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100D /* ModelExecutor.swift */; };
 		8A010001000000000000000E /* VLMExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100E /* VLMExecutor.swift */; };
+		8A0100010000000000000033 /* VLMBridgeIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001033 /* VLMBridgeIO.swift */; };
+		8A0100010000000000000038 /* VLMBridgeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001038 /* VLMBridgeState.swift */; };
+		8A0100010000000000000039 /* VLMBridgeEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001039 /* VLMBridgeEnvironment.swift */; };
+		8A010001000000000000003A /* VLMBridgeRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000103A /* VLMBridgeRuntime.swift */; };
+		8A010001000000000000003C /* VLMResponseEventParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000103C /* VLMResponseEventParser.swift */; };
+		8A010001000000000000003D /* VLMRequestPayloadBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000103D /* VLMRequestPayloadBuilder.swift */; };
 		8A010001000000000000000F /* RuntimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000100F /* RuntimeManager.swift */; };
 		8A0100010000000000000010 /* python_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001011 /* python_bridge.py */; };
 		8A0100010000000000000012 /* MCPWebSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001015 /* MCPWebSearchService.swift */; };
@@ -41,6 +47,18 @@
 		8A090001000000000000000F /* ModelDownloadEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000100F /* ModelDownloadEvents.swift */; };
 		8A0900010000000000000010 /* ModelDownloadLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001010 /* ModelDownloadLifecycle.swift */; };
 		8A0900010000000000000011 /* ModelDownloadStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001011 /* ModelDownloadStorage.swift */; };
+		8A0900010000000000000012 /* ModelDownloadHelperExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001012 /* ModelDownloadHelperExecutor.swift */; };
+		8A0900010000000000000013 /* ModelDownloadProgressTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001013 /* ModelDownloadProgressTracker.swift */; };
+		8A0900010000000000000014 /* NativeModelManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001014 /* NativeModelManifest.swift */; };
+		8A0900010000000000000015 /* NativeModelDownloadError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001015 /* NativeModelDownloadError.swift */; };
+		8A0900010000000000000016 /* NativeModelDownloadProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001016 /* NativeModelDownloadProgress.swift */; };
+		8A0900010000000000000017 /* RuntimeDownloadSpeedTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001017 /* RuntimeDownloadSpeedTracker.swift */; };
+		8A0900010000000000000018 /* ModelStoragePaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001018 /* ModelStoragePaths.swift */; };
+		8A0900010000000000000019 /* ModelSnapshotValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001019 /* ModelSnapshotValidator.swift */; };
+		8A090001000000000000001A /* NativeModelDownloadMarkerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000101A /* NativeModelDownloadMarkerStore.swift */; };
+		8A090001000000000000001B /* NativeModelDownloadRequestBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000101B /* NativeModelDownloadRequestBuilder.swift */; };
+		8A090001000000000000001C /* NativeModelManifestClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000101C /* NativeModelManifestClient.swift */; };
+		8A090001000000000000001D /* NativeModelFileVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000101D /* NativeModelFileVerifier.swift */; };
 		8A0900010000000000000002 /* runtime in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001012 /* runtime */; };
 		8A0100010000000000000018 /* acestep_bridge.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001018 /* acestep_bridge.py */; };
 		8A0100010000000000000019 /* ComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001019 /* ComposerView.swift */; };
@@ -55,11 +73,20 @@
 		8A010001000000000000001C /* PromptConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101C /* PromptConfiguration.swift */; };
 		8A010001000000000000001D /* ChatComposerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101D /* ChatComposerModels.swift */; };
 		8A010001000000000000001E /* ChatServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101E /* ChatServices.swift */; };
+		8A010001000000000000003E /* ChatExecutionRequestBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000103E /* ChatExecutionRequestBuilder.swift */; };
+		8A010001000000000000003F /* ChatMediaToolPlanBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000103F /* ChatMediaToolPlanBuilder.swift */; };
+		8A0100010000000000000040 /* ChatMusicToolPlanBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001040 /* ChatMusicToolPlanBuilder.swift */; };
+		8A0100010000000000000041 /* ChatExecutionMessageBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001041 /* ChatExecutionMessageBuilder.swift */; };
 		8A010001000000000000001F /* ChatViewModel+Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101F /* ChatViewModel+Composer.swift */; };
 		8A0100010000000000000020 /* ChatViewModel+Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001020 /* ChatViewModel+Models.swift */; };
 		8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001021 /* ChatViewModel+Messages.swift */; };
 		8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001022 /* ChatViewModel+Tooling.swift */; };
 		8A0500010000000000000016 /* ChatViewModel+Streaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0500010000000000001016 /* ChatViewModel+Streaming.swift */; };
+		8A0100010000000000000034 /* ChatViewModel+Conversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001034 /* ChatViewModel+Conversation.swift */; };
+		8A0100010000000000000035 /* ChatViewModel+Generation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001035 /* ChatViewModel+Generation.swift */; };
+		8A0100010000000000000036 /* ChatPersistenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001036 /* ChatPersistenceService.swift */; };
+		8A0100010000000000000037 /* ChatToolExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001037 /* ChatToolExecutionService.swift */; };
+		8A010001000000000000003B /* PlainTextToolCallParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000103B /* PlainTextToolCallParser.swift */; };
 		8A0100010000000000000023 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001023 /* UITestSupport.swift */; };
 		8A0100010000000000000024 /* ImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001024 /* ImageCache.swift */; };
 		8A0100010000000000000025 /* AudioPlayerCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0100010000000000001025 /* AudioPlayerCache.swift */; };
@@ -129,6 +156,12 @@
 		8A010001000000000000100B /* Tool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tool.swift; sourceTree = "<group>"; };
 		8A010001000000000000100D /* ModelExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelExecutor.swift; sourceTree = "<group>"; };
 		8A010001000000000000100E /* VLMExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMExecutor.swift; sourceTree = "<group>"; };
+		8A0100010000000000001033 /* VLMBridgeIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMBridgeIO.swift; sourceTree = "<group>"; };
+		8A0100010000000000001038 /* VLMBridgeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMBridgeState.swift; sourceTree = "<group>"; };
+		8A0100010000000000001039 /* VLMBridgeEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMBridgeEnvironment.swift; sourceTree = "<group>"; };
+		8A010001000000000000103A /* VLMBridgeRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMBridgeRuntime.swift; sourceTree = "<group>"; };
+		8A010001000000000000103C /* VLMResponseEventParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMResponseEventParser.swift; sourceTree = "<group>"; };
+		8A010001000000000000103D /* VLMRequestPayloadBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VLMRequestPayloadBuilder.swift; sourceTree = "<group>"; };
 		8A010001000000000000100F /* RuntimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeManager.swift; sourceTree = "<group>"; };
 		8A0100010000000000001010 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		8A0100010000000000001011 /* python_bridge.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = python_bridge.py; sourceTree = "<group>"; };
@@ -145,10 +178,19 @@
 		8A010001000000000000101C /* PromptConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptConfiguration.swift; sourceTree = "<group>"; };
 		8A010001000000000000101D /* ChatComposerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposerModels.swift; sourceTree = "<group>"; };
 		8A010001000000000000101E /* ChatServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatServices.swift; sourceTree = "<group>"; };
+		8A010001000000000000103E /* ChatExecutionRequestBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatExecutionRequestBuilder.swift; sourceTree = "<group>"; };
+		8A010001000000000000103F /* ChatMediaToolPlanBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMediaToolPlanBuilder.swift; sourceTree = "<group>"; };
+		8A0100010000000000001040 /* ChatMusicToolPlanBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMusicToolPlanBuilder.swift; sourceTree = "<group>"; };
+		8A0100010000000000001041 /* ChatExecutionMessageBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatExecutionMessageBuilder.swift; sourceTree = "<group>"; };
 		8A010001000000000000101F /* ChatViewModel+Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Composer.swift"; sourceTree = "<group>"; };
 		8A0100010000000000001020 /* ChatViewModel+Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Models.swift"; sourceTree = "<group>"; };
 		8A0100010000000000001021 /* ChatViewModel+Messages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Messages.swift"; sourceTree = "<group>"; };
 		8A0100010000000000001022 /* ChatViewModel+Tooling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Tooling.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001034 /* ChatViewModel+Conversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Conversation.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001035 /* ChatViewModel+Generation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewModel+Generation.swift"; sourceTree = "<group>"; };
+		8A0100010000000000001036 /* ChatPersistenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPersistenceService.swift; sourceTree = "<group>"; };
+		8A0100010000000000001037 /* ChatToolExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatToolExecutionService.swift; sourceTree = "<group>"; };
+		8A010001000000000000103B /* PlainTextToolCallParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlainTextToolCallParser.swift; sourceTree = "<group>"; };
 		8A0100010000000000001023 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
 		8A0100010000000000001024 /* ImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCache.swift; sourceTree = "<group>"; };
 		8A0100010000000000001025 /* AudioPlayerCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerCache.swift; sourceTree = "<group>"; };
@@ -214,6 +256,18 @@
 		8A090001000000000000100F /* ModelDownloadEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadEvents.swift; sourceTree = "<group>"; };
 		8A0900010000000000001010 /* ModelDownloadLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadLifecycle.swift; sourceTree = "<group>"; };
 		8A0900010000000000001011 /* ModelDownloadStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadStorage.swift; sourceTree = "<group>"; };
+		8A0900010000000000001012 /* ModelDownloadHelperExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadHelperExecutor.swift; sourceTree = "<group>"; };
+		8A0900010000000000001013 /* ModelDownloadProgressTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadProgressTracker.swift; sourceTree = "<group>"; };
+		8A0900010000000000001014 /* NativeModelManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelManifest.swift; sourceTree = "<group>"; };
+		8A0900010000000000001015 /* NativeModelDownloadError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelDownloadError.swift; sourceTree = "<group>"; };
+		8A0900010000000000001016 /* NativeModelDownloadProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelDownloadProgress.swift; sourceTree = "<group>"; };
+		8A0900010000000000001017 /* RuntimeDownloadSpeedTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDownloadSpeedTracker.swift; sourceTree = "<group>"; };
+		8A0900010000000000001018 /* ModelStoragePaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelStoragePaths.swift; sourceTree = "<group>"; };
+		8A0900010000000000001019 /* ModelSnapshotValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSnapshotValidator.swift; sourceTree = "<group>"; };
+		8A090001000000000000101A /* NativeModelDownloadMarkerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelDownloadMarkerStore.swift; sourceTree = "<group>"; };
+		8A090001000000000000101B /* NativeModelDownloadRequestBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelDownloadRequestBuilder.swift; sourceTree = "<group>"; };
+		8A090001000000000000101C /* NativeModelManifestClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelManifestClient.swift; sourceTree = "<group>"; };
+		8A090001000000000000101D /* NativeModelFileVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeModelFileVerifier.swift; sourceTree = "<group>"; };
 		8A0500010000000000001018 /* StreamingMarkdownSplitter+Parsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamingMarkdownSplitter+Parsing.swift"; sourceTree = "<group>"; };
 		8A0700010000000000001001 /* AppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -314,8 +368,17 @@
 				8A0100010000000000001021 /* ChatViewModel+Messages.swift */,
 				8A0100010000000000001022 /* ChatViewModel+Tooling.swift */,
 				8A0500010000000000001016 /* ChatViewModel+Streaming.swift */,
+				8A0100010000000000001034 /* ChatViewModel+Conversation.swift */,
+				8A0100010000000000001035 /* ChatViewModel+Generation.swift */,
 				8A010001000000000000101D /* ChatComposerModels.swift */,
 				8A010001000000000000101E /* ChatServices.swift */,
+				8A010001000000000000103E /* ChatExecutionRequestBuilder.swift */,
+				8A010001000000000000103F /* ChatMediaToolPlanBuilder.swift */,
+				8A0100010000000000001040 /* ChatMusicToolPlanBuilder.swift */,
+				8A0100010000000000001041 /* ChatExecutionMessageBuilder.swift */,
+				8A0100010000000000001036 /* ChatPersistenceService.swift */,
+				8A0100010000000000001037 /* ChatToolExecutionService.swift */,
+				8A010001000000000000103B /* PlainTextToolCallParser.swift */,
 				8A010001000000000000101B /* LocalEngineStatus.swift */,
 			);
 			path = ViewModels;
@@ -398,6 +461,12 @@
 		8A0100010000000000003011 /* VLM */ = {
 			isa = PBXGroup;
 			children = (
+				8A0100010000000000001033 /* VLMBridgeIO.swift */,
+				8A0100010000000000001038 /* VLMBridgeState.swift */,
+				8A0100010000000000001039 /* VLMBridgeEnvironment.swift */,
+				8A010001000000000000103A /* VLMBridgeRuntime.swift */,
+				8A010001000000000000103C /* VLMResponseEventParser.swift */,
+				8A010001000000000000103D /* VLMRequestPayloadBuilder.swift */,
 				8A010001000000000000100E /* VLMExecutor.swift */,
 			);
 			path = VLM;
@@ -412,9 +481,12 @@
 				8A0900010000000000001007 /* RuntimeManifest.swift */,
 				8A0900010000000000001008 /* RuntimeUpdateTypes.swift */,
 				8A0900010000000000001009 /* RuntimeUpdateManager.swift */,
+				8A0900010000000000001017 /* RuntimeDownloadSpeedTracker.swift */,
 				8A090001000000000000100A /* RuntimeBundleLocator.swift */,
 				8A090001000000000000100B /* RuntimeBundleInstaller.swift */,
+				8A0900010000000000001018 /* ModelStoragePaths.swift */,
 				8A090001000000000000100C /* ModelStorageProbe.swift */,
+				8A0900010000000000001019 /* ModelSnapshotValidator.swift */,
 				8A090001000000000000100D /* RuntimeEnvironment.swift */,
 				8A010001000000000000100F /* RuntimeManager.swift */,
 				8A0100010000000000001017 /* ModelDownloadManager.swift */,
@@ -422,7 +494,16 @@
 				8A090001000000000000100F /* ModelDownloadEvents.swift */,
 				8A0900010000000000001010 /* ModelDownloadLifecycle.swift */,
 				8A0900010000000000001011 /* ModelDownloadStorage.swift */,
+				8A0900010000000000001012 /* ModelDownloadHelperExecutor.swift */,
+				8A0900010000000000001013 /* ModelDownloadProgressTracker.swift */,
 				8A0500010000000000001017 /* DownloadHelperProcessRunner.swift */,
+				8A0900010000000000001014 /* NativeModelManifest.swift */,
+				8A0900010000000000001015 /* NativeModelDownloadError.swift */,
+				8A0900010000000000001016 /* NativeModelDownloadProgress.swift */,
+				8A090001000000000000101A /* NativeModelDownloadMarkerStore.swift */,
+				8A090001000000000000101B /* NativeModelDownloadRequestBuilder.swift */,
+				8A090001000000000000101C /* NativeModelManifestClient.swift */,
+				8A090001000000000000101D /* NativeModelFileVerifier.swift */,
 				8A0900010000000000001001 /* NativeModelDownloadService.swift */,
 				8A0900010000000000001003 /* StreamingFileDownloader.swift */,
 			);
@@ -606,15 +687,30 @@
 				8A0100010000000000000021 /* ChatViewModel+Messages.swift in Sources */,
 				8A0100010000000000000022 /* ChatViewModel+Tooling.swift in Sources */,
 				8A0500010000000000000016 /* ChatViewModel+Streaming.swift in Sources */,
+				8A0100010000000000000034 /* ChatViewModel+Conversation.swift in Sources */,
+				8A0100010000000000000035 /* ChatViewModel+Generation.swift in Sources */,
 				8A0100010000000000000023 /* UITestSupport.swift in Sources */,
 				8A010001000000000000001D /* ChatComposerModels.swift in Sources */,
 				8A010001000000000000001E /* ChatServices.swift in Sources */,
+				8A010001000000000000003E /* ChatExecutionRequestBuilder.swift in Sources */,
+				8A010001000000000000003F /* ChatMediaToolPlanBuilder.swift in Sources */,
+				8A0100010000000000000040 /* ChatMusicToolPlanBuilder.swift in Sources */,
+				8A0100010000000000000041 /* ChatExecutionMessageBuilder.swift in Sources */,
+				8A0100010000000000000036 /* ChatPersistenceService.swift in Sources */,
+				8A0100010000000000000037 /* ChatToolExecutionService.swift in Sources */,
+				8A010001000000000000003B /* PlainTextToolCallParser.swift in Sources */,
 				8A010001000000000000001B /* LocalEngineStatus.swift in Sources */,
 				8A0100010000000000000013 /* SettingsView.swift in Sources */,
 				8A010001000000000000000A /* Chat.swift in Sources */,
 				8A010001000000000000000B /* Tool.swift in Sources */,
 				8A010001000000000000001C /* PromptConfiguration.swift in Sources */,
 				8A010001000000000000000D /* ModelExecutor.swift in Sources */,
+				8A0100010000000000000033 /* VLMBridgeIO.swift in Sources */,
+				8A0100010000000000000038 /* VLMBridgeState.swift in Sources */,
+				8A0100010000000000000039 /* VLMBridgeEnvironment.swift in Sources */,
+				8A010001000000000000003A /* VLMBridgeRuntime.swift in Sources */,
+				8A010001000000000000003C /* VLMResponseEventParser.swift in Sources */,
+				8A010001000000000000003D /* VLMRequestPayloadBuilder.swift in Sources */,
 				8A010001000000000000000E /* VLMExecutor.swift in Sources */,
 				8A0900010000000000000004 /* RuntimeDiagnostics.swift in Sources */,
 				8A0900010000000000000005 /* ProcessPipeReader.swift in Sources */,
@@ -622,9 +718,12 @@
 				8A0900010000000000000007 /* RuntimeManifest.swift in Sources */,
 				8A0900010000000000000008 /* RuntimeUpdateTypes.swift in Sources */,
 				8A0900010000000000000009 /* RuntimeUpdateManager.swift in Sources */,
+				8A0900010000000000000017 /* RuntimeDownloadSpeedTracker.swift in Sources */,
 				8A090001000000000000000A /* RuntimeBundleLocator.swift in Sources */,
 				8A090001000000000000000B /* RuntimeBundleInstaller.swift in Sources */,
+				8A0900010000000000000018 /* ModelStoragePaths.swift in Sources */,
 				8A090001000000000000000C /* ModelStorageProbe.swift in Sources */,
+				8A0900010000000000000019 /* ModelSnapshotValidator.swift in Sources */,
 				8A090001000000000000000D /* RuntimeEnvironment.swift in Sources */,
 				8A010001000000000000000F /* RuntimeManager.swift in Sources */,
 				8A0100010000000000000014 /* ModelDownloadManager.swift in Sources */,
@@ -632,7 +731,16 @@
 				8A090001000000000000000F /* ModelDownloadEvents.swift in Sources */,
 				8A0900010000000000000010 /* ModelDownloadLifecycle.swift in Sources */,
 				8A0900010000000000000011 /* ModelDownloadStorage.swift in Sources */,
+				8A0900010000000000000012 /* ModelDownloadHelperExecutor.swift in Sources */,
+				8A0900010000000000000013 /* ModelDownloadProgressTracker.swift in Sources */,
 				8A0500010000000000000017 /* DownloadHelperProcessRunner.swift in Sources */,
+				8A0900010000000000000014 /* NativeModelManifest.swift in Sources */,
+				8A0900010000000000000015 /* NativeModelDownloadError.swift in Sources */,
+				8A0900010000000000000016 /* NativeModelDownloadProgress.swift in Sources */,
+				8A090001000000000000001A /* NativeModelDownloadMarkerStore.swift in Sources */,
+				8A090001000000000000001B /* NativeModelDownloadRequestBuilder.swift in Sources */,
+				8A090001000000000000001C /* NativeModelManifestClient.swift in Sources */,
+				8A090001000000000000001D /* NativeModelFileVerifier.swift in Sources */,
 				8A0900010000000000000001 /* NativeModelDownloadService.swift in Sources */,
 				8A0900010000000000000003 /* StreamingFileDownloader.swift in Sources */,
 				8A0700010000000000000001 /* AppUpdateController.swift in Sources */,

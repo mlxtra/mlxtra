@@ -2,6 +2,74 @@ import XCTest
 @testable import MLXtra
 
 final class VLMExecutorBridgeOutputDispatcherTests: XCTestCase {
+    func testOutputProcessorDispatchesSplitStdoutJSON() {
+        let dispatcher = BridgeOutputDispatcher()
+        let processor = VLMBridgeOutputProcessor(
+            dispatcher: dispatcher,
+            stderrBuffer: BridgeStderrBuffer(maxLines: 4)
+        )
+        let readyExpectation = expectation(description: "ready message dispatched")
+        let line = #"{"type":"system.ready","message":"hello 🌍"}"#
+        var data = Data(line.utf8)
+        data.append(0x0A)
+        let splitIndex = data.firstIndex(of: 0xF0) ?? data.startIndex
+
+        dispatcher.register(
+            shouldHandle: { json in
+                json["type"] as? String == "system.ready"
+            }
+        ) { json in
+            XCTAssertEqual(json["message"] as? String, "hello 🌍")
+            readyExpectation.fulfill()
+        }
+
+        processor.appendStdout(Data(data[..<data.index(splitIndex, offsetBy: 2)]))
+        processor.appendStdout(Data(data[data.index(splitIndex, offsetBy: 2)...]))
+
+        wait(for: [readyExpectation], timeout: 0.5)
+    }
+
+    func testOutputProcessorFlushesTrailingStdoutAndSignalsEOF() {
+        let dispatcher = BridgeOutputDispatcher()
+        let processor = VLMBridgeOutputProcessor(
+            dispatcher: dispatcher,
+            stderrBuffer: BridgeStderrBuffer(maxLines: 4)
+        )
+        let readyExpectation = expectation(description: "trailing message dispatched")
+        let eofExpectation = expectation(description: "EOF handler called")
+
+        dispatcher.register(
+            shouldHandle: { json in
+                json["type"] as? String == "system.ready"
+            },
+            onEOF: {
+                eofExpectation.fulfill()
+            }
+        ) { _ in
+            readyExpectation.fulfill()
+        }
+
+        processor.appendStdout(Data(#"{"type":"system.ready"}"#.utf8))
+        processor.finishStdout()
+
+        wait(for: [readyExpectation, eofExpectation], timeout: 0.5)
+    }
+
+    func testOutputProcessorBuffersSplitStderrUTF8() {
+        let stderrBuffer = BridgeStderrBuffer(maxLines: 4)
+        let processor = VLMBridgeOutputProcessor(
+            dispatcher: BridgeOutputDispatcher(),
+            stderrBuffer: stderrBuffer
+        )
+        let data = Data("trace 🌍 line\n".utf8)
+        let splitIndex = data.firstIndex(of: 0xF0) ?? data.startIndex
+
+        processor.appendStderr(Data(data[..<data.index(splitIndex, offsetBy: 2)]))
+        processor.appendStderr(Data(data[data.index(splitIndex, offsetBy: 2)...]))
+
+        XCTAssertEqual(stderrBuffer.summary(), "trace 🌍 line")
+    }
+
     func testDispatcherRoutesMessagesByRequestID() {
         let dispatcher = BridgeOutputDispatcher()
         let matchingExpectation = expectation(description: "matching route called")

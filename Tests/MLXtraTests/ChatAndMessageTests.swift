@@ -222,6 +222,52 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertEqual(metrics.tokensPerSecond, 4.5)
     }
 
+    func testChatStreamPerformanceTrackerFallsBackToObservedTokenEvents() {
+        var tracker = ChatStreamPerformanceTracker(startedAt: Date(timeIntervalSince1970: 100))
+
+        tracker.recordTokenOutput(at: Date(timeIntervalSince1970: 101))
+        tracker.recordTokenOutput(at: Date(timeIntervalSince1970: 102))
+        tracker.recordNonTokenOutput(at: Date(timeIntervalSince1970: 103))
+
+        let metrics = tracker.metrics(
+            usage: TokenUsage(promptTokens: 4, completionTokens: 0),
+            completedAt: Date(timeIntervalSince1970: 111)
+        )
+
+        XCTAssertEqual(metrics.timeToFirstToken, 1)
+        XCTAssertEqual(metrics.outputTokenCount, 2)
+        XCTAssertEqual(metrics.tokensPerSecond, 0.2)
+    }
+
+    func testChatStreamPerformanceTrackerPrefersUsageCompletionAndBackendRate() {
+        var tracker = ChatStreamPerformanceTracker(startedAt: Date(timeIntervalSince1970: 100))
+
+        tracker.recordNonTokenOutput(at: Date(timeIntervalSince1970: 101))
+        tracker.recordTokenOutput(at: Date(timeIntervalSince1970: 102))
+
+        let metrics = tracker.metrics(
+            usage: TokenUsage(
+                promptTokens: 4,
+                completionTokens: 8,
+                generationTokensPerSecond: 12.5
+            ),
+            completedAt: Date(timeIntervalSince1970: 111)
+        )
+        let appMeasured = tracker.appMeasuredMetrics(
+            usage: TokenUsage(
+                promptTokens: 4,
+                completionTokens: 8,
+                generationTokensPerSecond: 12.5
+            ),
+            completedAt: Date(timeIntervalSince1970: 111)
+        )
+
+        XCTAssertEqual(metrics.timeToFirstToken, 1)
+        XCTAssertEqual(metrics.outputTokenCount, 8)
+        XCTAssertEqual(metrics.tokensPerSecond, 12.5)
+        XCTAssertEqual(appMeasured.tokensPerSecond, 0.8)
+    }
+
     func testMessageDecodingWithLegacyToolCallKey() throws {
         let jsonString = """
         {

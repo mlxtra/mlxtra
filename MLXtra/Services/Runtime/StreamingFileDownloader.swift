@@ -5,7 +5,7 @@ struct StreamingFileDownloadResult {
     let bytesWritten: Int64
 }
 
-final class StreamingFileDownloader {
+final class StreamingFileDownloader: @unchecked Sendable {
     typealias ResponseValidator = @Sendable (URLResponse) throws -> Void
     typealias ErrorPolicy = @Sendable (Error) -> Bool
     typealias RetryDelay = @Sendable (Int) async throws -> Void
@@ -50,6 +50,7 @@ final class StreamingFileDownloader {
         var attempt = 0
         var lastError: Error?
         while attempt < maxAttempts {
+            try Task.checkCancellation()
             attempt += 1
             let resumeOffset = Self.resumableDownloadSize(
                 at: temporaryURL,
@@ -71,6 +72,7 @@ final class StreamingFileDownloader {
 
             do {
                 let result = try await stream.start()
+                try Task.checkCancellation()
                 try validateResponse(result.response)
                 if fileManager.fileExists(atPath: destinationURL.path) {
                     try fileManager.removeItem(at: destinationURL)
@@ -134,6 +136,10 @@ final class StreamingFileDownloader {
     }
 
     static func shouldPreservePartialDownload(after error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
         guard let urlError = error as? URLError else {
             return false
         }
@@ -181,6 +187,7 @@ final class StreamingFileDownload: NSObject, URLSessionDataDelegate, @unchecked 
     }
 
     func start() async throws -> StreamingFileDownloadResult {
+        try Task.checkCancellation()
         try preparePartialFile()
 
         return try await withTaskCancellationHandler {
@@ -191,8 +198,12 @@ final class StreamingFileDownload: NSObject, URLSessionDataDelegate, @unchecked 
                 let task = session.dataTask(with: request())
                 self.session = session
                 self.task = task
+                let shouldCancelImmediately = Task.isCancelled
                 lock.unlock()
 
+                if shouldCancelImmediately {
+                    task.cancel()
+                }
                 task.resume()
             }
         } onCancel: {

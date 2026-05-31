@@ -1,0 +1,83 @@
+import Foundation
+
+enum ChatMediaToolPlanBuilder {
+    static func makeImagePlan(
+        decodedArguments: [String: Any]?,
+        fallbackPrompt: String,
+        images: [URL],
+        generation: ChatGenerationRequest,
+        outputDirectory: URL
+    ) -> ChatMediaToolExecutionPlan {
+        let imagePrompt = nonEmptyStringArgument("prompt", from: decodedArguments) ?? fallbackPrompt
+        let imageProfile = generation.profile(for: .image)
+        let model = imageProfile.downloadableModel
+
+        return ChatMediaToolExecutionPlan(
+            functionName: "generate_image",
+            toolName: "Image generation",
+            status: imagePrompt,
+            icon: "photo",
+            details: [],
+            model: model,
+            request: ExecutionRequest(
+                backend: .image,
+                modelId: imageProfile.modelId,
+                messages: [ExecutionMessage(role: .user, content: imagePrompt)],
+                images: images.isEmpty ? nil : images,
+                outputDirectory: outputDirectory,
+                maxTokens: 0,
+                temperature: 1.0,
+                parameters: generation.executionParameters(for: imageProfile)
+            ),
+            loadingStatus: "Generating image...",
+            operationName: "Image generation",
+            unavailablePrefix: "Image generation unavailable",
+            noOutputMessage: "Image generation finished without returning an image.",
+            completionHint: "The generated image is already displayed in the app UI. In your final response, use text only. Do not include markdown image syntax, image URLs, local file paths, HTML image tags, data URLs, or links to external image services such as Pollinations.",
+            attachmentKind: .image
+        )
+    }
+
+    static func makeSpeechPlan(
+        decodedArguments: [String: Any]?,
+        fallbackPrompt: String,
+        generation: ChatGenerationRequest,
+        outputDirectory: URL
+    ) -> ChatMediaToolExecutionPlan {
+        let speechText = nonEmptyStringArgument("text", from: decodedArguments) ?? fallbackPrompt
+        let speechProfile = generation.profile(for: .tts)
+        let model = speechProfile.downloadableModel
+
+        return ChatMediaToolExecutionPlan(
+            functionName: "create_speech",
+            toolName: "Speech generation",
+            status: speechText,
+            icon: "waveform",
+            details: [],
+            model: model,
+            request: ExecutionRequest(
+                backend: .audio,
+                modelId: speechProfile.modelId,
+                messages: [ExecutionMessage(role: .user, content: speechText)],
+                outputDirectory: outputDirectory,
+                maxTokens: 0,
+                temperature: 1.0,
+                parameters: generation.executionParameters(for: speechProfile)
+            ),
+            loadingStatus: "Generating speech...",
+            operationName: "Speech generation",
+            unavailablePrefix: "Speech generation unavailable",
+            noOutputMessage: "Speech generation finished without returning audio.",
+            completionHint: "The generated audio is already displayed in the app UI. In your final response, use text only. Do not include local file paths.",
+            attachmentKind: .audio
+        )
+    }
+
+    private static func nonEmptyStringArgument(_ key: String, from arguments: [String: Any]?) -> String? {
+        guard let value = arguments?[key] as? String,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
+}

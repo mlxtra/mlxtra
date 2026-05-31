@@ -98,6 +98,8 @@ final class StreamingFileDownloaderTests: XCTestCase {
 
         let downloader = StreamingFileDownloader(
             configuration: configuration,
+            maxAttempts: 3,
+            shouldRetry: { StreamingFileDownloader.isTransientNetworkError($0) },
             shouldPreservePartial: { StreamingFileDownloader.shouldPreservePartialDownload(after: $0) }
         )
 
@@ -115,6 +117,69 @@ final class StreamingFileDownloaderTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
         XCTAssertEqual(try Data(contentsOf: temporaryURL), Data([1, 2]))
         XCTAssertEqual(StreamingDownloaderURLProtocol.recordedRangeHeaders(), ["bytes=2-"])
+    }
+
+    func testPreservesPartialFileWhenCancellationErrorIsThrown() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let payload = Data([1, 2, 3, 4])
+        StreamingDownloaderURLProtocol.reset(data: payload)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingDownloaderURLProtocol.self]
+        let destinationURL = directory.appendingPathComponent("cancelled-validation.bin")
+        let temporaryURL = StreamingFileDownloader.partialDownloadURL(for: destinationURL)
+
+        let downloader = StreamingFileDownloader(
+            configuration: configuration,
+            shouldPreservePartial: { StreamingFileDownloader.shouldPreservePartialDownload(after: $0) }
+        )
+
+        do {
+            _ = try await downloader.download(
+                request: URLRequest(url: URL(string: "https://stream.test/cancelled-validation.bin")!),
+                destinationURL: destinationURL,
+                validateResponse: { _ in
+                    throw CancellationError()
+                }
+            )
+            XCTFail("Expected cancellation failure")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+        XCTAssertEqual(try Data(contentsOf: temporaryURL), payload)
+        XCTAssertTrue(StreamingFileDownloader.shouldPreservePartialDownload(after: CancellationError()))
+    }
+
+    func testRestartsFromZeroWhenPartialFileAlreadyMatchesExpectedSize() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let payload = Data([1, 2, 3, 4])
+        StreamingDownloaderURLProtocol.reset(data: payload)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingDownloaderURLProtocol.self]
+        let destinationURL = directory.appendingPathComponent("stale.bin")
+        let temporaryURL = StreamingFileDownloader.partialDownloadURL(for: destinationURL)
+        try FileManager.default.createDirectory(
+            at: temporaryURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([9, 9, 9, 9]).write(to: temporaryURL)
+
+        let downloader = StreamingFileDownloader(configuration: configuration)
+        let result = try await downloader.download(
+            request: URLRequest(url: URL(string: "https://stream.test/stale.bin")!),
+            destinationURL: destinationURL,
+            expectedBytes: Int64(payload.count)
+        )
+
+        XCTAssertEqual(result.bytesWritten, Int64(payload.count))
+        XCTAssertEqual(try Data(contentsOf: destinationURL), payload)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporaryURL.path))
+        XCTAssertEqual(StreamingDownloaderURLProtocol.recordedRangeHeaders(), [nil])
     }
 
     private func makeTemporaryDirectory() throws -> URL {

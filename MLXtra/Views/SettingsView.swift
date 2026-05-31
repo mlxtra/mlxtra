@@ -537,20 +537,22 @@ struct SettingsView: View {
         modelSelectionRevision += 1
     }
 
-    private var recommendedStarterModel: DownloadableModel {
+    private var recommendedStarterModel: DownloadableModel? {
         bestProfile(for: .vision)?.downloadableModel
-            ?? allModels.first!
+            ?? allModels.first
     }
 
     private var capabilityItems: [CapabilitySetupItem] {
         let items: [CapabilitySetupItem?] = [
-            CapabilitySetupItem(
-                title: "Chat",
-                subtitle: "Conversation and image understanding",
-                icon: "bubble.left.and.bubble.right",
-                model: recommendedStarterModel,
-                state: downloadManager.state(for: recommendedStarterModel)
-            ),
+            recommendedStarterModel.map { model in
+                CapabilitySetupItem(
+                    title: "Chat",
+                    subtitle: "Conversation and image understanding",
+                    icon: "bubble.left.and.bubble.right",
+                    model: model,
+                    state: downloadManager.state(for: model)
+                )
+            },
             capabilityItem(
                 title: "Images",
                 subtitle: "Image creation",

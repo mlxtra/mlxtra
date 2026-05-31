@@ -22,10 +22,7 @@ struct ChatGenerationRequest {
 
     func profile(for tool: Tool) -> ModelCapabilityProfile {
         let modality = Self.modelModality(for: tool)
-        guard let profile = profilesByModality[modality] else {
-            preconditionFailure("Missing generation profile for \(modality.rawValue)")
-        }
-        return profile
+        return profilesByModality[modality] ?? ModelCapabilityProfile.fallbackProfile(for: modality)
     }
 
     func executionParameters(for profile: ModelCapabilityProfile) -> [String: Any] {

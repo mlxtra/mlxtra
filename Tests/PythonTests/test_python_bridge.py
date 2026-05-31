@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for python_bridge.py"""
 
+import builtins
 import json
 import io
 import os
@@ -156,6 +157,36 @@ class TestParseToolCalls(unittest.TestCase):
 
 
 class TestChatCompletionPerformance(unittest.TestCase):
+    def test_chat_completion_reports_import_failure_as_json_error(self):
+        original_import = builtins.__import__
+
+        def import_without_mlx_vlm(name, *args, **kwargs):
+            if name == "mlx_vlm" or name.startswith("mlx_vlm."):
+                raise ModuleNotFoundError("No module named 'mlx_vlm'")
+            return original_import(name, *args, **kwargs)
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "request_id": "req-chat-import-error",
+        }
+
+        with patch.object(
+            builtins, "__import__", side_effect=import_without_mlx_vlm
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertEqual(messages[-1]["request_id"], "req-chat-import-error")
+        self.assertIn("mlx_vlm", messages[-1]["message"])
+
     def test_thinking_mode_does_not_emit_synthetic_tool_call_prefix(self):
         def fake_load_model_if_needed(model_id, request=None):
             return ("model", object(), {"model_type": "fake"})
@@ -489,6 +520,68 @@ class TestLastUserPrompt(unittest.TestCase):
 
 
 class TestMediaGenerationBridge(unittest.TestCase):
+    def test_image_generation_missing_model_does_not_import_mlx(self):
+        original_import = builtins.__import__
+
+        def import_without_mlx(name, *args, **kwargs):
+            if name == "mlx" or name.startswith("mlx."):
+                raise ModuleNotFoundError("No module named 'mlx'")
+            return original_import(name, *args, **kwargs)
+
+        with patch.object(
+            builtins, "__import__", side_effect=import_without_mlx
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_image_generation(
+                {
+                    "type": "image.generate",
+                    "request_id": "req-image-missing-model",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertEqual(
+            messages[-1]["message"],
+            "No model provided for image generation",
+        )
+        self.assertEqual(messages[-1]["request_id"], "req-image-missing-model")
+
+    def test_audio_generation_missing_model_does_not_import_mlx(self):
+        original_import = builtins.__import__
+
+        def import_without_mlx(name, *args, **kwargs):
+            if name == "mlx" or name.startswith("mlx."):
+                raise ModuleNotFoundError("No module named 'mlx'")
+            return original_import(name, *args, **kwargs)
+
+        with patch.object(
+            builtins, "__import__", side_effect=import_without_mlx
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "request_id": "req-audio-missing-model",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertEqual(
+            messages[-1]["message"],
+            "No model provided for speech generation",
+        )
+        self.assertEqual(messages[-1]["request_id"], "req-audio-missing-model")
+
     def test_image_generation_honors_explicit_zero_seed(self):
         class FakeImage:
             def save(self, path, overwrite=False):
@@ -534,6 +627,57 @@ class TestMediaGenerationBridge(unittest.TestCase):
         self.assertEqual(fake_model.kwargs["seed"], 0)
         self.assertEqual(messages[-2]["type"], "image.generated")
         self.assertEqual(messages[-2]["seed"], 0)
+        fake_mx.clear_cache.assert_called_once()
+
+    def test_image_generation_coerces_invalid_parameters_to_defaults(self):
+        class FakeImage:
+            def save(self, path, overwrite=False):
+                Path(path).write_bytes(b"png")
+
+        class FakeImageModel:
+            def __init__(self):
+                self.kwargs = None
+
+            def generate_image(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeImage()
+
+        fake_model = FakeImageModel()
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_image_model_if_needed", return_value=fake_model
+        ), patch(
+            "time.time_ns", return_value=123
+        ), patch("sys.stdout", new_callable=io.StringIO):
+            python_bridge.handle_image_generation(
+                {
+                    "type": "image.generate",
+                    "model": "image-model",
+                    "prompt": "draw",
+                    "parameters": {
+                        "width": "wide",
+                        "height": 0,
+                        "steps": "many",
+                        "guidance": "strong",
+                        "seed": "fixed",
+                    },
+                    "output_dir": output_dir,
+                    "request_id": "req-image-invalid-params",
+                }
+            )
+
+        self.assertEqual(fake_model.kwargs["width"], 1024)
+        self.assertEqual(fake_model.kwargs["height"], 1024)
+        self.assertEqual(fake_model.kwargs["num_inference_steps"], 4)
+        self.assertEqual(fake_model.kwargs["guidance"], 1.0)
+        self.assertEqual(fake_model.kwargs["seed"], 123)
         fake_mx.clear_cache.assert_called_once()
 
     def test_image_generation_clears_mlx_cache_after_error(self):

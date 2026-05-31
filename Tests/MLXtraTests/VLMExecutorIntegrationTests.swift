@@ -1,7 +1,37 @@
 import XCTest
+import Darwin
 @testable import MLXtra
 
 final class VLMExecutorIntegrationTests: XCTestCase {
+
+    @MainActor
+    private final class MockBridgeRuntimeProvider: VLMBridgeRuntimeProviding {
+        let checkpointsPath: URL
+        private let executablePath: URL
+        private let scriptPath: URL
+        private let pythonHome: URL
+        private let aceStepPython: URL
+
+        init(
+            executablePath: URL,
+            scriptPath: URL,
+            pythonHome: URL,
+            checkpointsPath: URL,
+            aceStepPython: URL
+        ) {
+            self.executablePath = executablePath
+            self.scriptPath = scriptPath
+            self.pythonHome = pythonHome
+            self.checkpointsPath = checkpointsPath
+            self.aceStepPython = aceStepPython
+        }
+
+        func initialize() async throws {}
+        func pythonExecutablePath() -> URL { executablePath }
+        func bridgeScriptPath() -> URL { scriptPath }
+        func pythonHomePath() -> URL { pythonHome }
+        func acestepPythonExecutablePath() -> URL { aceStepPython }
+    }
 
 
     func testMessageTypeForBackend() {
@@ -247,5 +277,90 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         XCTAssertEqual(type, "chat.completion.chunk")
         XCTAssertEqual(requestID, "req-123")
         XCTAssertEqual(content, "Hello")
+    }
+
+    @MainActor
+    func testInitializeTerminatesBridgeProcessAfterStartupError() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: tempDirectory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+
+        let scriptURL = tempDirectory.appendingPathComponent("failing_bridge.sh")
+        let pidFileURL = tempDirectory.appendingPathComponent("bridge.pid")
+        let script = """
+        echo $$ > "\(pidFileURL.path)"
+        printf '%s\\n' '{"type":"error","message":"startup failed"}'
+        sleep 30
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
+        )
+
+        let runtimeProvider = MockBridgeRuntimeProvider(
+            executablePath: URL(fileURLWithPath: "/bin/sh"),
+            scriptPath: scriptURL,
+            pythonHome: tempDirectory,
+            checkpointsPath: tempDirectory,
+            aceStepPython: URL(fileURLWithPath: "/bin/sh")
+        )
+        let executor = VLMExecutor(runtimeProvider: runtimeProvider)
+
+        do {
+            try await executor.initialize()
+            XCTFail("Expected startup error")
+        } catch let error as ExecutionError {
+            guard case .pythonError(let message) = error else {
+                XCTFail("Expected pythonError, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("startup failed"))
+        } catch {
+            XCTFail("Expected ExecutionError.pythonError, got \(error)")
+        }
+
+        let processID = await waitForProcessID(at: pidFileURL)
+        XCTAssertNotNil(processID)
+        if let processID {
+            let didExit = await waitUntilProcessExits(processID)
+            XCTAssertTrue(
+                didExit,
+                "Bridge process \(processID) should be terminated after startup failure"
+            )
+        }
+    }
+
+    private func waitForProcessID(at url: URL, timeout: TimeInterval = 2.0) async -> pid_t? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let text = try? String(contentsOf: url, encoding: .utf8),
+               let processID = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return processID
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return nil
+    }
+
+    private func waitUntilProcessExits(_ processID: pid_t, timeout: TimeInterval = 2.0) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !processIsRunning(processID) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return !processIsRunning(processID)
+    }
+
+    private func processIsRunning(_ processID: pid_t) -> Bool {
+        kill(processID, 0) == 0 || errno == EPERM
     }
 }

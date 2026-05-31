@@ -12,6 +12,10 @@ final class NativeModelDownloadServiceTests: XCTestCase {
             0.5
         )
         XCTAssertEqual(
+            NativeModelDownloadService.defaultMaximumDownloadAttempts,
+            4
+        )
+        XCTAssertEqual(
             NativeModelDownloadService(maximumConcurrentDownloads: 0).maximumConcurrentDownloads,
             1
         )
@@ -100,6 +104,123 @@ final class NativeModelDownloadServiceTests: XCTestCase {
         XCTAssertTrue(downloadedByteCounts.contains(4))
     }
 
+    func testNativeSnapshotDownloadUsesInjectedHuggingFaceTokenForManifestAndFiles() async throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheRoot) }
+
+        ChunkedHuggingFaceURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChunkedHuggingFaceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = NativeModelDownloadService(
+            session: session,
+            baseURL: URL(string: "https://hf.test")!,
+            downloadSessionConfiguration: configuration,
+            environment: ["HF_TOKEN": "test-token"],
+            maximumConcurrentDownloads: 1,
+            progressEmissionInterval: 0
+        )
+
+        try await service.downloadHuggingFaceSnapshot(
+            repoID: "org/model",
+            revision: "main",
+            cacheRoot: cacheRoot
+        ) { _ in }
+
+        XCTAssertEqual(
+            ChunkedHuggingFaceURLProtocol.recordedAuthorizationHeaders(),
+            ["Bearer test-token", "Bearer test-token"]
+        )
+    }
+
+    func testNativeSnapshotKeepsInProgressMarkerWhenRevisionRefWriteFails() async throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        let modelCacheRoot = RuntimeManager.modelCachePath(
+            modelId: "org/model",
+            huggingFaceCacheRoot: cacheRoot
+        )
+        try FileManager.default.createDirectory(at: modelCacheRoot, withIntermediateDirectories: true)
+        try Data("not a directory".utf8).write(to: modelCacheRoot.appendingPathComponent("refs"))
+
+        ChunkedHuggingFaceURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChunkedHuggingFaceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = NativeModelDownloadService(
+            session: session,
+            baseURL: URL(string: "https://hf.test")!,
+            downloadSessionConfiguration: configuration,
+            maximumConcurrentDownloads: 1,
+            progressEmissionInterval: 0
+        )
+
+        do {
+            try await service.downloadHuggingFaceSnapshot(
+                repoID: "org/model",
+                revision: "main",
+                cacheRoot: cacheRoot
+            ) { _ in }
+            XCTFail("Expected revision ref finalization to fail")
+        } catch {
+            // Expected path.
+        }
+
+        let snapshotRoot = modelCacheRoot
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("revision")
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: snapshotRoot.appendingPathComponent(NativeSnapshotCompletionManifest.filename).path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: snapshotRoot.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename).path
+            )
+        )
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            modelId: "org/model",
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: cacheRoot
+        ) else {
+            return XCTFail("Expected failed finalization to leave the model incomplete")
+        }
+        XCTAssertTrue(message.contains("Native model download is still incomplete"))
+    }
+
+    func testNativeSnapshotFetchFallsBackToHubTokenWhenHFTokenIsBlank() async throws {
+        ChunkedHuggingFaceURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChunkedHuggingFaceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = NativeModelDownloadService(
+            session: session,
+            baseURL: URL(string: "https://hf.test")!,
+            downloadSessionConfiguration: configuration,
+            environment: ["HF_TOKEN": " ", "HUGGING_FACE_HUB_TOKEN": "fallback-token"]
+        )
+
+        _ = try await service.fetchManifest(repoID: "org/model", revision: "main")
+
+        XCTAssertEqual(
+            ChunkedHuggingFaceURLProtocol.recordedAuthorizationHeaders(),
+            ["Bearer fallback-token"]
+        )
+    }
+
     func testNativeSnapshotDownloadResumesPartialFileWithRangeRequest() async throws {
         let cacheRoot = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: cacheRoot) }
@@ -185,6 +306,50 @@ final class NativeModelDownloadServiceTests: XCTestCase {
         XCTAssertEqual(ChunkedHuggingFaceURLProtocol.lastRangeHeader(), "bytes=2-")
         XCTAssertEqual(try Data(contentsOf: modelFile), Data([1, 2, 3, 4]))
         XCTAssertFalse(FileManager.default.fileExists(atPath: partialURL.path))
+    }
+
+    func testNativeSnapshotDownloadRetriesTransientFailureAndResumesPartialFile() async throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheRoot) }
+
+        let partialURL = RuntimeManager.modelCachePath(modelId: "org/model", huggingFaceCacheRoot: cacheRoot)
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("revision")
+            .appendingPathComponent(".model.safetensors.download")
+        try FileManager.default.createDirectory(
+            at: partialURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([1, 2]).write(to: partialURL)
+
+        ChunkedHuggingFaceURLProtocol.reset(failFirstDownloadBeforeResponse: true)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChunkedHuggingFaceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = NativeModelDownloadService(
+            session: session,
+            baseURL: URL(string: "https://hf.test")!,
+            downloadSessionConfiguration: configuration,
+            maximumConcurrentDownloads: 1,
+            maximumDownloadAttempts: 2,
+            progressEmissionInterval: 0
+        )
+
+        try await service.downloadHuggingFaceSnapshot(
+            repoID: "org/model",
+            revision: "main",
+            cacheRoot: cacheRoot
+        ) { _ in }
+
+        let modelFile = RuntimeManager.modelCachePath(modelId: "org/model", huggingFaceCacheRoot: cacheRoot)
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("revision")
+            .appendingPathComponent("model.safetensors")
+
+        XCTAssertEqual(ChunkedHuggingFaceURLProtocol.recordedRangeHeaders(), ["bytes=2-", "bytes=2-"])
+        XCTAssertEqual(try Data(contentsOf: modelFile), Data([1, 2, 3, 4]))
     }
 
     func testNativeSnapshotDownloadVerifiesHashDespiteSmallHashLimitByDefault() async throws {
@@ -337,20 +502,77 @@ final class NativeModelDownloadServiceTests: XCTestCase {
         )
     }
 
-    func testRemovePartialDownloadsRemovesHiddenStagingFiles() throws {
+    func testMarkerStoreWritesSnapshotCompletionAndRevisionRef() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snapshotRoot = root
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("resolved")
+        let staleCompletionURL = snapshotRoot.appendingPathComponent(NativeSnapshotCompletionManifest.filename)
+        let markerStore = NativeModelDownloadMarkerStore()
+
+        try FileManager.default.createDirectory(at: snapshotRoot, withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: staleCompletionURL)
+        try markerStore.markSnapshotInProgress(at: snapshotRoot)
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: snapshotRoot.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename).path
+            )
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleCompletionURL.path))
+
+        let manifest = HuggingFaceManifest(
+            repoID: "org/model",
+            revision: "main",
+            resolvedRevision: "resolved",
+            files: [HuggingFaceManifestFile(path: "model.safetensors", size: 4, sha256: "abc")]
+        )
+        try markerStore.writeCompletionManifest(manifest, destinationRoot: snapshotRoot)
+        try markerStore.clearSnapshotInProgress(at: snapshotRoot)
+        try markerStore.writeRevisionRef(revision: "main", resolvedRevision: "resolved", modelCacheRoot: root)
+
+        let completionData = try Data(contentsOf: staleCompletionURL)
+        let completionManifest = try JSONDecoder().decode(NativeSnapshotCompletionManifest.self, from: completionData)
+        XCTAssertEqual(completionManifest.repoID, "org/model")
+        XCTAssertEqual(completionManifest.files.map(\.path), ["model.safetensors"])
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: snapshotRoot.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename).path
+            )
+        )
+        XCTAssertEqual(
+            String(data: try Data(contentsOf: root.appendingPathComponent("refs/main")), encoding: .utf8),
+            "resolved"
+        )
+    }
+
+    func testRemovePartialDownloadsRemovesTransientArtifactsOnly() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let nested = root.appendingPathComponent("nested")
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
         let partial = nested.appendingPathComponent(".model.safetensors.download")
+        let snapshotInProgress = nested.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        let aceStepInProgress = nested.appendingPathComponent(AceStepContractCompletionManifest.inProgressFilename)
+        let snapshotComplete = nested.appendingPathComponent(NativeSnapshotCompletionManifest.filename)
+        let aceStepComplete = nested.appendingPathComponent(AceStepContractCompletionManifest.filename)
         let complete = nested.appendingPathComponent("model.safetensors")
         try Data([1]).write(to: partial)
+        try Data([2]).write(to: snapshotInProgress)
+        try Data([3]).write(to: aceStepInProgress)
+        try Data([4]).write(to: snapshotComplete)
+        try Data([5]).write(to: aceStepComplete)
         try Data([2]).write(to: complete)
 
         try NativeModelDownloadService().removePartialDownloads(at: root)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotInProgress.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: aceStepInProgress.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: snapshotComplete.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: aceStepComplete.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: complete.path))
     }
 
@@ -380,13 +602,22 @@ final class NativeModelDownloadServiceTests: XCTestCase {
 private final class ChunkedHuggingFaceURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var rangeHeaders: [String?] = []
+    private static var authorizationHeaders: [String?] = []
     private static var ignoreRangeRequests = false
+    private static var failFirstDownloadBeforeResponse = false
+    private static var hasFailedFirstDownloadBeforeResponse = false
     private static var manifestSHA256: String?
 
-    static func reset(manifestSHA256: String? = nil) {
+    static func reset(
+        manifestSHA256: String? = nil,
+        failFirstDownloadBeforeResponse: Bool = false
+    ) {
         lock.lock()
         rangeHeaders = []
+        authorizationHeaders = []
         ignoreRangeRequests = false
+        self.failFirstDownloadBeforeResponse = failFirstDownloadBeforeResponse
+        hasFailedFirstDownloadBeforeResponse = false
         self.manifestSHA256 = manifestSHA256
         lock.unlock()
     }
@@ -401,6 +632,18 @@ private final class ChunkedHuggingFaceURLProtocol: URLProtocol {
         lock.lock()
         defer { lock.unlock() }
         return rangeHeaders.last ?? nil
+    }
+
+    static func recordedRangeHeaders() -> [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rangeHeaders
+    }
+
+    static func recordedAuthorizationHeaders() -> [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return authorizationHeaders
     }
 
     private static func shouldIgnoreRangeRequests() -> Bool {
@@ -429,6 +672,9 @@ private final class ChunkedHuggingFaceURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
+        Self.lock.lock()
+        Self.authorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization"))
+        Self.lock.unlock()
 
         switch url.path {
         case "/api/models/org/model/revision/main":
@@ -453,7 +699,16 @@ private final class ChunkedHuggingFaceURLProtocol: URLProtocol {
             let rangeHeader = request.value(forHTTPHeaderField: "Range")
             Self.lock.lock()
             Self.rangeHeaders.append(rangeHeader)
+            let shouldFailBeforeResponse = Self.failFirstDownloadBeforeResponse
+                && !Self.hasFailedFirstDownloadBeforeResponse
+            if shouldFailBeforeResponse {
+                Self.hasFailedFirstDownloadBeforeResponse = true
+            }
             Self.lock.unlock()
+            if shouldFailBeforeResponse {
+                client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+                return
+            }
             let servesRange = rangeHeader == "bytes=2-" && !Self.shouldIgnoreRangeRequests()
 
             guard let response = HTTPURLResponse(

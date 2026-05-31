@@ -1,29 +1,5 @@
 import Foundation
 
-private final class DownloadLineBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var buffer = ""
-
-    func append(_ text: String) -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-
-        buffer += text
-        let lines = buffer.components(separatedBy: .newlines)
-        buffer = lines.last ?? ""
-        return Array(lines.dropLast())
-    }
-
-    func flush() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let remaining = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
-        buffer = ""
-        return remaining.isEmpty ? nil : remaining
-    }
-}
-
 final class DownloadUTF8Buffer: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer = Data()
@@ -142,8 +118,7 @@ enum DownloadHelperProcessRunner {
         executableURL: URL,
         arguments: [String],
         environment: [String: String],
-        onProcessStarted: @escaping @MainActor (Process) -> Void,
-        onOutputLine: @escaping @MainActor @Sendable (String) -> Void
+        onProcessStarted: @escaping @MainActor (Process) -> Void
     ) async throws -> DownloadHelperProcessResult {
         let processBox = DownloadProcessBox()
         return try await withTaskCancellationHandler {
@@ -152,7 +127,6 @@ enum DownloadHelperProcessRunner {
                 let process = Process()
                 let outputPipe = Pipe()
                 let errorPipe = Pipe()
-                let lineBuffer = DownloadLineBuffer()
                 let outputDecoder = DownloadUTF8Buffer()
                 let errorDecoder = DownloadUTF8Buffer()
                 let outputLog = DownloadOutputLog()
@@ -170,11 +144,6 @@ enum DownloadHelperProcessRunner {
                     guard !data.isEmpty, let output = outputDecoder.append(data) else { return }
 
                     outputLog.append(output)
-                    for line in lineBuffer.append(output) {
-                        Task { @MainActor in
-                            onOutputLine(line)
-                        }
-                    }
                 }
 
                 errorPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -192,25 +161,9 @@ enum DownloadHelperProcessRunner {
                     let trailingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                     if !trailingData.isEmpty, let trailingOutput = outputDecoder.append(trailingData) {
                         outputLog.append(trailingOutput)
-                        for line in lineBuffer.append(trailingOutput) {
-                            Task { @MainActor in
-                                onOutputLine(line)
-                            }
-                        }
                     }
                     if let decodedOutput = outputDecoder.flush() {
                         outputLog.append(decodedOutput)
-                        for line in lineBuffer.append(decodedOutput) {
-                            Task { @MainActor in
-                                onOutputLine(line)
-                            }
-                        }
-                    }
-
-                    if let remainingLine = lineBuffer.flush() {
-                        Task { @MainActor in
-                            onOutputLine(remainingLine)
-                        }
                     }
 
                     let errorTrailingData = errorPipe.fileHandleForReading.readDataToEndOfFile()

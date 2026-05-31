@@ -669,6 +669,17 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         recommendedProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).first
     }
 
+    static func fallbackProfile(
+        for modality: ModelModality,
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
+    ) -> ModelCapabilityProfile {
+        bestProfile(for: modality, hardwareMemoryGB: hardwareMemoryGB)
+            ?? visibleProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).first
+            ?? profiles(for: modality).first
+            ?? embedded.first
+            ?? EmergencyModelCatalog.defaultVisionProfile
+    }
+
     static func recommendedProfiles(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
@@ -861,18 +872,18 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 }
 
 enum EmergencyModelCatalog {
-    static let profiles: [ModelCapabilityProfile] = [
-        chatProfile(
-            name: "Qwen 3.5 2B",
-            subtitle: "Lightweight vision model (2B parameters)",
-            modelId: "mlx-community/Qwen3.5-2B-MLX-4bit",
-            maxContextWindow: 32768,
-            memoryRequirementGB: 3.0,
-            downloadSizeGB: 1.5,
-            icon: "bolt",
-            ranking: ModelRanking(quality: 70, speed: 92, defaultForMemoryGB: 4)
-        )
-    ]
+    static let defaultVisionProfile = chatProfile(
+        name: "Qwen 3.5 2B",
+        subtitle: "Lightweight vision model (2B parameters)",
+        modelId: "mlx-community/Qwen3.5-2B-MLX-4bit",
+        maxContextWindow: 32768,
+        memoryRequirementGB: 3.0,
+        downloadSizeGB: 1.5,
+        icon: "bolt",
+        ranking: ModelRanking(quality: 70, speed: 92, defaultForMemoryGB: 4)
+    )
+
+    static let profiles: [ModelCapabilityProfile] = [defaultVisionProfile]
 
     private static func chatProfile(
         name: String,

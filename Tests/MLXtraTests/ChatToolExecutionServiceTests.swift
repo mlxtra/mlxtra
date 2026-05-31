@@ -149,6 +149,34 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertNotNil(metrics)
     }
 
+    func testExecuteMediaToolReturnsCancelledWithoutRetryWhenTaskIsCancelled() async {
+        let executor = ControlledMediaChatModelExecutor()
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+        var updates: [ChatToolExecutionUpdate] = []
+
+        let task = Task {
+            await service.executeMediaTool(plan: makePlan()) { update in
+                updates.append(update)
+            }
+        }
+        await waitUntil { executor.hasActiveStream }
+
+        task.cancel()
+        executor.finishStream()
+        let outcome = await task.value
+
+        XCTAssertEqual(outcome, .cancelled)
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(executor.terminateCount, 0)
+        XCTAssertTrue(updates.isEmpty)
+    }
+
     func testExecuteMediaToolInitializesExecutorWhenNeeded() async {
         let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
         let executor = MockChatModelExecutor(events: [
@@ -351,6 +379,66 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(originalMessages.last?.content, "Original answer.")
         XCTAssertFalse(originalMessages.last?.isStreaming ?? true)
         XCTAssertTrue(otherMessages.isEmpty)
+    }
+
+    func testCancelledMediaToolUpdatesDoNotAttachToNextGeneration() async throws {
+        resetPromptConfigurationDefaults()
+        let staleAssetURL = URL(fileURLWithPath: "/tmp/stale-generated.png")
+        let imageToolCall = ExecutionToolCall(
+            id: "image-1",
+            function: ExecutionToolCallFunction(
+                name: "generate_image",
+                arguments: #"{"prompt":"Draw a quiet studio desk"}"#
+            )
+        )
+        let executor = MockChatModelExecutor(
+            eventBatches: [
+                [.toolCalls([imageToolCall])],
+                [
+                    .started,
+                    .token("Fresh "),
+                    .complete("Fresh answer.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
+                ]
+            ],
+            eventDelayNanoseconds: 50_000_000
+        )
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let toolExecutor = SuspendedMediaToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.hasPendingMediaTool }
+        let staleMessageId = try XCTUnwrap(viewModel.streamingMessageId)
+
+        viewModel.cancelGeneration()
+        viewModel.selectTool(.chat)
+        viewModel.inputText = "Give me a fresh text answer"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.streamingMessageId != nil && viewModel.streamingMessageId != staleMessageId
+        }
+        let freshMessageId = try XCTUnwrap(viewModel.streamingMessageId)
+
+        toolExecutor.emit(.generatedAsset(staleAssetURL, kind: .image))
+
+        let freshMessage = try XCTUnwrap(message(in: viewModel, id: freshMessageId))
+        let staleMessage = try XCTUnwrap(message(in: viewModel, id: staleMessageId))
+        XCTAssertFalse(freshMessage.imageURLs.contains(staleAssetURL))
+        XCTAssertFalse(staleMessage.imageURLs.contains(staleAssetURL))
+
+        toolExecutor.finish(.toolMessage("Stale media result"))
+        await waitUntil {
+            self.message(in: viewModel, id: freshMessageId)?.isStreaming == false
+        }
+        XCTAssertFalse(viewModel.chats.flatMap(\.messages).contains { $0.imageURLs.contains(staleAssetURL) })
     }
 
     func testGenerationActiveIgnoresComposerSelectionMenuAndFocusMutations() async {
@@ -1592,6 +1680,13 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTFail("Timed out waiting for condition")
     }
 
+    private func message(in viewModel: ChatViewModel, id: UUID) -> Message? {
+        viewModel.chats
+            .lazy
+            .flatMap(\.messages)
+            .first { $0.id == id }
+    }
+
     private func resetPromptConfigurationDefaults() {
         UserDefaults.standard.removeObject(forKey: PromptConfiguration.systemPromptKey)
         UserDefaults.standard.removeObject(forKey: PromptConfiguration.deepResearchSystemPromptKey)
@@ -1661,6 +1756,53 @@ private final class MockChatModelExecutor: ChatModelExecuting {
         isModelLoaded = false
         currentModelId = nil
         currentModelBackend = nil
+    }
+}
+
+@MainActor
+private final class ControlledMediaChatModelExecutor: ChatModelExecuting {
+    let backend: RuntimeBackend = .vlm
+    var isReady: Bool = true
+    var isModelLoaded: Bool = false
+    var currentModelId: String?
+    var currentModelBackend: RuntimeBackend?
+    weak var delegate: VLMExecutionDelegate?
+    private(set) var receivedRequests: [ExecutionRequest] = []
+    private(set) var terminateCount = 0
+    private var continuation: AsyncStream<ExecutionEvent>.Continuation?
+
+    var hasActiveStream: Bool {
+        continuation != nil
+    }
+
+    func initialize() async throws {
+        isReady = true
+    }
+
+    func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
+        receivedRequests.append(request)
+        currentModelId = request.modelId
+        currentModelBackend = request.backend
+        isModelLoaded = true
+        return AsyncStream { continuation in
+            Task { @MainActor in
+                self.continuation = continuation
+            }
+        }
+    }
+
+    func finishStream() {
+        continuation?.finish()
+        continuation = nil
+    }
+
+    func terminate() async {
+        terminateCount += 1
+        isReady = false
+        isModelLoaded = false
+        currentModelId = nil
+        currentModelBackend = nil
+        finishStream()
     }
 }
 
@@ -1760,5 +1902,42 @@ private final class MockChatToolExecutionService: ChatToolExecutionServicing {
     ) async -> ChatToolExecutionOutcome {
         mediaPlans.append(plan)
         return mediaOutcome
+    }
+}
+
+@MainActor
+private final class SuspendedMediaToolExecutionService: ChatToolExecutionServicing {
+    private var updateHandler: (@MainActor (ChatToolExecutionUpdate) -> Void)?
+    private var continuation: CheckedContinuation<ChatToolExecutionOutcome, Never>?
+    private(set) var mediaPlans: [ChatMediaToolExecutionPlan] = []
+
+    var hasPendingMediaTool: Bool {
+        continuation != nil
+    }
+
+    func executeWebSearch(query: String) async -> String {
+        "unused"
+    }
+
+    func executeMediaTool(
+        plan: ChatMediaToolExecutionPlan,
+        onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
+    ) async -> ChatToolExecutionOutcome {
+        mediaPlans.append(plan)
+        updateHandler = onUpdate
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func emit(_ update: ChatToolExecutionUpdate) {
+        updateHandler?(update)
+    }
+
+    func finish(_ outcome: ChatToolExecutionOutcome) {
+        let continuation = continuation
+        self.continuation = nil
+        updateHandler = nil
+        continuation?.resume(returning: outcome)
     }
 }

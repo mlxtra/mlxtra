@@ -60,6 +60,18 @@ final class ModelCapabilityProfileTests: XCTestCase {
         )
     }
 
+    func testFallbackProfileReturnsUsableProfileForEveryModality() {
+        for modality in ModelModality.allCases {
+            let profile = ModelCapabilityProfile.fallbackProfile(for: modality, hardwareMemoryGB: 1.0)
+
+            XCTAssertFalse(profile.modelId.isEmpty)
+            XCTAssertFalse(profile.name.isEmpty)
+            if !ModelCapabilityProfile.profiles(for: modality).isEmpty {
+                XCTAssertEqual(profile.modality, modality)
+            }
+        }
+    }
+
     func testAvailableSelectionUsesReadyFallbackWhenRecommendedModelIsMissing() throws {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }

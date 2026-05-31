@@ -47,12 +47,12 @@ extension ChatViewModel {
         modelLoadProgress = nil
         localEngineErrorMessage = nil
 
-        Task {
-            await vlmExecutor.terminate()
-            activeEngineModelName = nil
-            activeEngineModelRole = .chat
-            self.freedEngineModelName = freedModelName
+        if engineTerminationTask == nil {
+            scheduleEngineTermination()
         }
+        activeEngineModelName = nil
+        activeEngineModelRole = .chat
+        self.freedEngineModelName = freedModelName
     }
 
     func restartLocalEngine() {
@@ -88,18 +88,29 @@ extension ChatViewModel {
     func refreshLocalEngineDownloadStatus() {
         let currentPendingModel = pendingEngineDownloadModel
         let currentTool = selectedTool
+        let refreshToken = UUID()
+        downloadStatusRefreshToken = refreshToken
 
-        Task {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             _ = await selectDownloadedDefaultModelIfNeeded(for: modelModality(for: currentTool))
+            guard isActiveDownloadStatusRefresh(refreshToken, tool: currentTool) else { return }
             let selectionRequirement = downloadRequirement(for: currentTool)
 
             if let currentPendingModel,
-               await isModelDownloadedOffMain(model: currentPendingModel),
-               self.pendingEngineDownloadModel?.modelId == currentPendingModel.modelId {
-                self.clearPendingEngineDownloadModel(matching: currentPendingModel.modelId)
+               await isModelDownloadedOffMain(model: currentPendingModel) {
+                guard isActiveDownloadStatusRefresh(refreshToken, tool: currentTool) else { return }
+                if pendingEngineDownloadModel?.modelId == currentPendingModel.modelId {
+                    clearPendingEngineDownloadModel(matching: currentPendingModel.modelId)
+                }
             }
 
-            await refreshSelectedDownloadRequirement(selectionRequirement)
+            guard isActiveDownloadStatusRefresh(refreshToken, tool: currentTool) else { return }
+            await refreshSelectedDownloadRequirement(
+                selectionRequirement,
+                refreshToken: refreshToken,
+                tool: currentTool
+            )
         }
     }
 
@@ -140,9 +151,7 @@ extension ChatViewModel {
         finishLaunchModelPreload()
 
         guard shouldTerminateEngine else { return }
-        Task { @MainActor in
-            await vlmExecutor.terminate()
-        }
+        scheduleEngineTermination()
     }
 
     func cancelLaunchModelPreloadForForegroundUse() async {
@@ -276,7 +285,12 @@ extension ChatViewModel {
         return false
     }
 
-    private func refreshSelectedDownloadRequirement(_ requirement: DownloadableModel?) async {
+    private func refreshSelectedDownloadRequirement(
+        _ requirement: DownloadableModel?,
+        refreshToken: UUID,
+        tool: Tool
+    ) async {
+        guard isActiveDownloadStatusRefresh(refreshToken, tool: tool) else { return }
         guard let requirement else {
             if pendingEngineDownloadReason == .preflight {
                 clearPendingEngineDownloadModel()
@@ -285,12 +299,14 @@ extension ChatViewModel {
         }
 
         if await isModelDownloadedOffMain(model: requirement) {
+            guard isActiveDownloadStatusRefresh(refreshToken, tool: tool) else { return }
             if pendingEngineDownloadReason == .preflight {
                 clearPendingEngineDownloadModel()
             }
             return
         }
 
+        guard isActiveDownloadStatusRefresh(refreshToken, tool: tool) else { return }
         if pendingEngineDownloadReason == .generation,
            pendingEngineDownloadModel?.modelId != requirement.modelId,
            selectedTool == .auto || selectedTool == .chat || selectedTool == .research {
@@ -302,6 +318,10 @@ extension ChatViewModel {
             pendingEngineDownloadReason = .preflight
             startPendingDownloadMonitor(for: requirement)
         }
+    }
+
+    private func isActiveDownloadStatusRefresh(_ token: UUID, tool: Tool) -> Bool {
+        downloadStatusRefreshToken == token && selectedTool == tool
     }
 
     func downloadRequirementForCurrentSelection() -> DownloadableModel? {
@@ -335,8 +355,7 @@ extension ChatViewModel {
             return profile
         }
 
-        return ModelCapabilityProfile.visibleProfiles(for: modality).first
-            ?? ModelCapabilityProfile.embedded.first!
+        return ModelCapabilityProfile.fallbackProfile(for: modality)
     }
 
     func isModelProfileSelected(_ profile: ModelCapabilityProfile) -> Bool {
@@ -451,20 +470,38 @@ extension ChatViewModel {
         }
     }
 
-    func ensureLocalRuntimeReady() async throws {
+    @discardableResult
+    func ensureLocalRuntimeReady(
+        progress: ModelLoadProgress? = nil,
+        generationID: UUID? = nil
+    ) async throws -> Bool {
         if runtimeManager.state != .ready {
             isPythonLoading = true
             loadingMessage = "Initializing Python runtime..."
-            modelLoadProgress = nil
-            try await runtimeManager.initialize()
-            try await vlmExecutor.initialize()
+            modelLoadProgress = progress
+            do {
+                try await runtimeManager.initialize()
+            } catch {
+                clearRuntimeLoadingIfActive(generationID: generationID)
+                throw error
+            }
+            guard ownsActiveGeneration(generationID) else { return false }
+            do {
+                try await vlmExecutor.initialize()
+            } catch {
+                clearRuntimeLoadingIfActive(generationID: generationID)
+                throw error
+            }
+            guard ownsActiveGeneration(generationID) else { return false }
             isPythonLoading = false
             modelLoadProgress = nil
         }
 
         if !vlmExecutor.isReady {
             try await vlmExecutor.initialize()
+            guard ownsActiveGeneration(generationID) else { return false }
         }
+        return true
     }
 
     func setActiveEngineModel(name: String, role: LocalEngineModelRole) {
@@ -472,6 +509,12 @@ extension ChatViewModel {
         activeEngineModelRole = role
         freedEngineModelName = nil
         localEngineErrorMessage = nil
+    }
+
+    private func clearRuntimeLoadingIfActive(generationID: UUID?) {
+        guard ownsActiveGeneration(generationID) else { return }
+        isPythonLoading = false
+        modelLoadProgress = nil
     }
 
     func localEngineModelRole(for plan: ChatMediaToolExecutionPlan) -> LocalEngineModelRole {

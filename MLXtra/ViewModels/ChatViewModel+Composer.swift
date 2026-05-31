@@ -173,17 +173,21 @@ extension ChatViewModel {
         isMusicLyricsEditorVisible = true
         musicLyricsApproved = false
 
+        let draftToken = UUID()
+        lyricsDraftToken = draftToken
         lyricsDraftTask?.cancel()
-        lyricsDraftTask = Task { [weak self] in
+        lyricsDraftTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.cancelLaunchModelPreloadForForegroundUse()
-            await self.generateMusicLyricsDraft(for: brief)
+            guard self.ownsActiveLyricsDraft(draftToken) else { return }
+            await self.generateMusicLyricsDraft(for: brief, draftToken: draftToken)
         }
     }
 
     func cancelMusicLyricsDraft() {
         lyricsDraftTask?.cancel()
         lyricsDraftTask = nil
+        lyricsDraftToken = nil
         isDraftingMusicLyrics = false
         loadingMessage = ""
     }
@@ -320,15 +324,23 @@ extension ChatViewModel {
         return lyrics.isEmpty ? nil : lyrics
     }
 
-    private func generateMusicLyricsDraft(for brief: String) async {
+    private func ownsActiveLyricsDraft(_ draftToken: UUID) -> Bool {
+        lyricsDraftToken == draftToken
+    }
+
+    private func generateMusicLyricsDraft(for brief: String, draftToken: UUID) async {
+        guard ownsActiveLyricsDraft(draftToken) else { return }
         isDraftingMusicLyrics = true
         loadingMessage = "Generating lyrics..."
 
         defer {
-            isDraftingMusicLyrics = false
-            lyricsDraftTask = nil
-            if !isGenerating && !isModelLoading && !isPythonLoading {
-                loadingMessage = ""
+            if ownsActiveLyricsDraft(draftToken) {
+                isDraftingMusicLyrics = false
+                lyricsDraftTask = nil
+                lyricsDraftToken = nil
+                if !isGenerating && !isModelLoading && !isPythonLoading {
+                    loadingMessage = ""
+                }
             }
         }
 
@@ -337,10 +349,12 @@ extension ChatViewModel {
             guard await requireDownloadedModel(model: chatProfile.downloadableModel, operation: "Lyrics writing") else {
                 return
             }
+            guard ownsActiveLyricsDraft(draftToken) else { return }
 
             setActiveEngineModel(name: chatProfile.name, role: .chat)
 
-            try await ensureLocalRuntimeReady()
+            guard try await ensureLocalRuntimeReady() else { return }
+            guard ownsActiveLyricsDraft(draftToken) else { return }
 
             loadingMessage = "Generating lyrics..."
             let chatExecutionParameters = modelParameterStore.executionParameters(for: chatProfile)
@@ -369,9 +383,10 @@ extension ChatViewModel {
             )
 
             let stream = try await vlmExecutor.execute(request: request)
+            guard ownsActiveLyricsDraft(draftToken) else { return }
             var draft = ""
             for await event in stream {
-                if Task.isCancelled { return }
+                if Task.isCancelled || !ownsActiveLyricsDraft(draftToken) { return }
 
                 switch event {
                 case .token(let token):
@@ -389,6 +404,7 @@ extension ChatViewModel {
                 }
             }
 
+            guard ownsActiveLyricsDraft(draftToken) else { return }
             let cleanedDraft = cleanLyricsDraft(draft)
             if !cleanedDraft.isEmpty {
                 musicLyricsText = cleanedDraft
@@ -398,7 +414,7 @@ extension ChatViewModel {
                 isMusicLyricsEditorVisible = true
             }
         } catch {
-            if Task.isCancelled { return }
+            if Task.isCancelled || !ownsActiveLyricsDraft(draftToken) { return }
             isMusicLyricsEditorVisible = true
             localEngineErrorMessage = "Could not generate lyrics. Paste lyrics or try again."
         }

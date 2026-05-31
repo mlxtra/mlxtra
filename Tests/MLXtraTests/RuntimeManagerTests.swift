@@ -349,6 +349,61 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testModelStorageStatusHonorsModelRevisionRefOverOtherSnapshots() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let defaultCheckpoints = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: defaultCheckpoints)
+        }
+
+        let modelId = "org/custom-revision-model"
+        let model = DownloadableModel(
+            id: modelId,
+            name: "Custom Revision",
+            subtitle: "Test model",
+            modelId: modelId,
+            modality: .vision,
+            downloadSizeGB: 1.0,
+            source: ModelSource(type: .huggingFaceSnapshot, repo: modelId, revision: "custom")
+        )
+        let modelCachePath = RuntimeManager.modelCachePath(
+            modelId: modelId,
+            huggingFaceCacheRoot: cacheRoot
+        )
+        let refsPath = modelCachePath.appendingPathComponent("refs")
+        let expectedSnapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("custom-revision")
+        let otherSnapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("other-revision")
+
+        try FileManager.default.createDirectory(at: refsPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: expectedSnapshotPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: otherSnapshotPath, withIntermediateDirectories: true)
+        try Data("custom-revision".utf8).write(to: refsPath.appendingPathComponent("custom"))
+        try Data("in-progress".utf8).write(
+            to: expectedSnapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        )
+
+        try Data("{}".utf8).write(to: otherSnapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: otherSnapshotPath.appendingPathComponent("model.safetensors"))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 2_000_000_000)],
+            ofItemAtPath: otherSnapshotPath.path
+        )
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            model: model,
+            checkpointsPath: defaultCheckpoints,
+            huggingFaceCacheRoot: cacheRoot
+        ) else {
+            return XCTFail("Expected the configured revision snapshot to be incomplete")
+        }
+        XCTAssertTrue(message.contains("Native model download is still incomplete"))
+    }
+
     func testModelStorageStatusForEmbeddedHuggingFaceModelDoesNotRecurse() throws {
         let cacheRoot = try makeTemporaryDirectory()
         let checkpointsPath = try makeTemporaryDirectory()
@@ -647,6 +702,58 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testRuntimeUpdateRefreshReportsRemoteChannelHTTPFailures() async throws {
+        RuntimeChannelURLProtocol.reset(statusCode: 500, data: Data())
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RuntimeChannelURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let manager = RuntimeUpdateManager(channelSession: session)
+        await manager.refreshStableChannel(channelURL: URL(string: "https://channel.test/stable-channel.json")!)
+
+        XCTAssertEqual(RuntimeChannelURLProtocol.requestCount(), 1)
+        XCTAssertEqual(manager.state, .failed(RuntimeUpdateError.channelUnavailable.localizedDescription))
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshIgnoresStaleOlderRefreshResult() async throws {
+        let slowData = try runtimeChannelData(runtimes: [makeRuntimeAsset(version: "0.1.1")])
+        let fastData = try runtimeChannelData(runtimes: [makeRuntimeAsset(version: "0.1.2")])
+        RuntimeChannelURLProtocol.resetRoutes([
+            "/slow-channel.json": RuntimeChannelResponse(statusCode: 200, data: slowData, delay: 0.15),
+            "/fast-channel.json": RuntimeChannelResponse(statusCode: 200, data: fastData)
+        ])
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RuntimeChannelURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { self.makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1) },
+            channelSession: session
+        )
+
+        let slowTask = Task { @MainActor in
+            await manager.refreshStableChannel(
+                channelURL: URL(string: "https://channel.test/slow-channel.json")!
+            )
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        await manager.refreshStableChannel(
+            channelURL: URL(string: "https://channel.test/fast-channel.json")!
+        )
+        await slowTask.value
+
+        guard case .available(let asset) = manager.state else {
+            XCTFail("Expected the newer refresh result to remain available")
+            return
+        }
+        XCTAssertEqual(asset.version, "0.1.2")
+        XCTAssertEqual(manager.channel?.runtimes.first?.version, "0.1.2")
+    }
+
+    @MainActor
     func testRuntimeUpdateRefreshFindsNewestCompatibleRuntime() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -840,6 +947,37 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(progress.estimatedSecondsRemaining, 2)
     }
 
+    func testRuntimeDownloadSpeedTrackerMeasuresRateAndResetsOnRegression() {
+        var tracker = RuntimeDownloadSpeedTracker()
+        let start = Date(timeIntervalSince1970: 100)
+
+        XCTAssertNil(
+            tracker.bytesPerSecond(
+                for: RuntimeDownloadProgress(downloadedBytes: 100, totalBytes: 1_000),
+                at: start
+            )
+        )
+
+        let measuredRate = tracker.bytesPerSecond(
+            for: RuntimeDownloadProgress(downloadedBytes: 600, totalBytes: 1_000),
+            at: start.addingTimeInterval(2)
+        )
+        XCTAssertEqual(measuredRate ?? -1, 250, accuracy: 0.001)
+
+        XCTAssertNil(
+            tracker.bytesPerSecond(
+                for: RuntimeDownloadProgress(downloadedBytes: 200, totalBytes: 1_000),
+                at: start.addingTimeInterval(3)
+            )
+        )
+
+        let resetRate = tracker.bytesPerSecond(
+            for: RuntimeDownloadProgress(downloadedBytes: 700, totalBytes: 1_000),
+            at: start.addingTimeInterval(5)
+        )
+        XCTAssertEqual(resetRate ?? -1, 250, accuracy: 0.001)
+    }
+
     @MainActor
     func testRuntimeInstallReportsRemoteArchiveDownloadProgress() async throws {
         let directory = try makeTemporaryDirectory()
@@ -917,6 +1055,120 @@ final class RuntimeManagerTests: XCTestCase {
             "Expected runtime installer to publish determinate archive download progress"
         )
         XCTAssertTrue(didReceiveExpectedProgress)
+    }
+
+    @MainActor
+    func testRuntimeInstallReportsActivationProgressFromInstaller() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("installed-runtime")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveURL = directory.appendingPathComponent("runtime.zip")
+        try Data("runtime archive".utf8).write(to: archiveURL)
+        let archiveSHA256 = try SHA256Checksum.hexDigest(for: archiveURL)
+
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { _, progressHandler in
+                progressHandler(RuntimeActivationProgress(
+                    title: "Expanding test runtime",
+                    detail: "Copying staged files",
+                    completedStep: 3,
+                    totalSteps: 5
+                ))
+                return runtimeRoot
+            }
+        )
+
+        let progressExpectation = expectation(description: "Runtime activation progress is published")
+        progressExpectation.assertForOverFulfill = false
+        let progressCancellable = manager.$runtimeActivationProgress.sink { progress in
+            guard progress?.title == "Expanding test runtime",
+                  progress?.detail == "Copying staged files",
+                  progress?.completedStep == 3,
+                  progress?.totalSteps == 5 else {
+                return
+            }
+            progressExpectation.fulfill()
+        }
+        defer { progressCancellable.cancel() }
+
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: archiveURL,
+            sha256: archiveSHA256,
+            sizeBytes: try archiveSizeBytes(archiveURL),
+            compatibilityApi: 1
+        )
+
+        let installTask = Task { @MainActor in
+            await manager.installRuntime(asset)
+        }
+        await fulfillment(of: [progressExpectation], timeout: 2)
+        await installTask.value
+
+        XCTAssertEqual(manager.state, .installed("0.1.1"))
+        XCTAssertNil(manager.runtimeActivationProgress)
+    }
+
+    @MainActor
+    func testRuntimeRefreshDoesNotClobberActiveInstallState() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("installed-runtime")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveURL = directory.appendingPathComponent("runtime.zip")
+        try Data("runtime archive".utf8).write(to: archiveURL)
+        let archiveSHA256 = try SHA256Checksum.hexDigest(for: archiveURL)
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.2")
+            ]
+        )
+
+        let installerStarted = expectation(description: "Runtime installer started")
+        let releaseInstaller = DispatchSemaphore(value: 0)
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { self.makeRuntimeManifest(version: "0.1.0", compatibilityApi: 1) },
+            runtimeArchiveInstaller: { _, _ in
+                installerStarted.fulfill()
+                releaseInstaller.wait()
+                return runtimeRoot
+            }
+        )
+
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: archiveURL,
+            sha256: archiveSHA256,
+            sizeBytes: try archiveSizeBytes(archiveURL),
+            compatibilityApi: 1
+        )
+
+        let installTask = Task { @MainActor in
+            await manager.installRuntime(asset)
+        }
+        await fulfillment(of: [installerStarted], timeout: 2)
+
+        await manager.refreshStableChannel(channelURL: channelURL)
+        guard case .installing = manager.state else {
+            releaseInstaller.signal()
+            XCTFail("Expected active install state to be preserved during refresh")
+            await installTask.value
+            return
+        }
+
+        releaseInstaller.signal()
+        await installTask.value
+        XCTAssertEqual(manager.state, .installed("0.1.1"))
     }
 
     @MainActor
@@ -1244,6 +1496,11 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     private func writeRuntimeChannel(to url: URL, runtimes: [[String: Any]]) throws {
+        let data = try runtimeChannelData(runtimes: runtimes)
+        try data.write(to: url)
+    }
+
+    private func runtimeChannelData(runtimes: [[String: Any]]) throws -> Data {
         let payload: [String: Any] = [
             "schemaVersion": 1,
             "channel": "stable",
@@ -1255,8 +1512,7 @@ final class RuntimeManagerTests: XCTestCase {
             ],
             "runtimes": runtimes,
         ]
-        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: url)
+        return try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
     }
 
     private func makeRuntimeAsset(
@@ -1321,6 +1577,97 @@ private final class RuntimeUpdateStateRecorder: @unchecked Sendable {
         defer { lock.unlock() }
         return recordedStates
     }
+}
+
+private struct RuntimeChannelResponse {
+    let statusCode: Int
+    let data: Data
+    let delay: TimeInterval
+
+    init(statusCode: Int, data: Data, delay: TimeInterval = 0) {
+        self.statusCode = statusCode
+        self.data = data
+        self.delay = delay
+    }
+}
+
+private final class RuntimeChannelURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var statusCode = 200
+    private static var responseData = Data()
+    private static var routedResponses: [String: RuntimeChannelResponse] = [:]
+    private static var requests = 0
+
+    static func reset(statusCode: Int, data: Data) {
+        lock.lock()
+        self.statusCode = statusCode
+        responseData = data
+        routedResponses = [:]
+        requests = 0
+        lock.unlock()
+    }
+
+    static func resetRoutes(_ responses: [String: RuntimeChannelResponse]) {
+        lock.lock()
+        routedResponses = responses
+        responseData = Data()
+        statusCode = 200
+        requests = 0
+        lock.unlock()
+    }
+
+    static func requestCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "channel.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        Self.lock.lock()
+        let routedResponse = Self.routedResponses[url.path]
+        let statusCode = routedResponse?.statusCode ?? Self.statusCode
+        let data = routedResponse?.data ?? Self.responseData
+        let delay = routedResponse?.delay ?? 0
+        Self.requests += 1
+        Self.lock.unlock()
+
+        let complete = {
+            guard let response = HTTPURLResponse(
+                url: url,
+                statusCode: statusCode,
+                httpVersion: nil,
+                headerFields: nil
+            ) else {
+                self.client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                return
+            }
+
+            self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            self.client?.urlProtocol(self, didLoad: data)
+            self.client?.urlProtocolDidFinishLoading(self)
+        }
+
+        if delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: complete)
+        } else {
+            complete()
+        }
+    }
+
+    override func stopLoading() {}
 }
 
 private final class RuntimeArchiveURLProtocol: URLProtocol {

@@ -73,7 +73,7 @@ enum ModelDownloadStorage {
         for model: DownloadableModel,
         checkpointsPath: URL,
         huggingFaceCacheRoot: URL,
-        nativeDownloader: NativeModelDownloadService
+        nativeDownloader: any NativeModelDownloading
     ) async {
         let roots: [URL]
         if model.source.usesComponentBundle {

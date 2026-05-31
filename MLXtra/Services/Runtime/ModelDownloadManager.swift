@@ -1,24 +1,37 @@
 import Foundation
 @MainActor
 final class ModelDownloadManager: ObservableObject {
+    typealias ModelStorageStatusProvider = (
+        _ model: DownloadableModel,
+        _ checkpointsPath: URL,
+        _ huggingFaceCacheRoot: URL
+    ) async -> RuntimeManager.ModelStorageStatus
+
     static let shared = ModelDownloadManager()
 #if DEBUG
     static var terminationKillFallbackDelay: TimeInterval = 3.0
     static var terminationCleanupDelay: TimeInterval = 3.2
+    static var terminationWaitPadding: TimeInterval = 2.0
 #else
     private static let terminationKillFallbackDelay: TimeInterval = 3.0
     private static let terminationCleanupDelay: TimeInterval = 3.2
+    private static let terminationWaitPadding: TimeInterval = 2.0
 #endif
 
     @Published private(set) var states: [String: DownloadState] = [:]
 
-    private let runtimeManager = RuntimeManager()
-    private let nativeDownloader: NativeModelDownloadService
+    private let runtimeManager: RuntimeManager
+    private let nativeDownloader: any NativeModelDownloading
     private let checkpointsPathOverride: URL?
     private let huggingFaceCacheRootOverride: URL?
-    private let lifecycle = ModelDownloadLifecycle()
-    private var lastProgress: [String: DownloadProgress] = [:]
+    private let modelStorageStatusProvider: ModelStorageStatusProvider
+    private let lifecycle: ModelDownloadLifecycle
+    private let helperExecutor: ModelDownloadHelperExecutor
+    private let progressTracker: ModelDownloadProgressTracker
+    private let stopCoordinator: ModelDownloadStopCoordinator
+    private let failureResolver: ModelDownloadFailureResolver
     private let errorTracker = DownloadErrorTracker()
+    private var stateCoordinator = ModelDownloadStateCoordinator()
 #if DEBUG
     private let usesUITestDownloadStates: Bool
 #endif
@@ -27,11 +40,36 @@ final class ModelDownloadManager: ObservableObject {
         refreshStatusesOnInit: Bool = true,
         checkpointsPathOverride: URL? = nil,
         huggingFaceCacheRootOverride: URL? = nil,
-        nativeDownloader: NativeModelDownloadService = NativeModelDownloadService()
+        nativeDownloader: any NativeModelDownloading = NativeModelDownloadService(),
+        modelStorageStatusProvider: @escaping ModelStorageStatusProvider = { model, checkpointsPath, huggingFaceCacheRoot in
+            await ModelDownloadStorage.status(
+                for: model,
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: huggingFaceCacheRoot
+            )
+        }
     ) {
+        let runtimeManager = RuntimeManager()
+        let lifecycle = ModelDownloadLifecycle()
+        let progressTracker = ModelDownloadProgressTracker()
+        self.runtimeManager = runtimeManager
         self.checkpointsPathOverride = checkpointsPathOverride
         self.huggingFaceCacheRootOverride = huggingFaceCacheRootOverride
         self.nativeDownloader = nativeDownloader
+        self.modelStorageStatusProvider = modelStorageStatusProvider
+        self.lifecycle = lifecycle
+        self.progressTracker = progressTracker
+        self.stopCoordinator = ModelDownloadStopCoordinator(
+            lifecycle: lifecycle,
+            progressTracker: progressTracker
+        )
+        self.failureResolver = ModelDownloadFailureResolver(
+            progressTracker: progressTracker
+        )
+        self.helperExecutor = ModelDownloadHelperExecutor(
+            runtimeManager: runtimeManager,
+            lifecycle: lifecycle
+        )
 #if DEBUG
         usesUITestDownloadStates = ProcessInfo.processInfo.environment["MLXTRA_UI_TEST_DOWNLOAD_STATES"] == "1"
         if usesUITestDownloadStates {
@@ -58,31 +96,35 @@ final class ModelDownloadManager: ObservableObject {
 #endif
         let modelsToCheck = DownloadableModel.embedded.compactMap { model -> DownloadableModel? in
             guard states[model.id]?.isDownloading != true,
-                  states[model.id]?.isPaused != true else {
+                  states[model.id]?.isPaused != true,
+                  !lifecycle.hasTrackedWork(for: model.id) else {
                 return nil
             }
             return model
         }
         let checkpointsPath = self.checkpointsPath
         let huggingFaceCacheRoot = self.huggingFaceCacheRoot
+        let capturedVersions = Dictionary(
+            uniqueKeysWithValues: modelsToCheck.map {
+                ($0.id, stateCoordinator.captureRefreshSnapshot(for: $0.id))
+            }
+        )
+        let modelStorageStatusProvider = self.modelStorageStatusProvider
 
-        Task { [modelsToCheck, checkpointsPath, huggingFaceCacheRoot] in
-            let results = await Task.detached(priority: .utility) {
-                modelsToCheck.map { model in
-                    (
-                        model.id,
-                        RuntimeManager.modelStorageStatus(
-                            model: model,
-                            checkpointsPath: checkpointsPath,
-                            huggingFaceCacheRoot: huggingFaceCacheRoot
-                        )
-                    )
-                }
-            }.value
+        Task { [modelsToCheck, checkpointsPath, huggingFaceCacheRoot, capturedVersions, modelStorageStatusProvider] in
+            var results: [(String, RuntimeManager.ModelStorageStatus)] = []
+            for model in modelsToCheck {
+                let status = await modelStorageStatusProvider(model, checkpointsPath, huggingFaceCacheRoot)
+                results.append((model.id, status))
+            }
 
-            for (modelId, status) in results
-                where states[modelId]?.isDownloading != true && states[modelId]?.isPaused != true {
-                states[modelId] = Self.downloadState(for: status)
+            for (modelId, status) in results {
+                guard let capturedVersion = capturedVersions[modelId] else { continue }
+                applyRefreshedStatus(
+                    status,
+                    modelId: modelId,
+                    capturedVersion: capturedVersion
+                )
             }
         }
     }
@@ -119,7 +161,7 @@ final class ModelDownloadManager: ObservableObject {
         ]
 
         for (model, state) in zip(models, fixtures) {
-            states[model.id] = state
+            setState(state, for: model.id)
         }
     }
 #endif
@@ -146,47 +188,41 @@ final class ModelDownloadManager: ObservableObject {
 
         errorTracker.clearErrorReceived(for: model.id)
         lifecycle.clearStopReason(for: model.id)
-        let initialProgress: DownloadProgress?
-        if states[model.id]?.isPaused == true {
-            initialProgress = states[model.id]?.progress ?? lastProgress[model.id]
-        } else {
-            lastProgress[model.id] = nil
-            initialProgress = nil
-        }
-        states[model.id] = .downloading(initialProgress)
-        let task = Task { [weak self] in
+        let downloadToken = beginDownloadOperation(for: model.id)
+        let initialProgress = progressTracker.initialProgress(
+            for: model.id,
+            currentState: states[model.id]
+        )
+        setState(.downloading(initialProgress), for: model.id)
+        let task = Task { [weak self, downloadToken] in
             guard let self else { return }
 
             do {
                 try await runtimeManager.validateDownloadSupportOffMain(for: model)
                 if model.source.helper == .aceStep {
-                    try await runAceStepDownload(model: model)
+                    try await runAceStepDownload(model: model, downloadToken: downloadToken)
                 } else if model.source.usesComponentBundle {
                     throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
                 } else {
-                    try await runSnapshotDownload(model: model)
+                    try await runSnapshotDownload(model: model, downloadToken: downloadToken)
                 }
+                try Task.checkCancellation()
                 let storageStatus = await modelStorageStatusOffMain(model: model)
-                states[model.id] = Self.downloadStateAfterDownload(for: storageStatus)
-                if storageStatus.isDownloaded {
-                    lastProgress[model.id] = nil
+                if isActiveDownloadOperation(downloadToken, for: model.id) {
+                    setState(Self.downloadStateAfterDownload(for: storageStatus), for: model.id)
+                    if storageStatus.isDownloaded {
+                        progressTracker.clear(for: model.id)
+                    }
                 }
             } catch {
-                if let stopReason = lifecycle.stopReason(for: model.id) {
-                    switch stopReason {
-                    case .pause:
-                        states[model.id] = .paused(lastProgress[model.id])
-                    case .cancel:
-                        await cleanupNativePartialDownloads(for: model)
-                        lastProgress[model.id] = nil
-                        states[model.id] = .notDownloaded
-                    }
-                } else if !errorTracker.errorWasReceived(for: model.id) {
-                    states[model.id] = .failed(error.localizedDescription)
-                }
+                await handleDownloadFailure(
+                    error,
+                    model: model,
+                    downloadToken: downloadToken
+                )
             }
 
-            lifecycle.clearCompletionTracking(for: model.id)
+            finishDownloadOperation(downloadToken, for: model.id)
         }
         lifecycle.setTask(task, for: model.id)
     }
@@ -215,12 +251,25 @@ final class ModelDownloadManager: ObservableObject {
     func remove(_ model: DownloadableModel) async {
 #if DEBUG
         guard !usesUITestDownloadStates else {
-            states[model.id] = .notDownloaded
+            setState(.notDownloaded, for: model.id)
             return
         }
 #endif
-        if states[model.id]?.isDownloading == true || states[model.id]?.isPaused == true {
+        if stopCoordinator.removalNeedsTrackedWorkToStop(
+            for: model.id,
+            currentState: states[model.id]
+        ) {
             cancel(model)
+            let stopped = await stopCoordinator.waitForTrackedWorkToStop(
+                for: model.id,
+                killFallbackDelay: Self.terminationKillFallbackDelay,
+                cleanupDelay: Self.terminationCleanupDelay,
+                waitPadding: Self.terminationWaitPadding
+            )
+            guard stopped else {
+                setState(.failed(ModelDownloadError.removalStillStopping.localizedDescription), for: model.id)
+                return
+            }
         }
 
         let checkpointsPath = self.checkpointsPath
@@ -233,41 +282,29 @@ final class ModelDownloadManager: ObservableObject {
                     huggingFaceCacheRoot: huggingFaceCacheRoot
                 )
             }.value
-            lastProgress[model.id] = nil
-            states[model.id] = .notDownloaded
+            progressTracker.clear(for: model.id)
+            setState(.notDownloaded, for: model.id)
         } catch {
-            states[model.id] = .failed(error.localizedDescription)
+            setState(.failed(error.localizedDescription), for: model.id)
         }
     }
 
     private func stop(_ model: DownloadableModel, reason: DownloadStopReason) {
-        guard lifecycle.hasTask(for: model.id) else {
-            if reason == .cancel {
-                lastProgress[model.id] = nil
-                states[model.id] = .notDownloaded
-            }
-            return
-        }
-
-        lifecycle.setStopReason(reason, for: model.id)
-        switch reason {
-        case .pause:
-            states[model.id] = .paused(states[model.id]?.progress ?? lastProgress[model.id])
-        case .cancel:
-            lastProgress[model.id] = nil
-            states[model.id] = .notDownloaded
-        }
-
-        lifecycle.cancelTrackedWork(
+        guard let state = stopCoordinator.stateAfterStopRequest(
             for: model.id,
+            reason: reason,
+            currentState: states[model.id],
             killFallbackDelay: Self.terminationKillFallbackDelay,
             cleanupDelay: Self.terminationCleanupDelay
-        )
+        ) else {
+            return
+        }
+        setState(state, for: model.id)
     }
 
 #if DEBUG
     func installTestDownloadProcess(_ process: Process, for model: DownloadableModel) {
-        states[model.id] = .downloading(nil)
+        setState(.downloading(nil), for: model.id)
         lifecycle.installTestProcess(
             process,
             modelId: model.id,
@@ -284,23 +321,11 @@ final class ModelDownloadManager: ObservableObject {
     }
 #endif
 
-    private func modelStorageStatusOffMain(modelId: String) async -> RuntimeManager.ModelStorageStatus {
-        await ModelDownloadStorage.status(
-            for: modelId,
-            checkpointsPath: checkpointsPath,
-            huggingFaceCacheRoot: huggingFaceCacheRoot
-        )
-    }
-
     private func modelStorageStatusOffMain(model: DownloadableModel) async -> RuntimeManager.ModelStorageStatus {
-        await ModelDownloadStorage.status(
-            for: model,
-            checkpointsPath: checkpointsPath,
-            huggingFaceCacheRoot: huggingFaceCacheRoot
-        )
+        await modelStorageStatusProvider(model, checkpointsPath, huggingFaceCacheRoot)
     }
 
-    private func runAceStepDownload(model: DownloadableModel) async throws {
+    private func runAceStepDownload(model: DownloadableModel, downloadToken: UUID) async throws {
         let modelId = model.id
         let repoID = model.source.downloadRepository ?? model.modelId
         guard !model.source.components.isEmpty else {
@@ -314,10 +339,16 @@ final class ModelDownloadManager: ObservableObject {
         )
 
         try await nativeDownloader.downloadAceStepMainSnapshot(plan: plan) { [weak self] progress in
-            await self?.handleNativeDownloadProgress(progress, modelId: modelId)
+            await self?.handleNativeDownloadProgress(progress, modelId: modelId, downloadToken: downloadToken)
         }
         try Task.checkCancellation()
-        try await runAceStepContractValidation(model: model, plan: plan)
+        try await helperExecutor.runAceStepContractValidation(
+            plan: plan,
+            modelId: model.id,
+            onOutputLine: { [weak self] line in
+                self?.handleDownloadEventLine(line, modelId: model.id, downloadToken: downloadToken)
+            }
+        )
         try nativeDownloader.markAceStepContractComplete(plan: plan)
     }
 
@@ -330,37 +361,7 @@ final class ModelDownloadManager: ObservableObject {
         )
     }
 
-    private func runAceStepContractValidation(model: DownloadableModel, plan: AceStepDownloadPlan) async throws {
-        let helperPath = runtimeManager.acestepDownloadHelperPath()
-        let pythonPath = runtimeManager.acestepPythonExecutablePath()
-        let localDir = plan.checkpointsRoot.path
-        let modelId = model.id
-
-        DownloadDiagnostics.log("[ModelDownloadManager] Running ACE-Step contract validation with Python at \(pythonPath.path)")
-
-        var downloadEnv = bundledPythonEnvironment()
-        downloadEnv["ACESTEP_CHECKPOINTS_DIR"] = localDir
-
-        let result = try await runDownloadHelper(
-            modelId: modelId,
-            executableURL: pythonPath,
-            arguments: [helperPath.path, "--contract", localDir],
-            environment: downloadEnv
-        )
-
-        DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step contract output: \(result.output.prefix(500))")
-        if !result.errorOutput.isEmpty {
-            DownloadDiagnostics.log("[ModelDownloadManager] ACE-Step contract stderr: \(result.errorOutput.prefix(500))")
-        }
-
-        try finishDownloadHelperRun(
-            result,
-            modelId: modelId,
-            failureMessage: result.output.isEmpty ? result.errorOutput : result.output
-        )
-    }
-
-    private func runSnapshotDownload(model: DownloadableModel) async throws {
+    private func runSnapshotDownload(model: DownloadableModel, downloadToken: UUID) async throws {
         let modelId = model.id
         let repoId = model.source.downloadRepository ?? model.modelId
         let revision = model.source.revision ?? "main"
@@ -370,79 +371,63 @@ final class ModelDownloadManager: ObservableObject {
             revision: revision,
             cacheRoot: huggingFaceCacheRoot
         ) { [weak self] progress in
-            await self?.handleNativeDownloadProgress(progress, modelId: modelId)
+            await self?.handleNativeDownloadProgress(progress, modelId: modelId, downloadToken: downloadToken)
         }
     }
 
-    private func handleNativeDownloadProgress(_ nativeProgress: NativeModelDownloadProgress, modelId: String) {
+    private func handleDownloadFailure(
+        _ error: Error,
+        model: DownloadableModel,
+        downloadToken: UUID
+    ) async {
+        guard isActiveDownloadOperation(downloadToken, for: model.id) else {
+            return
+        }
+
+        let action = failureResolver.action(
+            for: error,
+            modelId: model.id,
+            stopReason: lifecycle.stopReason(for: model.id),
+            currentState: states[model.id],
+            helperErrorWasReceived: errorTracker.errorWasReceived(for: model.id)
+        )
+
+        switch action {
+        case .pause(let progress):
+            setState(.paused(progress), for: model.id)
+        case .cancel:
+            await cleanupNativePartialDownloads(for: model)
+            progressTracker.clear(for: model.id)
+            setState(.notDownloaded, for: model.id)
+        case .fail(let message):
+            setState(.failed(message), for: model.id)
+        case .suppress:
+            break
+        }
+    }
+
+    private func handleNativeDownloadProgress(
+        _ nativeProgress: NativeModelDownloadProgress,
+        modelId: String,
+        downloadToken: UUID
+    ) {
+        guard isActiveDownloadOperation(downloadToken, for: modelId) else { return }
         guard lifecycle.stopReason(for: modelId) == nil,
               states[modelId]?.isTerminal != true else {
             return
         }
 
-        let progress = DownloadProgress(
-            status: nativeProgress.status,
-            description: nativeProgress.description,
-            unit: nativeProgress.downloadedBytes == nil ? nil : "B",
-            progressKind: nativeProgress.downloadedBytes == nil ? nil : "bytes",
-            downloadedBytes: nativeProgress.downloadedBytes,
-            totalBytes: nativeProgress.totalBytes,
-            percent: Self.monotonicPercent(nativeProgress.percent, previous: lastProgress[modelId]?.percent)
+        let progress = progressTracker.recordNativeProgress(
+            nativeProgress,
+            modelId: modelId
         )
-        lastProgress[modelId] = progress
-        states[modelId] = .downloading(progress)
+        setState(.downloading(progress), for: modelId)
     }
 
-    private func runDownloadHelper(
-        modelId: String,
-        executableURL: URL,
-        arguments: [String],
-        environment: [String: String]
-    ) async throws -> DownloadHelperProcessResult {
-        do {
-            return try await DownloadHelperProcessRunner.run(
-                executableURL: executableURL,
-                arguments: arguments,
-                environment: environment,
-                onProcessStarted: { [weak self] process in
-                    self?.lifecycle.setProcess(process, for: modelId)
-                },
-                onOutputLine: { [weak self] line in
-                    self?.handleDownloadEventLine(line, modelId: modelId)
-                }
-            )
-        } catch {
-            lifecycle.clearProcess(for: modelId)
-            throw error
+    func handleDownloadEventLine(_ line: String, modelId: String, downloadToken: UUID? = nil) {
+        if let downloadToken {
+            guard isActiveDownloadOperation(downloadToken, for: modelId) else { return }
         }
-    }
-
-    private func finishDownloadHelperRun(
-        _ result: DownloadHelperProcessResult,
-        modelId: String,
-        failureMessage: String
-    ) throws {
-        lifecycle.clearProcess(for: modelId)
-        handleDownloadEventLines(result.output, modelId: modelId)
-
-        if lifecycle.stopReason(for: modelId) != nil {
-            throw ModelDownloadError.stoppedByUser
-        }
-
-        guard result.terminationStatus == 0 else {
-            throw ModelDownloadError.downloadFailed(failureMessage)
-        }
-    }
-
-    func handleDownloadEventLines(_ output: String, modelId: String) {
-        for line in output.components(separatedBy: .newlines) {
-            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedLine.isEmpty else { continue }
-            handleDownloadEventLine(trimmedLine, modelId: modelId)
-        }
-    }
-
-    func handleDownloadEventLine(_ line: String, modelId: String) {
         guard lifecycle.stopReason(for: modelId) == nil else { return }
 
         guard let event = Self.parseDownloadEventLine(line) else {
@@ -452,30 +437,54 @@ final class ModelDownloadManager: ObservableObject {
         switch event {
         case .started, .progress, .verified, .complete:
             guard states[modelId]?.isTerminal != true,
-                  let progress = Self.downloadProgress(
-                    for: event,
-                    previousPercent: lastProgress[modelId]?.percent
+                  let progress = progressTracker.recordEventProgress(
+                    event,
+                    modelId: modelId
                   ) else {
                 return
             }
-            lastProgress[modelId] = progress
-            states[modelId] = .downloading(progress)
+            setState(.downloading(progress), for: modelId)
         case .error(let message):
             guard states[modelId] != .downloaded else { return }
             errorTracker.setErrorReceived(for: modelId)
-            states[modelId] = .failed(message)
+            setState(.failed(message), for: modelId)
         }
     }
 
-    private func bundledPythonEnvironment() -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
-        for key in ["PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYENV_ROOT", "PYENV_VERSION"] {
-            environment.removeValue(forKey: key)
-        }
-        environment["PYTHONHOME"] = runtimeManager.pythonHomePath().path
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["HF_HOME"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface").path
-        environment["HF_HUB_CACHE"] = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub").path
-        return environment
+    private func setState(_ state: DownloadState, for modelId: String) {
+        stateCoordinator.recordStateChange(for: modelId)
+        states[modelId] = state
     }
+
+    private func beginDownloadOperation(for modelId: String) -> UUID {
+        stateCoordinator.beginDownload(for: modelId)
+    }
+
+    private func isActiveDownloadOperation(_ token: UUID, for modelId: String) -> Bool {
+        stateCoordinator.isActiveDownload(token, for: modelId)
+    }
+
+    private func finishDownloadOperation(_ token: UUID, for modelId: String) {
+        guard stateCoordinator.finishDownload(token, for: modelId) else { return }
+        lifecycle.clearCompletionTracking(for: modelId)
+    }
+
+    private func applyRefreshedStatus(
+        _ status: RuntimeManager.ModelStorageStatus,
+        modelId: String,
+        capturedVersion: ModelDownloadStateCoordinator.RefreshSnapshot
+    ) {
+        guard !lifecycle.hasTrackedWork(for: modelId) else {
+            return
+        }
+        guard stateCoordinator.canApplyRefresh(
+            capturedVersion,
+            for: modelId,
+            currentState: states[modelId]
+        ) else {
+            return
+        }
+        setState(Self.downloadState(for: status), for: modelId)
+    }
+
 }

@@ -795,6 +795,142 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledLyricsDraftDoesNotClearNewerDraftState() async {
+        let executor = SuspendedLyricsDraftExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        viewModel.selectedTool = .music
+        viewModel.inputText = "Write a vocal synthpop song"
+
+        viewModel.draftMusicLyrics()
+        let didStartStaleDraft = await waitUntil {
+            executor.streamCount == 1 && viewModel.isDraftingMusicLyrics
+        }
+        XCTAssertTrue(didStartStaleDraft)
+        let staleTask = viewModel.lyricsDraftTask
+
+        viewModel.cancelMusicLyricsDraft()
+        viewModel.inputText = "Write a fresh vocal synthpop song"
+        viewModel.draftMusicLyrics()
+        let didStartActiveDraft = await waitUntil {
+            executor.streamCount == 2 && viewModel.isDraftingMusicLyrics
+        }
+        XCTAssertTrue(didStartActiveDraft)
+        let activeTask = viewModel.lyricsDraftTask
+        XCTAssertNotNil(activeTask)
+
+        executor.finishStream(
+            at: 0,
+            events: [.complete("[verse]\nStale draft", usage: TokenUsage(promptTokens: 1, completionTokens: 2))]
+        )
+        await staleTask?.value
+
+        XCTAssertTrue(viewModel.isDraftingMusicLyrics)
+        XCTAssertNotNil(viewModel.lyricsDraftTask)
+        XCTAssertEqual(viewModel.loadingMessage, "Generating lyrics...")
+        XCTAssertEqual(viewModel.musicLyricsText, "")
+
+        executor.finishStream(
+            at: 1,
+            events: [.complete("[verse]\nFresh draft", usage: TokenUsage(promptTokens: 1, completionTokens: 2))]
+        )
+        await activeTask?.value
+
+        XCTAssertFalse(viewModel.isDraftingMusicLyrics)
+        XCTAssertNil(viewModel.lyricsDraftTask)
+        XCTAssertNil(viewModel.lyricsDraftToken)
+        XCTAssertEqual(viewModel.musicLyricsText, "[verse]\nFresh draft")
+    }
+
+    @MainActor
+    func testForegroundGenerationPreloadsModelBeforeExecute() async {
+        let executor = QuickPromptTestExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+
+        viewModel.inputText = "Explain local models"
+        viewModel.sendMessage()
+        await viewModel.generationTask?.value
+
+        XCTAssertEqual(executor.lifecycleEvents, ["preload", "execute"])
+        XCTAssertEqual(executor.preloadRequests.count, 1)
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(executor.preloadRequests.first?.modelId, executor.receivedRequests.first?.modelId)
+        XCTAssertEqual(executor.preloadRequests.first?.backend, executor.receivedRequests.first?.backend)
+        XCTAssertFalse(viewModel.isModelLoading)
+        XCTAssertEqual(viewModel.selectedChat?.messages.last?.content, "Quick response")
+    }
+
+    @MainActor
+    func testGenerationWaitsForPendingCancelTerminationBeforeStartingNextPrompt() async {
+        let executor = QuickPromptTestExecutor()
+        executor.terminateDelayNanoseconds = 100_000_000
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+
+        viewModel.activeGenerationID = UUID()
+        viewModel.generationTask = Task {}
+        viewModel.isGenerating = true
+        viewModel.cancelGeneration()
+
+        viewModel.inputText = "Second prompt"
+        viewModel.sendMessage()
+        await viewModel.generationTask?.value
+
+        XCTAssertEqual(executor.terminateCount, 1)
+        XCTAssertEqual(executor.lifecycleEvents, ["preload", "execute"])
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertTrue(executor.isReady)
+        XCTAssertTrue(executor.isModelLoaded)
+        XCTAssertEqual(viewModel.selectedChat?.messages.last?.content, "Quick response")
+    }
+
+    @MainActor
+    func testFreeMemoryThenImmediatePromptWaitsForTerminationBeforePreload() async throws {
+        let profile = try XCTUnwrap(testVisionProfiles.first)
+        let executor = QuickPromptTestExecutor()
+        executor.isReady = true
+        executor.isModelLoaded = true
+        executor.currentModelId = profile.modelId
+        executor.currentModelBackend = profile.backend
+        executor.terminateDelayNanoseconds = 100_000_000
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+
+        XCTAssertTrue(viewModel.canFreeLocalEngineMemory)
+
+        viewModel.freeLocalEngineMemory()
+        XCTAssertNotNil(viewModel.engineTerminationTask)
+
+        viewModel.inputText = "Second prompt"
+        viewModel.sendMessage()
+        await viewModel.generationTask?.value
+
+        XCTAssertEqual(executor.terminateCount, 1)
+        XCTAssertEqual(executor.lifecycleEvents, ["preload", "execute"])
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertTrue(executor.isReady)
+        XCTAssertTrue(executor.isModelLoaded)
+        XCTAssertEqual(viewModel.selectedChat?.messages.last?.content, "Quick response")
+    }
+
+    @MainActor
     func testStaleGenerationFinalizerDoesNotClearActiveGeneration() {
         let viewModel = makeQuickPromptViewModel()
         let staleGenerationID = UUID()
@@ -804,27 +940,404 @@ final class ChatViewModelLogicTests: XCTestCase {
         viewModel.activeGenerationID = activeGenerationID
         viewModel.generationTask = Task {}
         viewModel.isGenerating = true
+        viewModel.isPythonLoading = true
         viewModel.isModelLoading = true
         viewModel.streamingMessageId = messageID
         viewModel.loadingMessage = "Generating..."
+        viewModel.modelLoadProgress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-4B",
+            backend: .vlm,
+            phase: .preparing,
+            detail: "Preparing runtime"
+        )
 
         viewModel.finishActiveGeneration(isMusicGeneration: false, generationID: staleGenerationID)
 
         XCTAssertEqual(viewModel.activeGenerationID, activeGenerationID)
         XCTAssertNotNil(viewModel.generationTask)
         XCTAssertTrue(viewModel.isGenerating)
+        XCTAssertTrue(viewModel.isPythonLoading)
         XCTAssertTrue(viewModel.isModelLoading)
         XCTAssertEqual(viewModel.streamingMessageId, messageID)
         XCTAssertEqual(viewModel.loadingMessage, "Generating...")
+        XCTAssertNotNil(viewModel.modelLoadProgress)
 
         viewModel.finishActiveGeneration(isMusicGeneration: false, generationID: activeGenerationID)
 
         XCTAssertNil(viewModel.activeGenerationID)
         XCTAssertNil(viewModel.generationTask)
         XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertFalse(viewModel.isPythonLoading)
         XCTAssertFalse(viewModel.isModelLoading)
         XCTAssertNil(viewModel.streamingMessageId)
         XCTAssertEqual(viewModel.loadingMessage, "")
+        XCTAssertNil(viewModel.modelLoadProgress)
+    }
+
+    @MainActor
+    func testStaleGenerationErrorDoesNotClearActiveGenerationOrReplaceMessage() {
+        let viewModel = makeQuickPromptViewModel()
+        let staleGenerationID = UUID()
+        let activeGenerationID = UUID()
+        let messageID = UUID()
+        let activeProgress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-8B",
+            backend: .vlm,
+            phase: .loadingWeights,
+            detail: "Loading active model"
+        )
+
+        guard let chatID = viewModel.selectedChatId,
+              let chatIndex = viewModel.chats.firstIndex(where: { $0.id == chatID }) else {
+            XCTFail("Expected an initial selected chat")
+            return
+        }
+
+        viewModel.chats[chatIndex].messages.append(Message(
+            id: messageID,
+            content: "Active stream",
+            isUser: false,
+            timestamp: Date(),
+            isStreaming: true
+        ))
+        _ = viewModel.streamingContentStore.begin(messageId: messageID, initialText: "Active stream")
+        viewModel.activeGenerationID = activeGenerationID
+        viewModel.generationTask = Task {}
+        viewModel.isGenerating = true
+        viewModel.isPythonLoading = true
+        viewModel.isModelLoading = true
+        viewModel.streamingMessageId = messageID
+        viewModel.loadingMessage = "Generating..."
+        viewModel.modelLoadProgress = activeProgress
+
+        viewModel.handleGenerationError(
+            ExecutionError.timeout,
+            replacingMessageId: messageID,
+            generationID: staleGenerationID
+        )
+
+        XCTAssertEqual(viewModel.activeGenerationID, activeGenerationID)
+        XCTAssertNotNil(viewModel.generationTask)
+        XCTAssertTrue(viewModel.isGenerating)
+        XCTAssertTrue(viewModel.isPythonLoading)
+        XCTAssertTrue(viewModel.isModelLoading)
+        XCTAssertEqual(viewModel.streamingMessageId, messageID)
+        XCTAssertEqual(viewModel.loadingMessage, "Generating...")
+        XCTAssertEqual(viewModel.modelLoadProgress, activeProgress)
+        XCTAssertNil(viewModel.localEngineErrorMessage)
+        XCTAssertEqual(viewModel.chats[chatIndex].messages.last?.content, "Active stream")
+        XCTAssertEqual(viewModel.chats[chatIndex].messages.last?.isStreaming, true)
+        XCTAssertEqual(viewModel.streamingContent(for: messageID)?.text, "Active stream")
+    }
+
+    @MainActor
+    func testMusicStreamErrorClearsActiveMusicDraft() async {
+        let viewModel = makeQuickPromptViewModel()
+        let generationID = UUID()
+        let messageID = UUID()
+
+        guard let chatID = viewModel.selectedChatId,
+              let chatIndex = viewModel.chats.firstIndex(where: { $0.id == chatID }) else {
+            XCTFail("Expected an initial selected chat")
+            return
+        }
+
+        viewModel.chats[chatIndex].messages.append(Message(
+            id: messageID,
+            content: "",
+            isUser: false,
+            timestamp: Date(),
+            isStreaming: true
+        ))
+        _ = viewModel.streamingContentStore.begin(messageId: messageID)
+        viewModel.activeGenerationID = generationID
+        viewModel.generationTask = Task {}
+        viewModel.isGenerating = true
+        viewModel.streamingMessageId = messageID
+        viewModel.activeMusicGenerationDraft = MusicGenerationDraft(
+            vocalMode: .vocals,
+            lyrics: "[verse]\nKeep the draft"
+        )
+
+        let stream = AsyncStream<ExecutionEvent> { continuation in
+            continuation.yield(.error(ExecutionError.pythonError("music failed")))
+            continuation.finish()
+        }
+        let request = ChatGenerationRequest(
+            chatId: chatID,
+            prompt: "Create a vocal song",
+            images: [],
+            tool: .music,
+            profilesByModality: [:],
+            parametersByModelId: [:],
+            selectionDownloadRequirement: nil,
+            selectionOperationName: "Music generation"
+        )
+
+        await viewModel.processStream(
+            stream,
+            forMessage: messageID,
+            request: request,
+            isMusicGeneration: true,
+            generationID: generationID
+        )
+
+        XCTAssertNil(viewModel.activeMusicGenerationDraft)
+        XCTAssertNil(viewModel.activeGenerationID)
+        XCTAssertNil(viewModel.generationTask)
+        XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertNil(viewModel.streamingMessageId)
+        XCTAssertEqual(
+            viewModel.chats[chatIndex].messages.last?.content,
+            "The local engine reported an error.\n\nmusic failed"
+        )
+        XCTAssertEqual(viewModel.chats[chatIndex].messages.last?.isStreaming, false)
+    }
+
+    @MainActor
+    func testStreamEndingWithoutCompletionClearsGenerationState() async {
+        let viewModel = makeQuickPromptViewModel()
+        let generationID = UUID()
+        let messageID = UUID()
+
+        guard let chatID = viewModel.selectedChatId,
+              let chatIndex = viewModel.chats.firstIndex(where: { $0.id == chatID }) else {
+            XCTFail("Expected an initial selected chat")
+            return
+        }
+
+        viewModel.chats[chatIndex].messages.append(Message(
+            id: messageID,
+            content: "",
+            isUser: false,
+            timestamp: Date(),
+            isStreaming: true
+        ))
+        _ = viewModel.streamingContentStore.begin(messageId: messageID)
+        viewModel.activeGenerationID = generationID
+        viewModel.generationTask = Task {}
+        viewModel.isGenerating = true
+        viewModel.streamingMessageId = messageID
+
+        let stream = AsyncStream<ExecutionEvent> { continuation in
+            continuation.finish()
+        }
+        let request = ChatGenerationRequest(
+            chatId: chatID,
+            prompt: "Explain silent stream endings",
+            images: [],
+            tool: .chat,
+            profilesByModality: [:],
+            parametersByModelId: [:],
+            selectionDownloadRequirement: nil,
+            selectionOperationName: "Chat"
+        )
+
+        await viewModel.processStream(
+            stream,
+            forMessage: messageID,
+            request: request,
+            generationID: generationID
+        )
+
+        XCTAssertNil(viewModel.activeGenerationID)
+        XCTAssertNil(viewModel.generationTask)
+        XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertNil(viewModel.streamingMessageId)
+        XCTAssertEqual(
+            viewModel.chats[chatIndex].messages.last?.content,
+            "The local engine stopped before it could finish.\n\nThe local engine stream ended before reporting completion."
+        )
+        XCTAssertEqual(viewModel.chats[chatIndex].messages.last?.isStreaming, false)
+    }
+
+    @MainActor
+    func testRuntimeInitializationFailureClearsLoadingState() async {
+        let executor = QuickPromptTestExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: FailingRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+
+        viewModel.inputText = "Explain local models"
+        viewModel.sendMessage()
+        await viewModel.generationTask?.value
+
+        XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertFalse(viewModel.isPythonLoading)
+        XCTAssertFalse(viewModel.isModelLoading)
+        XCTAssertNil(viewModel.modelLoadProgress)
+        XCTAssertEqual(viewModel.loadingMessage, "")
+        XCTAssertEqual(executor.lifecycleEvents, [])
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+        XCTAssertEqual(viewModel.selectedChat?.messages.last?.isUser, false)
+        XCTAssertTrue(viewModel.selectedChat?.messages.last?.content.contains("runtime failed") == true)
+    }
+
+    @MainActor
+    func testStaleRuntimePreparationDoesNotClearActiveLoadingState() async throws {
+        let runtimeManager = SuspendedRuntimeManager()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        let staleGenerationID = UUID()
+        let activeGenerationID = UUID()
+        let staleProgress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-4B",
+            backend: .vlm,
+            phase: .preparing,
+            detail: "Stale generation"
+        )
+        let activeProgress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-8B",
+            backend: .vlm,
+            phase: .preparing,
+            detail: "Active generation"
+        )
+
+        viewModel.activeGenerationID = staleGenerationID
+        let readinessTask = Task { @MainActor in
+            try await viewModel.ensureLocalRuntimeReady(
+                progress: staleProgress,
+                generationID: staleGenerationID
+            )
+        }
+        await runtimeManager.waitForInitializeStarted()
+
+        viewModel.activeGenerationID = activeGenerationID
+        viewModel.isPythonLoading = true
+        viewModel.modelLoadProgress = activeProgress
+        runtimeManager.releaseInitialize()
+
+        let isStillActiveGeneration = try await readinessTask.value
+
+        XCTAssertFalse(isStillActiveGeneration)
+        XCTAssertEqual(viewModel.activeGenerationID, activeGenerationID)
+        XCTAssertTrue(viewModel.isPythonLoading)
+        XCTAssertEqual(viewModel.modelLoadProgress, activeProgress)
+    }
+
+    @MainActor
+    func testStaleModelLoadCallbacksDoNotOverwriteActiveProgress() {
+        let viewModel = makeQuickPromptViewModel()
+        let activeProgress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-8B",
+            backend: .vlm,
+            phase: .loadingWeights,
+            detail: "Loading active model"
+        )
+        viewModel.isModelLoading = true
+        viewModel.loadingMessage = "Loading active model"
+        viewModel.modelLoadProgress = activeProgress
+
+        viewModel.modelLoadingProgress(ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-4B",
+            backend: .vlm,
+            phase: .warming,
+            detail: "Stale progress"
+        ))
+        viewModel.modelLoadingCompleted(modelId: "mlx-community/Qwen3.5-4B")
+        viewModel.modelLoadingFailed(modelId: "mlx-community/Qwen3.5-4B", error: ExecutionError.timeout)
+
+        XCTAssertTrue(viewModel.isModelLoading)
+        XCTAssertEqual(viewModel.loadingMessage, "Loading active model")
+        XCTAssertEqual(viewModel.modelLoadProgress, activeProgress)
+
+        viewModel.modelLoadingProgress(ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-8B",
+            backend: .vlm,
+            phase: .warming,
+            detail: "Warming active model"
+        ))
+
+        XCTAssertEqual(viewModel.loadingMessage, "Warming active model")
+        XCTAssertEqual(viewModel.modelLoadProgress?.phase, .warming)
+
+        viewModel.modelLoadingCompleted(modelId: "mlx-community/Qwen3.5-8B")
+
+        XCTAssertFalse(viewModel.isModelLoading)
+        XCTAssertEqual(viewModel.loadingMessage, "")
+        XCTAssertNil(viewModel.modelLoadProgress)
+    }
+
+    @MainActor
+    func testStaleDownloadStatusRefreshDoesNotRestorePreviousToolRequirement() async {
+        let imageModelIds = Set(ModelCapabilityProfile.sortedProfiles(for: .image).map(\.modelId))
+        let downloadedVisionModelIds = Set(ModelCapabilityProfile.sortedProfiles(for: .vision).map(\.modelId))
+        let runtimeManager = SuspendedDownloadStatusRuntimeManager(
+            downloadedModelIds: downloadedVisionModelIds,
+            suspendedModelIds: imageModelIds,
+            suspensionsRemaining: 1
+        )
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+
+        viewModel.selectTool(.image)
+        await runtimeManager.waitForSuspendedCheck()
+
+        viewModel.selectTool(.chat)
+        let didClearPendingRequirement = await waitUntil {
+            viewModel.selectedTool == .chat && viewModel.pendingEngineDownloadModel == nil
+        }
+        XCTAssertTrue(didClearPendingRequirement)
+
+        runtimeManager.releaseSuspendedChecks()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(viewModel.selectedTool, .chat)
+        XCTAssertNil(viewModel.pendingEngineDownloadModel)
+    }
+
+    @MainActor
+    func testCancelGenerationClearsLoadingProgressState() {
+        let viewModel = makeQuickPromptViewModel()
+        viewModel.isGenerating = true
+        viewModel.isPythonLoading = true
+        viewModel.isModelLoading = true
+        viewModel.loadingMessage = "Loading model"
+        viewModel.modelLoadProgress = ModelLoadProgress(
+            modelId: "mlx-community/Qwen3.5-4B",
+            backend: .vlm,
+            phase: .loadingWeights,
+            detail: "Loading model weights"
+        )
+
+        viewModel.cancelGeneration()
+
+        XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertFalse(viewModel.isPythonLoading)
+        XCTAssertFalse(viewModel.isModelLoading)
+        XCTAssertEqual(viewModel.loadingMessage, "")
+        XCTAssertNil(viewModel.modelLoadProgress)
+    }
+
+    @MainActor
+    func testStaleDeepResearchSeedDoesNotMutateToolProgress() async {
+        let viewModel = makeQuickPromptViewModel()
+        let staleGenerationID = UUID()
+        let activeGenerationID = UUID()
+        let messageID = UUID()
+        viewModel.activeGenerationID = activeGenerationID
+        viewModel.streamingMessageId = messageID
+        viewModel.loadingMessage = "Fresh generation"
+
+        let context = await viewModel.seedDeepResearchContext(
+            prompt: "research stale update",
+            generationID: staleGenerationID
+        )
+
+        XCTAssertTrue(context.isEmpty)
+        XCTAssertEqual(viewModel.loadingMessage, "Fresh generation")
+        XCTAssertTrue(viewModel.chats.flatMap(\.messages).allSatisfy { $0.toolCalls.isEmpty })
     }
 
     @MainActor
@@ -944,14 +1457,30 @@ private final class QuickPromptTestExecutor: ChatModelExecuting {
     var isModelLoaded = false
     var currentModelId: String?
     var currentModelBackend: RuntimeBackend?
+    var terminateDelayNanoseconds: UInt64 = 0
     weak var delegate: VLMExecutionDelegate?
+    private(set) var lifecycleEvents: [String] = []
+    private(set) var preloadRequests: [(modelId: String, backend: RuntimeBackend)] = []
     private(set) var receivedRequests: [ExecutionRequest] = []
+    private(set) var terminateCount = 0
 
     func initialize() async throws {
         isReady = true
     }
 
+    func preload(modelId: String, backend: RuntimeBackend) async throws {
+        lifecycleEvents.append("preload")
+        preloadRequests.append((modelId, backend))
+        isReady = true
+        isModelLoaded = true
+        currentModelId = modelId
+        currentModelBackend = backend
+        delegate?.modelLoadingStarted(modelId: modelId)
+        delegate?.modelLoadingCompleted(modelId: modelId)
+    }
+
     func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
+        lifecycleEvents.append("execute")
         receivedRequests.append(request)
         isReady = true
         isModelLoaded = true
@@ -964,6 +1493,61 @@ private final class QuickPromptTestExecutor: ChatModelExecuting {
             continuation.yield(.complete("Quick response", usage: TokenUsage(promptTokens: 1, completionTokens: 2)))
             continuation.finish()
         }
+    }
+
+    func terminate() async {
+        terminateCount += 1
+        if terminateDelayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: terminateDelayNanoseconds)
+        }
+        isReady = false
+        isModelLoaded = false
+        currentModelId = nil
+        currentModelBackend = nil
+    }
+}
+
+@MainActor
+private final class SuspendedLyricsDraftExecutor: ChatModelExecuting {
+    let backend: RuntimeBackend = .vlm
+    var isReady = true
+    var isModelLoaded = true
+    var currentModelId: String?
+    var currentModelBackend: RuntimeBackend?
+    weak var delegate: VLMExecutionDelegate?
+    private var continuations: [AsyncStream<ExecutionEvent>.Continuation] = []
+    private(set) var receivedRequests: [ExecutionRequest] = []
+
+    var streamCount: Int {
+        continuations.count
+    }
+
+    func initialize() async throws {
+        isReady = true
+    }
+
+    func preload(modelId: String, backend: RuntimeBackend) async throws {
+        isModelLoaded = true
+        currentModelId = modelId
+        currentModelBackend = backend
+    }
+
+    func execute(request: ExecutionRequest) async throws -> AsyncStream<ExecutionEvent> {
+        receivedRequests.append(request)
+        currentModelId = request.modelId
+        currentModelBackend = request.backend
+
+        let (stream, continuation) = AsyncStream.makeStream(of: ExecutionEvent.self)
+        continuations.append(continuation)
+        continuation.yield(.started)
+        return stream
+    }
+
+    func finishStream(at index: Int, events: [ExecutionEvent]) {
+        guard continuations.indices.contains(index) else { return }
+        let continuation = continuations[index]
+        events.forEach { continuation.yield($0) }
+        continuation.finish()
     }
 
     func terminate() async {
@@ -1054,6 +1638,106 @@ private final class QuickPromptRuntimeManager: ChatRuntimeManaging {
 
     func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
         true
+    }
+}
+
+@MainActor
+private final class FailingRuntimeManager: ChatRuntimeManaging {
+    var state: RuntimeManager.RuntimeState = .notInitialized
+
+    func initialize() async throws {
+        throw ExecutionError.pythonError("runtime failed")
+    }
+
+    func estimatedModelSize(modelId: String) -> Double {
+        1.0
+    }
+
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
+        true
+    }
+}
+
+@MainActor
+private final class SuspendedRuntimeManager: ChatRuntimeManaging {
+    var state: RuntimeManager.RuntimeState = .notInitialized
+    private(set) var initializeStarted = false
+    private var initializeContinuation: CheckedContinuation<Void, Never>?
+
+    func initialize() async throws {
+        initializeStarted = true
+        await withCheckedContinuation { continuation in
+            initializeContinuation = continuation
+        }
+        state = .ready
+    }
+
+    func releaseInitialize() {
+        guard let initializeContinuation else { return }
+        self.initializeContinuation = nil
+        initializeContinuation.resume()
+    }
+
+    func waitForInitializeStarted() async {
+        while !initializeStarted {
+            await Task.yield()
+        }
+    }
+
+    func estimatedModelSize(modelId: String) -> Double {
+        1.0
+    }
+
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
+        true
+    }
+}
+
+@MainActor
+private final class SuspendedDownloadStatusRuntimeManager: ChatRuntimeManaging {
+    var state: RuntimeManager.RuntimeState = .ready
+    let downloadedModelIds: Set<String>
+    let suspendedModelIds: Set<String>
+    var suspensionsRemaining: Int
+    private var checkContinuations: [CheckedContinuation<Void, Never>] = []
+
+    init(
+        downloadedModelIds: Set<String>,
+        suspendedModelIds: Set<String>,
+        suspensionsRemaining: Int
+    ) {
+        self.downloadedModelIds = downloadedModelIds
+        self.suspendedModelIds = suspendedModelIds
+        self.suspensionsRemaining = suspensionsRemaining
+    }
+
+    func initialize() async throws {}
+
+    func estimatedModelSize(modelId: String) -> Double {
+        1.0
+    }
+
+    func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
+        if suspendedModelIds.contains(model.modelId), suspensionsRemaining > 0 {
+            suspensionsRemaining -= 1
+            await withCheckedContinuation { continuation in
+                checkContinuations.append(continuation)
+            }
+        }
+
+        return downloadedModelIds.contains(model.modelId)
+    }
+
+    func waitForSuspendedCheck() async {
+        while checkContinuations.isEmpty {
+            await Task.yield()
+        }
+    }
+
+    func releaseSuspendedChecks() {
+        let continuations = checkContinuations
+        checkContinuations.removeAll()
+        continuations.forEach { $0.resume() }
     }
 }
 

@@ -60,6 +60,92 @@ final class ChatPersistenceServiceTests: XCTestCase {
         XCTAssertEqual(service.loadSelectedChatId(), chat.id)
     }
 
+    func testImmediateSaveCancelsOlderDebouncedSnapshot() async throws {
+        let storageDirectory = try makeTemporaryDirectory()
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
+
+        let service = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory,
+            saveDebounceInterval: 0.02
+        )
+        let staleChat = Chat(
+            title: "Stale debounced chat",
+            messages: [
+                Message(
+                    content: "This should not overwrite the immediate save",
+                    isUser: false,
+                    timestamp: Date(timeIntervalSince1970: 1_000)
+                )
+            ],
+            timestamp: Date(timeIntervalSince1970: 2_000),
+            icon: "message"
+        )
+        let currentChat = Chat(
+            title: "Current immediate chat",
+            messages: [
+                Message(
+                    content: "Immediate save wins",
+                    isUser: true,
+                    timestamp: Date(timeIntervalSince1970: 3_000)
+                )
+            ],
+            timestamp: Date(timeIntervalSince1970: 4_000),
+            icon: "message"
+        )
+
+        service.scheduleSave([staleChat], selectedChatId: staleChat.id)
+        service.saveChats([currentChat])
+        service.saveSelectedChatId(currentChat.id)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let reloadedService = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+        XCTAssertEqual(reloadedService.loadChats(), [currentChat])
+        XCTAssertEqual(reloadedService.loadSelectedChatId(), currentChat.id)
+    }
+
+    func testSelectedChatSaveUpdatesPendingDebouncedSnapshotSelection() async throws {
+        let storageDirectory = try makeTemporaryDirectory()
+        let (defaults, suiteName) = try makeUserDefaults()
+        defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
+
+        let service = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory,
+            saveDebounceInterval: 0.02
+        )
+        let pendingChat = Chat(
+            title: "Pending chat",
+            messages: [
+                Message(
+                    content: "The chat save should still flush",
+                    isUser: true,
+                    timestamp: Date(timeIntervalSince1970: 1_000)
+                )
+            ],
+            timestamp: Date(timeIntervalSince1970: 2_000),
+            icon: "message"
+        )
+        let newerSelectedChatId = UUID()
+
+        service.scheduleSave([pendingChat], selectedChatId: pendingChat.id)
+        service.saveSelectedChatId(newerSelectedChatId)
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let reloadedService = LocalChatPersistenceService(
+            userDefaults: defaults,
+            storageDirectory: storageDirectory
+        )
+        XCTAssertEqual(reloadedService.loadChats(), [pendingChat])
+        XCTAssertEqual(reloadedService.loadSelectedChatId(), newerSelectedChatId)
+    }
+
     func testDebouncedSaveClearsSelectedChatIdWhenNil() throws {
         let storageDirectory = try makeTemporaryDirectory()
         let (defaults, suiteName) = try makeUserDefaults()

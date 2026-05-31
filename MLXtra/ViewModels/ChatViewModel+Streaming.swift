@@ -2,7 +2,8 @@ import Foundation
 
 @MainActor
 extension ChatViewModel {
-    func loadModel(_ modelId: String) async throws {
+    func loadModel(_ modelId: String, backend: RuntimeBackend) async throws {
+        try await vlmExecutor.preload(modelId: modelId, backend: backend)
     }
 
     func ownsActiveGeneration(_ generationID: UUID?) -> Bool {
@@ -16,6 +17,7 @@ extension ChatViewModel {
             activeMusicGenerationDraft = nil
         }
         isGenerating = false
+        isPythonLoading = false
         isModelLoading = false
         streamingMessageId = nil
         generationTask = nil
@@ -123,7 +125,8 @@ extension ChatViewModel {
                 messages: &currentMessages,
                 images: request.images,
                 prompt: request.prompt,
-                generation: request
+                generation: request,
+                generationID: generationID
             )
 
             if executionResult == .terminalMedia {
@@ -201,7 +204,14 @@ extension ChatViewModel {
         var hasBlockedTerminalMediaTool = false
         for toolCall in executableToolCalls {
             currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [toolCall]))
-            let executionResult = await executeToolCall(toolCall, messages: &currentMessages, images: request.images, prompt: request.prompt, generation: request)
+            let executionResult = await executeToolCall(
+                toolCall,
+                messages: &currentMessages,
+                images: request.images,
+                prompt: request.prompt,
+                generation: request,
+                generationID: generationID
+            )
             switch executionResult {
             case .terminalMedia:
                 hasExecutedTerminalMediaTool = true
@@ -249,9 +259,7 @@ extension ChatViewModel {
         var pendingRenderDelta = ""
         var lastRenderTime = Date.distantPast
         let minimumRenderInterval: TimeInterval = 1.0 / 60.0
-        let generationStartedAt = Date()
-        var firstOutputAt: Date?
-        var observedTokenEvents = 0
+        var performanceTracker = ChatStreamPerformanceTracker()
         let overallTimeout = Self.generationTimeout
         var timeoutTask: Task<Void, Never>?
 #if DEBUG
@@ -259,22 +267,19 @@ extension ChatViewModel {
 #endif
 
         func currentPerformanceMetrics(usage: TokenUsage) -> GenerationPerformanceMetrics {
-            let outputTokenCount = usage.completionTokens > 0 ? usage.completionTokens : observedTokenEvents
-            let appMeasuredMetrics = GenerationPerformanceMetrics.measured(
-                startedAt: generationStartedAt,
-                firstOutputAt: firstOutputAt,
-                outputTokenCount: outputTokenCount
+            let completedAt = Date()
+            let appMeasuredMetrics = performanceTracker.appMeasuredMetrics(
+                usage: usage,
+                completedAt: completedAt
             )
-            let metrics = GenerationPerformanceMetrics.measured(
-                startedAt: generationStartedAt,
-                firstOutputAt: firstOutputAt,
-                outputTokenCount: outputTokenCount,
-                backendTokensPerSecond: usage.tokensPerSecond
+            let metrics = performanceTracker.metrics(
+                usage: usage,
+                completedAt: completedAt
             )
 #if DEBUG
             if let bridgeTokensPerSecond = usage.tokensPerSecond,
                let appTokensPerSecond = appMeasuredMetrics.tokensPerSecond {
-                ChatStreamDiagnostics.log("performance.compare bridgeTokS=\(String(format: "%.2f", bridgeTokensPerSecond)) appTokS=\(String(format: "%.2f", appTokensPerSecond)) outputTokens=\(outputTokenCount)")
+                ChatStreamDiagnostics.log("performance.compare bridgeTokS=\(String(format: "%.2f", bridgeTokensPerSecond)) appTokS=\(String(format: "%.2f", appTokensPerSecond)) outputTokens=\(metrics.outputTokenCount)")
             }
 #endif
             return metrics
@@ -338,8 +343,7 @@ extension ChatViewModel {
                     continue
                 }
 
-                firstOutputAt = firstOutputAt ?? Date()
-                observedTokenEvents += 1
+                performanceTracker.recordTokenOutput()
                 fullResponse += token
                 if hasTools && shouldBufferToolEnabledOutput(fullResponse) {
                     loadingMessage = "Preparing tool..."
@@ -358,16 +362,16 @@ extension ChatViewModel {
                     renderStreamingResponse(force: renderedResponse.isEmpty)
 #endif
                 }
-                if observedTokenEvents % 3 == 0 {
+                if performanceTracker.observedTokenEvents % 3 == 0 {
                     await Task.yield()
                 }
 
             case .image(let imageURL):
-                firstOutputAt = firstOutputAt ?? Date()
+                performanceTracker.recordNonTokenOutput()
                 appendGeneratedImage(imageURL, toMessage: messageId)
 
             case .audio(let audioURL):
-                firstOutputAt = firstOutputAt ?? Date()
+                performanceTracker.recordNonTokenOutput()
                 appendGeneratedAudio(audioURL, toMessage: messageId)
 
             case .complete(let response, let usage):
@@ -424,7 +428,12 @@ extension ChatViewModel {
 
             case .error(let error):
                 guard ownsActiveGeneration(generationID) else { return }
-                handleGenerationError(error, replacingMessageId: messageId)
+                handleGenerationError(
+                    error,
+                    replacingMessageId: messageId,
+                    generationID: generationID,
+                    isMusicGeneration: isMusicGeneration
+                )
                 finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
                 return
 
@@ -437,9 +446,18 @@ extension ChatViewModel {
             }
         }
 
+        guard ownsActiveGeneration(generationID) else { return }
         if Task.isCancelled {
             renderStreamingResponse(force: true)
             finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
+            return
         }
+
+        handleGenerationError(
+            ExecutionError.processStopped("The local engine stream ended before reporting completion."),
+            replacingMessageId: messageId,
+            generationID: generationID,
+            isMusicGeneration: isMusicGeneration
+        )
     }
 }
