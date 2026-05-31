@@ -969,6 +969,43 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testRuntimeInstallDoesNotRetryCancelledArchiveDownload() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        RuntimeArchiveURLProtocol.reset(data: Data([1, 2, 3, 4]), failEveryRequestWith: URLError(.cancelled))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RuntimeArchiveURLProtocol.self]
+
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { _, _ in
+                throw RuntimeUpdateError.invalidRuntime
+            },
+            runtimeArchiveDownloadConfiguration: configuration,
+            runtimeArchiveCacheDirectory: directory.appendingPathComponent("runtime-cache")
+        )
+
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: URL(string: "https://runtime.test/runtime.zip")!,
+            sha256: String(repeating: "0", count: 64),
+            sizeBytes: 4,
+            compatibilityApi: 1
+        )
+
+        await manager.installRuntime(asset)
+
+        XCTAssertEqual(RuntimeArchiveURLProtocol.requestCount(), 1)
+        if case .failed = manager.state {
+        } else {
+            XCTFail("Expected cancelled archive download to fail without retrying")
+        }
+    }
+
+    @MainActor
     func testRuntimeBootstrapInstallsWhenNoRuntimeIsActive() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1291,13 +1328,19 @@ private final class RuntimeArchiveURLProtocol: URLProtocol {
     private static var responseData = Data()
     private static var shouldFailFirstRequestAfterFirstChunk = false
     private static var hasFailedFirstRequest = false
+    private static var failEveryRequestWithError: URLError?
     private static var rangeHeaders: [String?] = []
 
-    static func reset(data: Data, failFirstRequestAfterFirstChunk: Bool = false) {
+    static func reset(
+        data: Data,
+        failFirstRequestAfterFirstChunk: Bool = false,
+        failEveryRequestWith: URLError? = nil
+    ) {
         lock.lock()
         responseData = data
         shouldFailFirstRequestAfterFirstChunk = failFirstRequestAfterFirstChunk
         hasFailedFirstRequest = false
+        failEveryRequestWithError = failEveryRequestWith
         rangeHeaders = []
         lock.unlock()
     }
@@ -1306,6 +1349,12 @@ private final class RuntimeArchiveURLProtocol: URLProtocol {
         lock.lock()
         defer { lock.unlock() }
         return rangeHeaders
+    }
+
+    static func requestCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return rangeHeaders.count
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -1324,6 +1373,7 @@ private final class RuntimeArchiveURLProtocol: URLProtocol {
 
         let rangeHeader = request.value(forHTTPHeaderField: "Range")
         Self.lock.lock()
+        let failEveryRequestWithError = Self.failEveryRequestWithError
         let data = Self.responseData
         let shouldFail = Self.shouldFailFirstRequestAfterFirstChunk
             && !Self.hasFailedFirstRequest
@@ -1333,6 +1383,11 @@ private final class RuntimeArchiveURLProtocol: URLProtocol {
         }
         Self.rangeHeaders.append(rangeHeader)
         Self.lock.unlock()
+
+        if let failEveryRequestWithError {
+            client?.urlProtocol(self, didFailWithError: failEveryRequestWithError)
+            return
+        }
 
         let startOffset: Int
         if let rangeHeader,

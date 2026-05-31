@@ -2,17 +2,23 @@
 """Checks for runtime build/validation script drift."""
 
 import json
+import hashlib
+import importlib.util
 import os
 import subprocess
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "Scripts"
 RUNTIME_MANIFEST = REPO_ROOT / "MLXtra/Resources/runtime/macos-arm64/runtime-manifest.json"
 MODEL_CATALOG = REPO_ROOT / "MLXtra/Resources/model-catalog.json"
+STABLE_CHANNEL = REPO_ROOT / "MLXtra/Resources/stable-channel.json"
+HF_DOWNLOAD_HELPER = REPO_ROOT / "MLXtra/Resources/runtime/macos-arm64/hf_download_helper.py"
 
 
 def bash_array(name: str) -> list[str]:
@@ -28,6 +34,48 @@ def bash_array(name: str) -> list[str]:
 
 
 class RuntimeScriptTests(unittest.TestCase):
+    def test_hf_download_helper_hashes_large_files_by_default(self):
+        spec = importlib.util.spec_from_file_location("hf_download_helper", HF_DOWNLOAD_HELPER)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        fake_huggingface_hub = types.ModuleType("huggingface_hub")
+        fake_huggingface_hub.HfApi = object
+        fake_huggingface_hub.snapshot_download = lambda *args, **kwargs: None
+        fake_tqdm = types.ModuleType("tqdm")
+        fake_tqdm_auto = types.ModuleType("tqdm.auto")
+
+        class FakeTqdm:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        fake_tqdm_auto.tqdm = FakeTqdm
+        with mock.patch.dict(
+            "sys.modules",
+            {
+                "huggingface_hub": fake_huggingface_hub,
+                "tqdm": fake_tqdm,
+                "tqdm.auto": fake_tqdm_auto,
+            },
+        ):
+            spec.loader.exec_module(module)
+
+        with mock.patch.dict(
+            os.environ,
+            {"MLXTRA_HASH_VERIFY_MAX_BYTES": "1"},
+            clear=True,
+        ):
+            self.assertTrue(module.should_hash_file(1024))
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "MLXTRA_HASH_VERIFY_MAX_BYTES": "1",
+                "MLXTRA_SKIP_LARGE_FILE_HASHES": "1",
+            },
+            clear=True,
+        ):
+            self.assertFalse(module.should_hash_file(1024))
+
     def test_runtime_scripts_are_valid_bash(self):
         for script_name in (
             "runtime-dependencies.sh",
@@ -129,6 +177,54 @@ class RuntimeScriptTests(unittest.TestCase):
             )
 
             self.assertEqual(stamp_path.read_text(), "validated\n")
+
+    def test_release_metadata_validator_detects_runtime_channel_drift(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            channel_path = Path(temporary_directory) / "stable-channel.json"
+            channel = json.loads(STABLE_CHANNEL.read_text())
+            channel["catalog"]["sha256"] = hashlib.sha256(MODEL_CATALOG.read_bytes()).hexdigest()
+            channel["catalog"]["sizeBytes"] = MODEL_CATALOG.stat().st_size
+            channel["runtimes"][0]["version"] = "9.9.9"
+            channel_path.write_text(json.dumps(channel), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(SCRIPTS_DIR / "validate-release-metadata.py"),
+                    "--catalog",
+                    str(MODEL_CATALOG),
+                    "--channel",
+                    str(channel_path),
+                    "--runtime-manifest",
+                    str(RUNTIME_MANIFEST),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not match bundled runtime manifest", result.stderr)
+
+            allowed_result = subprocess.run(
+                [
+                    "python3",
+                    str(SCRIPTS_DIR / "validate-release-metadata.py"),
+                    "--catalog",
+                    str(MODEL_CATALOG),
+                    "--channel",
+                    str(channel_path),
+                    "--runtime-manifest",
+                    str(RUNTIME_MANIFEST),
+                    "--allow-runtime-version-drift",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(allowed_result.returncode, 0, allowed_result.stderr)
+            self.assertIn("does not match bundled runtime manifest", allowed_result.stderr)
 
 
 if __name__ == "__main__":

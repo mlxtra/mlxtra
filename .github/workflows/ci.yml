@@ -24,6 +24,9 @@ jobs:
       - name: Compile Python bridge scripts
         run: Scripts/ci.sh py-compile
 
+      - name: Validate runtime archive
+        run: Scripts/ci.sh runtime-archive
+
       - name: Run Python bridge tests
         run: Scripts/ci.sh python-tests
 

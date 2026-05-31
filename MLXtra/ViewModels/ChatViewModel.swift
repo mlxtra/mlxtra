@@ -100,6 +100,7 @@ class ChatViewModel: ObservableObject {
     let launchModelPreloadRuntimeCompatibilityCheck: (ModelCapabilityProfile) -> Bool
     let streamingContentStore = StreamingMessageContentStore()
     var generationTask: Task<Void, Never>?
+    var activeGenerationID: UUID?
     var launchModelPreloadTask: Task<Void, Never>?
     let maxAutoToolDepth = 4
     var pendingDownloadMonitorTask: Task<Void, Never>?
@@ -430,12 +431,15 @@ class ChatViewModel: ObservableObject {
 #if DEBUG
         ChatStreamDiagnostics.log("generation.start promptChars=\(request.prompt.count)")
 #endif
+        let generationID = UUID()
+        activeGenerationID = generationID
         generationTask = Task {
             await prepareLaunchModelPreloadForForegroundUse(request)
+            guard ownsActiveGeneration(generationID) else { return }
             if request.isMusicGeneration {
-                await generateMusicDirectly(for: request)
+                await generateMusicDirectly(for: request, generationID: generationID)
             } else {
-                await generateResponse(for: request)
+                await generateResponse(for: request, generationID: generationID)
             }
         }
     }
@@ -446,6 +450,7 @@ class ChatViewModel: ObservableObject {
 #endif
         generationTask?.cancel()
         generationTask = nil
+        activeGenerationID = nil
         cancelMusicLyricsDraft()
         activeMusicGenerationDraft = nil
         
@@ -467,10 +472,11 @@ class ChatViewModel: ObservableObject {
         persistConversationHistory()
     }
 
-    private func generateMusicDirectly(for request: ChatGenerationRequest) async {
+    private func generateMusicDirectly(for request: ChatGenerationRequest, generationID: UUID? = nil) async {
+        guard ownsActiveGeneration(generationID) else { return }
         let trimmedPrompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else {
-            finishActiveGeneration(isMusicGeneration: true)
+            finishActiveGeneration(isMusicGeneration: true, generationID: generationID)
             return
         }
 
@@ -480,11 +486,13 @@ class ChatViewModel: ObservableObject {
             setActiveEngineModel(name: musicProfile.name, role: .music)
 
             guard await requireDownloadedModel(model: model, operation: "Music generation") else {
-                finishActiveGeneration(isMusicGeneration: true)
+                finishActiveGeneration(isMusicGeneration: true, generationID: generationID)
                 return
             }
+            guard ownsActiveGeneration(generationID) else { return }
 
             try await ensureLocalRuntimeReady()
+            guard ownsActiveGeneration(generationID) else { return }
 
             isGenerating = true
             loadingMessage = "Generating music..."
@@ -520,13 +528,16 @@ class ChatViewModel: ObservableObject {
             var toolMessages = [ExecutionMessage(role: .assistant, toolCalls: [toolCall])]
 
             await executeMusicGenerationToolCall(toolCall, messages: &toolMessages, prompt: trimmedPrompt, generation: request)
+            guard ownsActiveGeneration(generationID) else { return }
 
             finishTerminalMediaToolResult(
                 messages: toolMessages,
                 messageId: aiMessage.id,
-                isMusicGeneration: true
+                isMusicGeneration: true,
+                generationID: generationID
             )
         } catch {
+            guard ownsActiveGeneration(generationID) else { return }
             activeMusicGenerationDraft = nil
             isPythonLoading = false
             isModelLoading = false
@@ -534,7 +545,7 @@ class ChatViewModel: ObservableObject {
             generationTask = nil
             loadingMessage = ""
             if Task.isCancelled {
-                finishCancelledGeneration(isMusicGeneration: true)
+                finishCancelledGeneration(isMusicGeneration: true, generationID: generationID)
                 return
             }
             if let streamingMessageId {
@@ -545,7 +556,8 @@ class ChatViewModel: ObservableObject {
         }
     }
 
-    func generateResponse(for request: ChatGenerationRequest, toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0) async {
+    func generateResponse(for request: ChatGenerationRequest, toolMessages: [ExecutionMessage]? = nil, toolDepth: Int = 0, generationID: UUID? = nil) async {
+        guard ownsActiveGeneration(generationID) else { return }
         let cancellationIsMusicGeneration = request.isMusicGeneration
         do {
             let prompt = request.prompt
@@ -574,15 +586,17 @@ class ChatViewModel: ObservableObject {
                     model: selectionRequirement,
                     operation: request.selectionOperationName
                 ) else {
-                    finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+                    finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
                     return
                 }
+                guard ownsActiveGeneration(generationID) else { return }
             }
 
                 guard await requireDownloadedModel(model: requiredModel, operation: isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")) else {
-                finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+                finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
                 return
             }
+            guard ownsActiveGeneration(generationID) else { return }
 
             if runtimeManager.state != .ready {
                 isPythonLoading = true
@@ -594,13 +608,16 @@ class ChatViewModel: ObservableObject {
                     detail: "Preparing runtime"
                 )
                 try await runtimeManager.initialize()
+                guard ownsActiveGeneration(generationID) else { return }
                 try await vlmExecutor.initialize()
+                guard ownsActiveGeneration(generationID) else { return }
                 isPythonLoading = false
                 modelLoadProgress = nil
             }
 
             if !vlmExecutor.isReady {
                 try await vlmExecutor.initialize()
+                guard ownsActiveGeneration(generationID) else { return }
             }
 
             if modelWillLoad {
@@ -615,6 +632,7 @@ class ChatViewModel: ObservableObject {
 
                 do {
                     try await loadModel(resolvedModelId)
+                    guard ownsActiveGeneration(generationID) else { return }
                 } catch {
                     isModelLoading = false
                     modelLoadProgress = nil
@@ -631,7 +649,7 @@ class ChatViewModel: ObservableObject {
                 guard let existingId = streamingMessageId,
                       let chatIndex = chats.firstIndex(where: { $0.id == request.chatId }),
                       let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == existingId }) else {
-                    finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+                    finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
                     return
                 }
                 _ = streamingContentStore.begin(messageId: existingId, initialText: chats[chatIndex].messages[messageIndex].content)
@@ -742,6 +760,7 @@ class ChatViewModel: ObservableObject {
             )
 
             let stream = try await vlmExecutor.execute(request: executionRequest)
+            guard ownsActiveGeneration(generationID) else { return }
 
             await processStream(
                 stream,
@@ -753,12 +772,14 @@ class ChatViewModel: ObservableObject {
                 allowedToolNames: allowedToolNames,
                 isImageGeneration: isImageGeneration,
                 isSpeechGeneration: isSpeechGeneration,
-                isMusicGeneration: isMusicGeneration
+                isMusicGeneration: isMusicGeneration,
+                generationID: generationID
             )
 
         } catch {
+            guard ownsActiveGeneration(generationID) else { return }
             if Task.isCancelled {
-                finishCancelledGeneration(isMusicGeneration: cancellationIsMusicGeneration)
+                finishCancelledGeneration(isMusicGeneration: cancellationIsMusicGeneration, generationID: generationID)
                 return
             }
             if let streamingMessageId {

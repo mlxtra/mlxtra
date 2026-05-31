@@ -5,7 +5,13 @@ extension ChatViewModel {
     func loadModel(_ modelId: String) async throws {
     }
 
-    func finishActiveGeneration(isMusicGeneration: Bool) {
+    func ownsActiveGeneration(_ generationID: UUID?) -> Bool {
+        guard let generationID else { return true }
+        return activeGenerationID == generationID
+    }
+
+    func finishActiveGeneration(isMusicGeneration: Bool, generationID: UUID? = nil) {
+        guard ownsActiveGeneration(generationID) else { return }
         if isMusicGeneration {
             activeMusicGenerationDraft = nil
         }
@@ -13,23 +19,27 @@ extension ChatViewModel {
         isModelLoading = false
         streamingMessageId = nil
         generationTask = nil
+        activeGenerationID = nil
         loadingMessage = ""
         modelLoadProgress = nil
     }
 
-    func finishCancelledGeneration(isMusicGeneration: Bool) {
+    func finishCancelledGeneration(isMusicGeneration: Bool, generationID: UUID? = nil) {
+        guard ownsActiveGeneration(generationID) else { return }
         if let streamingMessageId {
             markMessageStopped(streamingMessageId)
         }
-        finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+        finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
         chatPersistence.flushPendingSave()
     }
 
     func finishTerminalMediaToolResult(
         messages: [ExecutionMessage],
         messageId: UUID,
-        isMusicGeneration: Bool
+        isMusicGeneration: Bool,
+        generationID: UUID? = nil
     ) {
+        guard ownsActiveGeneration(generationID) else { return }
         if let toolContent = messages.last(where: { $0.role == .tool })?.content,
            !isModelDownloadRequiredMessage(toolContent),
            !toolContent.contains("already displayed") {
@@ -43,7 +53,7 @@ extension ChatViewModel {
             markMessageStopped(messageId)
         }
 
-        finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+        finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
     }
 
     private func finishStreamWithMessage(
@@ -51,8 +61,10 @@ extension ChatViewModel {
         content: String,
         usage: TokenUsage,
         performanceMetrics: GenerationPerformanceMetrics,
-        isMusicGeneration: Bool
+        isMusicGeneration: Bool,
+        generationID: UUID? = nil
     ) {
+        guard ownsActiveGeneration(generationID) else { return }
         finalizeMessage(
             messageId,
             content: content,
@@ -60,7 +72,7 @@ extension ChatViewModel {
             clearToolCall: false,
             performanceMetrics: performanceMetrics
         )
-        finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+        finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
     }
 
     private func handleCompletedStream(
@@ -74,8 +86,10 @@ extension ChatViewModel {
         isImageGeneration: Bool,
         isSpeechGeneration: Bool,
         isMusicGeneration: Bool,
-        performanceMetrics: GenerationPerformanceMetrics
+        performanceMetrics: GenerationPerformanceMetrics,
+        generationID: UUID? = nil
     ) async {
+        guard ownsActiveGeneration(generationID) else { return }
         if let plainTextToolCall = plainTextToolCall(from: response, prompt: request.prompt),
            var currentMessages = messages {
             guard isToolAllowed(plainTextToolCall.function.name, allowedToolNames: allowedToolNames) else {
@@ -84,7 +98,8 @@ extension ChatViewModel {
                     content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
                     usage: usage,
                     performanceMetrics: performanceMetrics,
-                    isMusicGeneration: isMusicGeneration
+                    isMusicGeneration: isMusicGeneration,
+                    generationID: generationID
                 )
                 return
             }
@@ -95,7 +110,8 @@ extension ChatViewModel {
                     content: "Maximum tool call depth reached. Cannot execute more tool calls.",
                     usage: usage,
                     performanceMetrics: performanceMetrics,
-                    isMusicGeneration: isMusicGeneration
+                    isMusicGeneration: isMusicGeneration,
+                    generationID: generationID
                 )
                 return
             }
@@ -114,20 +130,22 @@ extension ChatViewModel {
                 finishTerminalMediaToolResult(
                     messages: currentMessages,
                     messageId: messageId,
-                    isMusicGeneration: isMusicGeneration
+                    isMusicGeneration: isMusicGeneration,
+                    generationID: generationID
                 )
                 return
             }
 
             if executionResult == .blockedTerminalMedia {
-                await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+                await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1, generationID: generationID)
                 return
             }
 
-            await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+            await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1, generationID: generationID)
             return
         }
 
+        guard ownsActiveGeneration(generationID) else { return }
         finalizeMessage(
             messageId,
             content: (isImageGeneration || isSpeechGeneration) ? "" : response,
@@ -135,7 +153,7 @@ extension ChatViewModel {
             clearToolCall: isImageGeneration || isSpeechGeneration,
             performanceMetrics: performanceMetrics
         )
-        finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+        finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
     }
 
     private func handleToolCallStreamEvent(
@@ -146,8 +164,10 @@ extension ChatViewModel {
         toolDepth: Int,
         allowedToolNames: Set<String>,
         isMusicGeneration: Bool,
-        fallbackMetrics: GenerationPerformanceMetrics
+        fallbackMetrics: GenerationPerformanceMetrics,
+        generationID: UUID? = nil
     ) async -> Bool {
+        guard ownsActiveGeneration(generationID) else { return true }
         guard var currentMessages = messages else { return false }
         let executableToolCalls = toolCalls
             .filter { isToolAllowed($0.function.name, allowedToolNames: allowedToolNames) }
@@ -159,7 +179,8 @@ extension ChatViewModel {
                 content: "That tool is not available in this mode. Switch to Auto or the matching generation mode to use it.",
                 usage: TokenUsage(promptTokens: 0, completionTokens: 0),
                 performanceMetrics: fallbackMetrics,
-                isMusicGeneration: isMusicGeneration
+                isMusicGeneration: isMusicGeneration,
+                generationID: generationID
             )
             return true
         }
@@ -170,7 +191,8 @@ extension ChatViewModel {
                 content: "Maximum tool call depth reached. Cannot execute more tool calls.",
                 usage: TokenUsage(promptTokens: 0, completionTokens: 0),
                 performanceMetrics: fallbackMetrics,
-                isMusicGeneration: isMusicGeneration
+                isMusicGeneration: isMusicGeneration,
+                generationID: generationID
             )
             return true
         }
@@ -194,17 +216,18 @@ extension ChatViewModel {
             finishTerminalMediaToolResult(
                 messages: currentMessages,
                 messageId: messageId,
-                isMusicGeneration: isMusicGeneration
+                isMusicGeneration: isMusicGeneration,
+                generationID: generationID
             )
             return true
         }
 
         if hasBlockedTerminalMediaTool {
-            await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+            await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1, generationID: generationID)
             return true
         }
 
-        await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1)
+        await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1, generationID: generationID)
         return true
     }
 
@@ -218,7 +241,8 @@ extension ChatViewModel {
         allowedToolNames: Set<String> = [],
         isImageGeneration: Bool = false,
         isSpeechGeneration: Bool = false,
-        isMusicGeneration: Bool = false
+        isMusicGeneration: Bool = false,
+        generationID: UUID? = nil
     ) async {
         var fullResponse = ""
         var renderedResponse = ""
@@ -291,6 +315,7 @@ extension ChatViewModel {
         }
 
         for await event in stream {
+            guard ownsActiveGeneration(generationID) else { return }
             if Task.isCancelled {
                 markMessageStopped(messageId)
                 break
@@ -363,11 +388,13 @@ extension ChatViewModel {
                         isImageGeneration: isImageGeneration,
                         isSpeechGeneration: isSpeechGeneration,
                         isMusicGeneration: isMusicGeneration,
-                        performanceMetrics: performanceMetrics
+                        performanceMetrics: performanceMetrics,
+                        generationID: generationID
                     )
                     return
                 }
 
+                guard ownsActiveGeneration(generationID) else { return }
                 finalizeMessage(
                     messageId,
                     content: (isImageGeneration || isSpeechGeneration) ? "" : fullResponse,
@@ -375,7 +402,7 @@ extension ChatViewModel {
                     clearToolCall: isImageGeneration || isSpeechGeneration,
                     performanceMetrics: performanceMetrics
                 )
-                finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+                finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
                 return
 
             case .toolCalls(let toolCalls):
@@ -388,15 +415,17 @@ extension ChatViewModel {
                     toolDepth: toolDepth,
                     allowedToolNames: allowedToolNames,
                     isMusicGeneration: isMusicGeneration,
-                    fallbackMetrics: currentPerformanceMetrics(usage: fallbackUsage)
+                    fallbackMetrics: currentPerformanceMetrics(usage: fallbackUsage),
+                    generationID: generationID
                 )
                 if handled {
                     return
                 }
 
             case .error(let error):
+                guard ownsActiveGeneration(generationID) else { return }
                 handleGenerationError(error, replacingMessageId: messageId)
-                finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+                finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
                 return
 
             case .progress(let message):
@@ -410,7 +439,7 @@ extension ChatViewModel {
 
         if Task.isCancelled {
             renderStreamingResponse(force: true)
-            finishActiveGeneration(isMusicGeneration: isMusicGeneration)
+            finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
         }
     }
 }

@@ -118,9 +118,9 @@ def hash_verify_max_bytes():
 
 
 def should_hash_file(size):
-    if os.environ.get("MLXTRA_VERIFY_LARGE_FILE_HASHES") == "1":
-        return True
-    return size <= hash_verify_max_bytes()
+    if os.environ.get("MLXTRA_SKIP_LARGE_FILE_HASHES") == "1":
+        return size <= hash_verify_max_bytes()
+    return True
 
 
 def file_sha256(path):

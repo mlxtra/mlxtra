@@ -31,7 +31,7 @@ run_xcode_version() {
 }
 
 run_metadata() {
-    python3 Scripts/validate-release-metadata.py
+    python3 Scripts/validate-release-metadata.py --allow-runtime-version-drift
 }
 
 run_py_compile() {

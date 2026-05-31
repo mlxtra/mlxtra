@@ -179,7 +179,7 @@ final class NativeModelDownloadService: @unchecked Sendable {
     private let fileManager: FileManager
     private let baseURL: URL
     private let downloadSessionConfiguration: URLSessionConfiguration
-    private let verifyLargeFileHashes: Bool
+    private let skipLargeFileHashVerification: Bool
     private let hashVerifyMaxBytes: Int64
     private let progressEmissionInterval: TimeInterval
     let maximumConcurrentDownloads: Int
@@ -197,7 +197,7 @@ final class NativeModelDownloadService: @unchecked Sendable {
         self.fileManager = fileManager
         self.baseURL = baseURL
         self.downloadSessionConfiguration = downloadSessionConfiguration
-        self.verifyLargeFileHashes = environment["MLXTRA_VERIFY_LARGE_FILE_HASHES"] == "1"
+        self.skipLargeFileHashVerification = environment["MLXTRA_SKIP_LARGE_FILE_HASHES"] == "1"
         self.hashVerifyMaxBytes = Int64(environment["MLXTRA_HASH_VERIFY_MAX_BYTES"] ?? "")
             ?? 64 * 1024 * 1024
         self.progressEmissionInterval = max(0, progressEmissionInterval)
@@ -593,7 +593,7 @@ final class NativeModelDownloadService: @unchecked Sendable {
     }
 
     private func shouldVerifyHash(size: Int64?) -> Bool {
-        verifyLargeFileHashes || (size ?? 0) <= hashVerifyMaxBytes
+        !skipLargeFileHashVerification || (size ?? 0) <= hashVerifyMaxBytes
     }
 
     private func fileSize(_ url: URL) -> Int64? {
@@ -783,9 +783,9 @@ private final class StreamingFileDownload: NSObject, URLSessionDataDelegate, @un
         } else if !FileManager.default.fileExists(atPath: temporaryURL.path) {
             try Data().write(to: temporaryURL, options: [.atomic])
         }
-        fileHandle = try FileHandle(forWritingTo: temporaryURL)
-        try fileHandle?.seekToEnd()
-        bytesWritten = resumeOffset
+        let handle = try FileHandle(forWritingTo: temporaryURL)
+        try handle.seekToEnd()
+        installFileHandle(handle, bytesWritten: resumeOffset)
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -804,6 +804,13 @@ private final class StreamingFileDownload: NSObject, URLSessionDataDelegate, @un
         }
     }
 
+    private func installFileHandle(_ handle: FileHandle, bytesWritten: Int64) {
+        lock.lock()
+        fileHandle = handle
+        self.bytesWritten = bytesWritten
+        lock.unlock()
+    }
+
     func cancel() {
         lock.lock()
         let task = task
@@ -817,19 +824,29 @@ private final class StreamingFileDownload: NSObject, URLSessionDataDelegate, @un
         didReceive response: URLResponse,
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
-        lock.lock()
-        self.response = response
+        var restartError: Error?
         let shouldRestartFromZero = resumeOffset > 0
             && (response as? HTTPURLResponse)?.statusCode == 200
-        let fileHandle = self.fileHandle
+        lock.lock()
+        self.response = response
         if shouldRestartFromZero {
-            bytesWritten = 0
+            do {
+                bytesWritten = 0
+                try fileHandle?.truncate(atOffset: 0)
+                try fileHandle?.seek(toOffset: 0)
+            } catch {
+                restartError = error
+            }
         }
         lock.unlock()
 
+        if let restartError {
+            complete(.failure(restartError))
+            completionHandler(.cancel)
+            return
+        }
+
         if shouldRestartFromZero {
-            try? fileHandle?.truncate(atOffset: 0)
-            try? fileHandle?.seek(toOffset: 0)
             onProgress(0)
         }
 
@@ -842,16 +859,24 @@ private final class StreamingFileDownload: NSObject, URLSessionDataDelegate, @un
         didReceive data: Data
     ) {
         do {
-            try fileHandle?.write(contentsOf: data)
-            lock.lock()
-            bytesWritten += Int64(data.count)
-            let emittedBytes = bytesWritten
-            lock.unlock()
+            let emittedBytes = try appendDownloadedData(data)
             onProgress(emittedBytes)
         } catch {
             complete(.failure(error))
             dataTask.cancel()
         }
+    }
+
+    private func appendDownloadedData(_ data: Data) throws -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let fileHandle else {
+            throw URLError(.cannotWriteToFile)
+        }
+        try fileHandle.write(contentsOf: data)
+        bytesWritten += Int64(data.count)
+        return bytesWritten
     }
 
     func urlSession(

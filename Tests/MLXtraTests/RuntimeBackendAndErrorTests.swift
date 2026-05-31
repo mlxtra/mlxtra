@@ -46,6 +46,7 @@ final class RuntimeBackendAndErrorTests: XCTestCase {
         XCTAssertEqual(ExecutionError.invalidResponse.localizedDescription, "Invalid response from Python")
         XCTAssertEqual(ExecutionError.processCrashed(retryCount: 2).localizedDescription, "Python process crashed (retry 2)")
         XCTAssertEqual(ExecutionError.processStopped("missing dependency").localizedDescription, "Python process stopped: missing dependency")
+        XCTAssertEqual(ExecutionError.pipeWriteFailed("Broken pipe").localizedDescription, "Failed to write request to Python process: Broken pipe")
         XCTAssertEqual(ExecutionError.encodingFailed.localizedDescription, "Failed to encode request")
         XCTAssertEqual(ExecutionError.decodingFailed.localizedDescription, "Failed to decode response")
         XCTAssertEqual(ExecutionError.requiresManualRetry(ExecutionError.timeout).localizedDescription, "Requires manual retry")

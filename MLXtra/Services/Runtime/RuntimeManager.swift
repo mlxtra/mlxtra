@@ -366,9 +366,12 @@ private final class RuntimeArchiveDownloader: NSObject, URLSessionDataDelegate, 
         if resumeOffset == 0 || !FileManager.default.fileExists(atPath: partialURL.path) {
             try Data().write(to: partialURL, options: [.atomic])
         }
-        fileHandle = try FileHandle(forWritingTo: partialURL)
-        try fileHandle?.seekToEnd()
+        let handle = try FileHandle(forWritingTo: partialURL)
+        try handle.seekToEnd()
+        lock.lock()
+        fileHandle = handle
         downloadedBytes = resumeOffset
+        lock.unlock()
         if resumeOffset > 0 {
             progressHandler(RuntimeDownloadProgress(downloadedBytes: resumeOffset, totalBytes: expectedBytes))
         }
@@ -395,19 +398,29 @@ private final class RuntimeArchiveDownloader: NSObject, URLSessionDataDelegate, 
         didReceive response: URLResponse,
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
-        lock.lock()
-        self.response = response
+        var restartError: Error?
         let shouldRestartFromZero = resumeOffset > 0
             && (response as? HTTPURLResponse)?.statusCode == 200
+        lock.lock()
+        self.response = response
         if shouldRestartFromZero {
-            downloadedBytes = 0
+            do {
+                downloadedBytes = 0
+                try fileHandle?.truncate(atOffset: 0)
+                try fileHandle?.seek(toOffset: 0)
+            } catch {
+                restartError = error
+            }
         }
-        let fileHandle = self.fileHandle
         lock.unlock()
 
+        if let restartError {
+            complete(.failure(restartError))
+            completionHandler(.cancel)
+            return
+        }
+
         if shouldRestartFromZero {
-            try? fileHandle?.truncate(atOffset: 0)
-            try? fileHandle?.seek(toOffset: 0)
             progressHandler(RuntimeDownloadProgress(downloadedBytes: 0, totalBytes: expectedBytes))
         }
 
@@ -420,16 +433,24 @@ private final class RuntimeArchiveDownloader: NSObject, URLSessionDataDelegate, 
         didReceive data: Data
     ) {
         do {
-            try fileHandle?.write(contentsOf: data)
-            lock.lock()
-            downloadedBytes += Int64(data.count)
-            let bytes = downloadedBytes
-            lock.unlock()
+            let bytes = try appendDownloadedData(data)
             progressHandler(RuntimeDownloadProgress(downloadedBytes: bytes, totalBytes: expectedBytes))
         } catch {
             complete(.failure(error))
             dataTask.cancel()
         }
+    }
+
+    private func appendDownloadedData(_ data: Data) throws -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let fileHandle else {
+            throw URLError(.cannotWriteToFile)
+        }
+        try fileHandle.write(contentsOf: data)
+        downloadedBytes += Int64(data.count)
+        return downloadedBytes
     }
 
     func urlSession(
@@ -916,7 +937,6 @@ final class RuntimeUpdateManager: ObservableObject {
             return false
         }
         return [
-            .cancelled,
             .networkConnectionLost,
             .timedOut,
             .notConnectedToInternet,

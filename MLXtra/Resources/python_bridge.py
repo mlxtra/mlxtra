@@ -500,6 +500,16 @@ def _coerce_int_parameter(value: Any, default: int) -> int:
     return number
 
 
+def _first_present_parameter(*values: Any, default: Any = None) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and value == "":
+            continue
+        return value
+    return default
+
+
 def _mflux_class_by_name(class_name: str):
     if class_name in {"Flux2Klein", "Flux2KleinEdit"}:
         from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
@@ -981,18 +991,6 @@ def handle_chat_completion(request: dict) -> None:
         prompt_tps = None
         generation_tps = None
         peak_memory_gb = None
-        enable_thinking = bool(chat_template_kwargs.get("enable_thinking", False))
-
-        if enable_thinking:
-            opening_tag = "<tool_call>\n"
-            send_json(
-                {
-                    "type": "chat.completion.chunk",
-                    "choices": [{"delta": {"content": opening_tag}}],
-                },
-                request=request,
-            )
-            full_response = opening_tag
 
         generation_started_at = time.perf_counter()
         first_token_sent = False
@@ -1101,11 +1099,11 @@ def handle_chat_completion(request: dict) -> None:
                 payload["performance"] = performance
             send_json(payload, request=request)
 
-        mx.clear_cache()
-
     except Exception as e:
         error_msg = log_exception("[Python Bridge] Error", e, logger=log_debug)
         send_json({"type": "error", "message": error_msg}, request=request)
+    finally:
+        _clear_accelerator_cache()
 
 
 def _last_user_prompt(messages: List[Dict[str, str]]) -> str:
@@ -1223,7 +1221,13 @@ def handle_image_generation(request: dict) -> None:
     height = int(parameters.get("height") or request.get("height", 1024))
     steps = int(parameters.get("steps") or request.get("steps", 4))
     guidance = float(parameters.get("guidance") or request.get("guidance", 1.0))
-    seed = int(parameters.get("seed") or request.get("seed") or (time.time_ns() % 2_147_483_647))
+    seed = int(
+        _first_present_parameter(
+            parameters.get("seed"),
+            request.get("seed"),
+            default=time.time_ns() % 2_147_483_647,
+        )
+    )
 
     if not prompt:
         send_json(
@@ -1296,13 +1300,13 @@ def handle_image_generation(request: dict) -> None:
             request=request,
         )
 
-        mx.clear_cache()
-
     except Exception as e:
         error_msg = log_exception(
             "[Python Bridge] Image generation error", e, logger=log_debug
         )
         send_json({"type": "error", "message": error_msg}, request=request)
+    finally:
+        _clear_accelerator_cache()
 
 
 def handle_audio_speech(request: dict) -> None:
@@ -1416,13 +1420,13 @@ def handle_audio_speech(request: dict) -> None:
             request=request,
         )
 
-        mx.clear_cache()
-
     except Exception as e:
         error_msg = log_exception(
             "[Python Bridge] Audio generation error", e, logger=log_debug
         )
         send_json({"type": "error", "message": error_msg}, request=request)
+    finally:
+        _clear_accelerator_cache()
 
 
 def _terminate_child(child: subprocess.Popen, timeout: float = 5.0):

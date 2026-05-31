@@ -294,6 +294,7 @@ extension ChatViewModel {
         isModelLoading = false
         streamingMessageId = nil
         generationTask = nil
+        activeGenerationID = nil
         loadingMessage = ""
     }
 
@@ -306,6 +307,8 @@ extension ChatViewModel {
         case .pythonError(let message):
             return "The local engine reported an error.\n\n\(Self.readableExecutionErrorDetail(message))"
         case .processStopped(let message):
+            return "The local engine stopped before it could finish.\n\n\(Self.readableExecutionErrorDetail(message))"
+        case .pipeWriteFailed(let message):
             return "The local engine stopped before it could finish.\n\n\(Self.readableExecutionErrorDetail(message))"
         case .notInitialized,
              .processNotRunning,
@@ -334,6 +337,7 @@ extension ChatViewModel {
              .modelNotLoaded,
              .timeout,
              .processStopped,
+             .pipeWriteFailed,
              .invalidResponse,
              .processCrashed,
              .encodingFailed,
@@ -344,6 +348,9 @@ extension ChatViewModel {
                 return "Local engine error: \(Self.readableExecutionErrorDetail(message, maxLength: 180))"
             }
             if case .processStopped(let message) = execError {
+                return "Local engine stopped: \(Self.readableExecutionErrorDetail(message, maxLength: 180))"
+            }
+            if case .pipeWriteFailed(let message) = execError {
                 return "Local engine stopped: \(Self.readableExecutionErrorDetail(message, maxLength: 180))"
             }
             return "The local engine stopped. Restart to continue."

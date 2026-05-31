@@ -175,6 +175,7 @@ enum ExecutionError: LocalizedError {
     case invalidResponse
     case processCrashed(retryCount: Int)
     case processStopped(String)
+    case pipeWriteFailed(String)
     case encodingFailed
     case decodingFailed
     case requiresManualRetry(Error)
@@ -200,6 +201,12 @@ enum ExecutionError: LocalizedError {
                 return "Python process stopped"
             }
             return "Python process stopped: \(trimmedMessage)"
+        case .pipeWriteFailed(let message):
+            let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedMessage.isEmpty {
+                return "Failed to write request to Python process"
+            }
+            return "Failed to write request to Python process: \(trimmedMessage)"
         case .encodingFailed:
             return "Failed to encode request"
         case .decodingFailed:

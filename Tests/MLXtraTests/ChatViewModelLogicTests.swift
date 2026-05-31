@@ -795,6 +795,39 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testStaleGenerationFinalizerDoesNotClearActiveGeneration() {
+        let viewModel = makeQuickPromptViewModel()
+        let staleGenerationID = UUID()
+        let activeGenerationID = UUID()
+        let messageID = UUID()
+
+        viewModel.activeGenerationID = activeGenerationID
+        viewModel.generationTask = Task {}
+        viewModel.isGenerating = true
+        viewModel.isModelLoading = true
+        viewModel.streamingMessageId = messageID
+        viewModel.loadingMessage = "Generating..."
+
+        viewModel.finishActiveGeneration(isMusicGeneration: false, generationID: staleGenerationID)
+
+        XCTAssertEqual(viewModel.activeGenerationID, activeGenerationID)
+        XCTAssertNotNil(viewModel.generationTask)
+        XCTAssertTrue(viewModel.isGenerating)
+        XCTAssertTrue(viewModel.isModelLoading)
+        XCTAssertEqual(viewModel.streamingMessageId, messageID)
+        XCTAssertEqual(viewModel.loadingMessage, "Generating...")
+
+        viewModel.finishActiveGeneration(isMusicGeneration: false, generationID: activeGenerationID)
+
+        XCTAssertNil(viewModel.activeGenerationID)
+        XCTAssertNil(viewModel.generationTask)
+        XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertFalse(viewModel.isModelLoading)
+        XCTAssertNil(viewModel.streamingMessageId)
+        XCTAssertEqual(viewModel.loadingMessage, "")
+    }
+
+    @MainActor
     func testMusicPromptHelpersRecognizeVocalAndLyricsMarkers() {
         let viewModel = makeViewModel()
 

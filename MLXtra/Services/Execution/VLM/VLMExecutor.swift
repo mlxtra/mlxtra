@@ -589,7 +589,7 @@ private final class StreamFinishState: @unchecked Sendable {
             if process?.isRunning == false {
                 throw stoppedProcessError()
             }
-            throw ExecutionError.encodingFailed
+            throw ExecutionError.pipeWriteFailed(error.localizedDescription)
         }
     }
 
@@ -839,7 +839,7 @@ private final class StreamFinishState: @unchecked Sendable {
 
         if let execError = error as? ExecutionError {
             switch execError {
-            case .processCrashed, .processNotRunning, .processStopped, .timeout:
+            case .processCrashed, .processNotRunning, .processStopped, .pipeWriteFailed, .timeout:
                 return true
             default:
                 return false

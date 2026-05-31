@@ -187,6 +187,37 @@ final class NativeModelDownloadServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: partialURL.path))
     }
 
+    func testNativeSnapshotDownloadVerifiesHashDespiteSmallHashLimitByDefault() async throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheRoot) }
+
+        ChunkedHuggingFaceURLProtocol.reset(manifestSHA256: String(repeating: "0", count: 64))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ChunkedHuggingFaceURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let service = NativeModelDownloadService(
+            session: session,
+            baseURL: URL(string: "https://hf.test")!,
+            downloadSessionConfiguration: configuration,
+            environment: ["MLXTRA_HASH_VERIFY_MAX_BYTES": "1"],
+            maximumConcurrentDownloads: 1,
+            progressEmissionInterval: 0
+        )
+
+        do {
+            try await service.downloadHuggingFaceSnapshot(
+                repoID: "org/model",
+                revision: "main",
+                cacheRoot: cacheRoot
+            ) { _ in }
+            XCTFail("Expected hash verification to fail")
+        } catch NativeModelDownloadError.checksumMismatch(let path) {
+            XCTAssertEqual(path, "model.safetensors")
+        }
+    }
+
 
     func testHuggingFaceManifestParsesFilesMetadata() throws {
         let payload = """
@@ -350,11 +381,13 @@ private final class ChunkedHuggingFaceURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var rangeHeaders: [String?] = []
     private static var ignoreRangeRequests = false
+    private static var manifestSHA256: String?
 
-    static func reset() {
+    static func reset(manifestSHA256: String? = nil) {
         lock.lock()
         rangeHeaders = []
         ignoreRangeRequests = false
+        self.manifestSHA256 = manifestSHA256
         lock.unlock()
     }
 
@@ -374,6 +407,13 @@ private final class ChunkedHuggingFaceURLProtocol: URLProtocol {
         lock.lock()
         defer { lock.unlock() }
         return ignoreRangeRequests
+    }
+
+    private static func manifestShaLine() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let manifestSHA256 else { return "" }
+        return #","lfs": {"size": 4, "sha256": "\#(manifestSHA256)"}"#
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -402,6 +442,7 @@ private final class ChunkedHuggingFaceURLProtocol: URLProtocol {
                         {
                           "rfilename": "model.safetensors",
                           "size": 4
+                          \(Self.manifestShaLine())
                         }
                       ]
                     }

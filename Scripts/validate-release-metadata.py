@@ -540,6 +540,45 @@ def validate_runtime_manifest(
                 )
 
 
+def validate_runtime_channel_drift(
+    channel: Any,
+    manifest: Any,
+    validator: Validator,
+    allow_runtime_version_drift: bool,
+) -> None:
+    if not isinstance(channel, dict) or not isinstance(manifest, dict):
+        return
+
+    manifest_version = manifest.get("runtimeVersion")
+    manifest_api = manifest.get("compatibilityApi")
+    manifest_platform = manifest.get("platform")
+    manifest_arch = manifest.get("arch")
+    runtimes = channel.get("runtimes")
+    if not isinstance(runtimes, list):
+        return
+
+    for index, runtime in enumerate(runtimes):
+        if not isinstance(runtime, dict):
+            continue
+        if runtime.get("platform") != manifest_platform or runtime.get("arch") != manifest_arch:
+            continue
+
+        runtime_path = f"channel.runtimes[{index}]"
+        version_matches = runtime.get("version") == manifest_version
+        api_matches = runtime.get("compatibilityApi") == manifest_api
+        if version_matches and api_matches:
+            continue
+
+        message = (
+            f"{runtime_path} version/API ({runtime.get('version')}, {runtime.get('compatibilityApi')}) "
+            f"does not match bundled runtime manifest ({manifest_version}, {manifest_api})"
+        )
+        if allow_runtime_version_drift:
+            validator.warning(message)
+        else:
+            validator.error(message)
+
+
 def parse_args() -> argparse.Namespace:
     script_dir = pathlib.Path(__file__).resolve().parent
     project_dir = script_dir.parent
@@ -555,6 +594,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-runtime-placeholders",
         action="store_true",
         help="Permit placeholder runtime SHA/size values while preparing a release locally.",
+    )
+    parser.add_argument(
+        "--allow-runtime-version-drift",
+        action="store_true",
+        help="Permit the bundled runtime manifest to differ from the stable channel runtime entry.",
     )
     return parser.parse_args()
 
@@ -572,6 +616,8 @@ def main() -> int:
         validate_channel(channel, catalog, args.catalog, validator, args.allow_runtime_placeholders)
     if manifest is not None:
         validate_runtime_manifest(manifest, model_requirements, validator)
+    if channel is not None and manifest is not None:
+        validate_runtime_channel_drift(channel, manifest, validator, args.allow_runtime_version_drift)
 
     for warning in validator.warnings:
         print(f"warning: {warning}", file=sys.stderr)

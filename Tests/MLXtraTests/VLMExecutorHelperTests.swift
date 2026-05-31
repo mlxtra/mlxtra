@@ -77,6 +77,18 @@ final class VLMExecutorHelperTests: XCTestCase {
         XCTAssertEqual(lines, ["Hello, 世界! 🌍"])
     }
 
+    func testDownloadUTF8BufferPreservesSplitMultibyteScalar() {
+        let buffer = DownloadUTF8Buffer()
+        let data = Data("prefix 🌍 suffix".utf8)
+        let splitIndex = data.firstIndex(of: 0xF0) ?? 0
+        let firstChunk = Data(data[..<data.index(splitIndex, offsetBy: 2)])
+        let secondChunk = Data(data[data.index(splitIndex, offsetBy: 2)...])
+
+        XCTAssertNil(buffer.append(firstChunk))
+        XCTAssertEqual(buffer.append(secondChunk), "prefix 🌍 suffix")
+        XCTAssertNil(buffer.flush())
+    }
+
     func testBridgeLineBufferThreadSafety() {
         let buffer = BridgeLineBuffer()
         let expectation = self.expectation(description: "Concurrent appends")

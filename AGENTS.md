@@ -178,15 +178,8 @@ EOF
 
 ## Development Guidelines
 
-### Before Implementing Changes
+### Running Checks
 
-**State your assumptions explicitly.** If uncertain, ask questions first.
-
-- If multiple interpretations exist, present them - don't pick silently
-- If a simpler approach exists, mention it
-- If something is unclear, stop and clarify
-
-**Run tests before and after changes:**
 ```bash
 # Swift tests
 swift test --filter TestName
@@ -212,45 +205,6 @@ Scripts/ci.sh
 ```
 
 If the full CI script is not practical to run, run the relevant subcommands from `Scripts/ci.sh` and explicitly tell the user which checks were run. If CI checks cannot be run locally, remind or ask the user to run `Scripts/ci.sh` before submitting.
-
-### Simplicity First
-
-- Minimum code that solves the problem
-- No speculative features
-- No abstractions for single-use code
-- Match existing style, even if you'd do it differently
-- If you notice unrelated dead code, mention it - don't delete it
-
-### Surgical Changes
-
-**Touch only what you must:**
-- Don't "improve" adjacent code, comments, or formatting
-- Don't refactor things that aren't broken
-- Remove imports/variables/functions that YOUR changes made unused
-- Every changed line should trace directly to the request
-
-### Premium UI Standard
-
-**Keep the interface feeling premium:**
-- Prefer calm, minimal surfaces over explanatory text, clutter, or debug-like copy
-- Put technical recommendations, model details, and diagnostics in settings or dedicated status surfaces, not the homepage
-- Use concise user-facing copy; remove text that does not directly help the current task
-- Keep motion subtle, purposeful, and tied to state such as focus, loading, streaming, or generation
-- Preserve spacing, alignment, typography, and visual hierarchy when adding controls
-- Avoid making the homepage feel like a configuration screen; it should invite action
-
-### Goal-Driven Execution
-
-**Transform tasks into verifiable goals:**
-- "Fix music generation" → "Run Tests/IntegrationTests/test_music_integration.py, make it pass"
-- "Add feature X" → "Test that X works via integration test"
-
-**For multi-step tasks, state a brief plan:**
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
 
 ---
 

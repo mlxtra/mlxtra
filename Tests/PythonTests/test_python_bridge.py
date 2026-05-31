@@ -156,6 +156,120 @@ class TestParseToolCalls(unittest.TestCase):
 
 
 class TestChatCompletionPerformance(unittest.TestCase):
+    def test_thinking_mode_does_not_emit_synthetic_tool_call_prefix(self):
+        def fake_load_model_if_needed(model_id, request=None):
+            return ("model", object(), {"model_type": "fake"})
+
+        def fake_apply_chat_template(processor, config, messages, num_images=0, **kwargs):
+            self.assertTrue(kwargs["enable_thinking"])
+            return "prompt"
+
+        def fake_stream_generate(*args, **kwargs):
+            yield types.SimpleNamespace(
+                text="A",
+                prompt_tokens=7,
+                generation_tokens=1,
+                prompt_tps=None,
+                generation_tps=None,
+                peak_memory=None,
+            )
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.stream_generate = fake_stream_generate
+        prompt_utils_module = types.ModuleType("mlx_vlm.prompt_utils")
+        prompt_utils_module.apply_chat_template = fake_apply_chat_template
+        mlx_module = types.ModuleType("mlx")
+        mlx_core_module = types.ModuleType("mlx.core")
+        mlx_core_module.clear_cache = lambda: None
+        mlx_module.core = mlx_core_module
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "chat_template_kwargs": {"enable_thinking": True},
+            "request_id": "req-thinking",
+        }
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mlx": mlx_module,
+                "mlx.core": mlx_core_module,
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.prompt_utils": prompt_utils_module,
+            },
+        ), patch.object(
+            python_bridge, "load_model_if_needed", fake_load_model_if_needed
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        chunks = [
+            message["choices"][0]["delta"]["content"]
+            for message in messages
+            if message.get("type") == "chat.completion.chunk"
+        ]
+        complete = messages[-1]
+
+        self.assertEqual(chunks, ["A"])
+        self.assertEqual(complete["choices"][0]["message"]["content"], "A")
+        self.assertNotIn("<tool_call>", "".join(chunks))
+
+    def test_chat_completion_clears_mlx_cache_after_stream_error(self):
+        def fake_load_model_if_needed(model_id, request=None):
+            return ("model", object(), {"model_type": "fake"})
+
+        def fake_apply_chat_template(processor, config, messages, num_images=0, **kwargs):
+            return "prompt"
+
+        def fake_stream_generate(*args, **kwargs):
+            raise RuntimeError("generation failed")
+            yield
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.stream_generate = fake_stream_generate
+        prompt_utils_module = types.ModuleType("mlx_vlm.prompt_utils")
+        prompt_utils_module.apply_chat_template = fake_apply_chat_template
+        mlx_module = types.ModuleType("mlx")
+        mlx_core_module = types.ModuleType("mlx.core")
+        mlx_core_module.clear_cache = MagicMock()
+        mlx_module.core = mlx_core_module
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "request_id": "req-error",
+        }
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mlx": mlx_module,
+                "mlx.core": mlx_core_module,
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.prompt_utils": prompt_utils_module,
+            },
+        ), patch.object(
+            python_bridge, "load_model_if_needed", fake_load_model_if_needed
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(messages[-1]["type"], "error")
+        mlx_core_module.clear_cache.assert_called_once()
+
     def test_chat_completion_emits_bridge_generation_tps_after_model_loaded(self):
         loaded = {"value": False, "observed_by_stream": False}
 
@@ -372,6 +486,124 @@ class TestLastUserPrompt(unittest.TestCase):
     def test_strips_whitespace(self):
         messages = [{"role": "user", "content": " trimmed "}]
         assert python_bridge._last_user_prompt(messages) == "trimmed"
+
+
+class TestMediaGenerationBridge(unittest.TestCase):
+    def test_image_generation_honors_explicit_zero_seed(self):
+        class FakeImage:
+            def save(self, path, overwrite=False):
+                Path(path).write_bytes(b"png")
+
+        class FakeImageModel:
+            def __init__(self):
+                self.kwargs = None
+
+            def generate_image(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeImage()
+
+        fake_model = FakeImageModel()
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_image_model_if_needed", return_value=fake_model
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_image_generation(
+                {
+                    "type": "image.generate",
+                    "model": "image-model",
+                    "prompt": "draw",
+                    "parameters": {"seed": 0},
+                    "output_dir": output_dir,
+                    "request_id": "req-image-zero-seed",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(fake_model.kwargs["seed"], 0)
+        self.assertEqual(messages[-2]["type"], "image.generated")
+        self.assertEqual(messages[-2]["seed"], 0)
+        fake_mx.clear_cache.assert_called_once()
+
+    def test_image_generation_clears_mlx_cache_after_error(self):
+        class FailingImageModel:
+            def generate_image(self, **kwargs):
+                raise RuntimeError("image failed")
+
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_image_model_if_needed", return_value=FailingImageModel()
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_image_generation(
+                {
+                    "type": "image.generate",
+                    "model": "image-model",
+                    "prompt": "draw",
+                    "output_dir": output_dir,
+                    "request_id": "req-image-error",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(messages[-1]["type"], "error")
+        fake_mx.clear_cache.assert_called_once()
+
+    def test_audio_generation_clears_mlx_cache_when_no_audio_is_returned(self):
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_audio_model_if_needed", return_value=object()
+        ), patch.object(
+            python_bridge, "_generate_speech_segments", return_value=[]
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "model": "audio-model",
+                    "input": "speak",
+                    "output_dir": output_dir,
+                    "request_id": "req-audio-empty",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertIn("without audio", messages[-1]["message"])
+        fake_mx.clear_cache.assert_called_once()
 
 
 class TestSendJson(unittest.TestCase):
