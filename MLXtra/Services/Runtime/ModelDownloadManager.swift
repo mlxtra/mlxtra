@@ -557,99 +557,26 @@ final class ModelDownloadManager: ObservableObject {
     func handleDownloadEventLine(_ line: String, modelId: String) {
         guard stopReasons[modelId] == nil else { return }
 
-        guard let data = line.data(using: .utf8),
-              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = event["type"] as? String else {
+        guard let event = Self.parseDownloadEventLine(line) else {
             return
         }
 
-        switch type {
-        case "download.started":
-            guard states[modelId]?.isTerminal != true else { return }
-            let progress = DownloadProgress(
-                status: "Preparing",
-                description: nil,
-                unit: nil,
-                progressKind: nil,
-                downloadedBytes: nil,
-                totalBytes: nil,
-                percent: nil
-            )
-            lastProgress[modelId] = progress
-            states[modelId] = .downloading(progress)
-        case "download.progress":
-            guard states[modelId]?.isTerminal != true else { return }
-            let progressKind = event["progress_kind"] as? String
-            let percent = Self.monotonicPercent(
-                Self.reliableDownloadPercent(from: event, progressKind: progressKind),
-                previous: lastProgress[modelId]?.percent
-            )
-            let progress = DownloadProgress(
-                status: event["status"] as? String ?? "Downloading",
-                description: event["description"] as? String,
-                unit: event["unit"] as? String,
-                progressKind: progressKind,
-                downloadedBytes: Self.int64Value(event["downloaded"]),
-                totalBytes: Self.int64Value(event["total"]),
-                percent: percent
-            )
-            lastProgress[modelId] = progress
-            states[modelId] = .downloading(progress)
-        case "download.verified":
-            guard states[modelId]?.isTerminal != true else { return }
-            let hashCount = Self.int64Value(event["hash_count"]) ?? 0
-            let progress = DownloadProgress(
-                status: "Verifying",
-                description: hashCount > 0 ? "Local files and hashes verified" : "Local files verified",
-                unit: nil,
-                progressKind: nil,
-                downloadedBytes: nil,
-                totalBytes: nil,
-                percent: nil
-            )
-            lastProgress[modelId] = progress
-            states[modelId] = .downloading(progress)
-        case "download.complete":
-            guard states[modelId]?.isTerminal != true else { return }
-            let progress = DownloadProgress(
-                status: "Finalizing",
-                description: nil,
-                unit: nil,
-                progressKind: nil,
-                downloadedBytes: nil,
-                totalBytes: nil,
-                percent: nil
-            )
-            lastProgress[modelId] = progress
-            states[modelId] = .downloading(progress)
-        case "download.error":
-            guard states[modelId] != .downloaded else { return }
-            if let message = event["message"] as? String {
-                errorTracker.setErrorReceived(for: modelId)
-                states[modelId] = .failed(message)
+        switch event {
+        case .started, .progress, .verified, .complete:
+            guard states[modelId]?.isTerminal != true,
+                  let progress = Self.downloadProgress(
+                    for: event,
+                    previousPercent: lastProgress[modelId]?.percent
+                  ) else {
+                return
             }
-        default:
-            break
+            lastProgress[modelId] = progress
+            states[modelId] = .downloading(progress)
+        case .error(let message):
+            guard states[modelId] != .downloaded else { return }
+            errorTracker.setErrorReceived(for: modelId)
+            states[modelId] = .failed(message)
         }
-    }
-
-    private nonisolated static func monotonicPercent(_ percent: Double?, previous: Double?) -> Double? {
-        guard let percent else { return nil }
-        guard let previous else { return percent }
-        return max(percent, previous)
-    }
-
-    private nonisolated static func int64Value(_ value: Any?) -> Int64? {
-        if let value = value as? Int64 {
-            return value
-        }
-        if let value = value as? Int {
-            return Int64(value)
-        }
-        if let value = value as? Double {
-            return Int64(value)
-        }
-        return nil
     }
 
     private func bundledPythonEnvironment() -> [String: String] {

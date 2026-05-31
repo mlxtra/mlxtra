@@ -138,6 +138,31 @@ final class ModelDownloadManagerTests: XCTestCase {
         )
     }
 
+    func testDownloadEventParserBuildsTypedProgressEvent() {
+        let event = ModelDownloadManager.parseDownloadEventLine(
+            #"{"type":"download.progress","status":"Downloading","description":"model.safetensors","unit":"B","progress_kind":"bytes","downloaded":1024,"total":2048,"percent":50,"progress_scope":"aggregate"}"#
+        )
+
+        XCTAssertEqual(
+            event,
+            .progress(
+                status: "Downloading",
+                description: "model.safetensors",
+                unit: "B",
+                progressKind: "bytes",
+                downloadedBytes: 1024,
+                totalBytes: 2048,
+                percent: 50
+            )
+        )
+    }
+
+    func testDownloadEventParserRejectsMalformedAndUnknownEvents() {
+        XCTAssertNil(ModelDownloadManager.parseDownloadEventLine("not json"))
+        XCTAssertNil(ModelDownloadManager.parseDownloadEventLine(#"{"type":"download.ignored"}"#))
+        XCTAssertNil(ModelDownloadManager.parseDownloadEventLine(#"{"type":"download.error"}"#))
+    }
+
     @MainActor
     func testDownloadProgressDoesNotMoveBackward() {
         let manager = ModelDownloadManager(refreshStatusesOnInit: false)
