@@ -37,6 +37,43 @@ final class ModelCapabilityProfileTests: XCTestCase {
         )
     }
 
+    func testStoredSelectionSurvivesMissingRuntimeManifest() {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelSelectionStore(
+            userDefaults: defaults,
+            activeRuntimeManifestProvider: { _ in nil }
+        )
+        store.setSelectedModelId(gemma4ModelId, for: .vision)
+
+        XCTAssertEqual(
+            store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId,
+            gemma4ModelId
+        )
+    }
+
+    func testStoredSelectionFallsBackWhenRuntimeManifestIsExplicitlyIncompatible() {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let store = ModelSelectionStore(userDefaults: defaults)
+        let incompatibleManifest = RuntimeManifest(
+            runtimeVersion: "9.0.0",
+            compatibilityApi: 1,
+            supportedBackends: [.image]
+        )
+        store.setSelectedModelId(gemma4ModelId, for: .vision)
+
+        XCTAssertNil(
+            store.storedProfile(
+                for: .vision,
+                hardwareMemoryGB: 16.0,
+                runtimeManifest: incompatibleManifest
+            )
+        )
+    }
+
     func testPerModeSelectionFallsBackWhenRememberedModelIsInvalidForMode() {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }

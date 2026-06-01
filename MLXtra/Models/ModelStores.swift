@@ -7,9 +7,16 @@ struct ModelSelectionStore {
     static let musicKey = "MLXtra.selectedModel.music"
 
     let userDefaults: UserDefaults
+    private let activeRuntimeManifestProvider: (RuntimeComponent) -> RuntimeManifest?
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(
+        userDefaults: UserDefaults = .standard,
+        activeRuntimeManifestProvider: @escaping (RuntimeComponent) -> RuntimeManifest? = {
+            RuntimeManager.activeRuntimeManifest(component: $0)
+        }
+    ) {
         self.userDefaults = userDefaults
+        self.activeRuntimeManifestProvider = activeRuntimeManifestProvider
     }
 
     func selectedModelId(for modality: ModelModality) -> String? {
@@ -33,7 +40,8 @@ struct ModelSelectionStore {
             return nil
         }
 
-        if !profile.isRuntimeCompatible(manifest: runtimeManifest) {
+        if let manifest = resolvedRuntimeManifest(for: profile, override: runtimeManifest),
+           !profile.isRuntimeCompatible(manifest: manifest) {
             return nil
         }
 
@@ -101,13 +109,23 @@ struct ModelSelectionStore {
             hardwareMemoryGB: hardwareMemoryGB
         )
         let compatibleProfiles = sortedProfiles.filter { profile in
-            profile.isRuntimeCompatible(manifest: runtimeManifest)
+            guard let manifest = resolvedRuntimeManifest(for: profile, override: runtimeManifest) else {
+                return false
+            }
+            return profile.isRuntimeCompatible(manifest: manifest)
         }
         let candidateProfiles = compatibleProfiles.isEmpty ? sortedProfiles : compatibleProfiles
 
         return candidateProfiles.first { profile in
             isAvailable(profile.downloadableModel)
         }
+    }
+
+    private func resolvedRuntimeManifest(
+        for profile: ModelCapabilityProfile,
+        override: RuntimeManifest?
+    ) -> RuntimeManifest? {
+        override ?? activeRuntimeManifestProvider(profile.runtime.component)
     }
 }
 
