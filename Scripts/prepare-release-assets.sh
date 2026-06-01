@@ -10,7 +10,9 @@ OUTPUT_DIR="${PROJECT_DIR}/.build/release"
 CATALOG_PATH="${PROJECT_DIR}/MLXtra/Resources/model-catalog.json"
 CHANNEL_PATH="${PROJECT_DIR}/MLXtra/Resources/stable-channel.json"
 RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
+MUSIC_RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/music-macos-arm64"
 RUNTIME_MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
+MUSIC_RUNTIME_MANIFEST="${MUSIC_RUNTIME_DIR}/runtime-music-manifest.json"
 LEGAL_ASSETS=("LICENSE" "NOTICE" "THIRD_PARTY_NOTICES.md")
 SKIP_RUNTIME_ARCHIVE=0
 WRITE_CHANNEL=0
@@ -35,7 +37,7 @@ Options:
   -h, --help                     Show this help.
 
 The runtime installer currently supports zip assets only, so this script emits
-runtime-macos-arm64-<version>.zip.
+runtime-macos-arm64-<version>.zip and runtime-music-macos-arm64-<version>.zip.
 USAGE
 }
 
@@ -194,6 +196,7 @@ CATALOG_TAG="catalog-${CATALOG_VERSION}"
 CATALOG_ASSET="${OUTPUT_DIR}/model-catalog.json"
 CHANNEL_ASSET="${OUTPUT_DIR}/stable-channel.json"
 RUNTIME_ARCHIVE=""
+MUSIC_RUNTIME_ARCHIVE=""
 INCLUDE_RUNTIME=1
 
 mkdir -p "${OUTPUT_DIR}"
@@ -207,14 +210,24 @@ CATALOG_SIZE="$(file_size "${CATALOG_ASSET}")"
 RUNTIME_SHA=""
 RUNTIME_SIZE=""
 RUNTIME_URL=""
+MUSIC_RUNTIME_SHA=""
+MUSIC_RUNTIME_SIZE=""
+MUSIC_RUNTIME_URL=""
 
 if [ "${SKIP_RUNTIME_ARCHIVE}" = "1" ]; then
-    EXISTING_RUNTIME_VERSION="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.version")"
-    EXISTING_RUNTIME_URL="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.url")"
-    RUNTIME_SHA="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.sha256")"
-    RUNTIME_SIZE="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.sizeBytes")"
-    EXISTING_RUNTIME_COMPATIBILITY_API="$(optional_json_value "${CHANNEL_PATH}" "runtimes.0.compatibilityApi")"
-    if [ -z "${EXISTING_RUNTIME_VERSION}" ] && [ -z "${EXISTING_RUNTIME_URL}" ] && [ -z "${RUNTIME_SHA}" ] && [ -z "${RUNTIME_SIZE}" ]; then
+    EXISTING_RUNTIME_JSON="$(
+        /usr/bin/python3 - "${CHANNEL_PATH}" base <<'PY'
+import json
+import sys
+channel = json.load(open(sys.argv[1], encoding="utf-8"))
+component = sys.argv[2]
+for runtime in channel.get("runtimes", []):
+    if runtime.get("component", "base") == component:
+        print(json.dumps(runtime))
+        break
+PY
+    )"
+    if [ -z "${EXISTING_RUNTIME_JSON}" ]; then
         INCLUDE_RUNTIME=0
     else
         if [ "${RUNTIME_VERSION_OVERRIDE}" = "1" ]; then
@@ -222,14 +235,22 @@ if [ "${SKIP_RUNTIME_ARCHIVE}" = "1" ]; then
             echo "Build the archive or update stable-channel.json after publishing the runtime asset." >&2
             exit 2
         fi
-        RUNTIME_VERSION="${EXISTING_RUNTIME_VERSION}"
-        RUNTIME_URL="${EXISTING_RUNTIME_URL}"
-        RUNTIME_COMPATIBILITY_API="${EXISTING_RUNTIME_COMPATIBILITY_API}"
+        RUNTIME_VERSION="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("version",""))' "${EXISTING_RUNTIME_JSON}")"
+        RUNTIME_URL="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("url",""))' "${EXISTING_RUNTIME_JSON}")"
+        RUNTIME_SHA="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("sha256",""))' "${EXISTING_RUNTIME_JSON}")"
+        RUNTIME_SIZE="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("sizeBytes","") or "")' "${EXISTING_RUNTIME_JSON}")"
+        RUNTIME_COMPATIBILITY_API="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("compatibilityApi",""))' "${EXISTING_RUNTIME_JSON}")"
     fi
 else
+    if [ ! -d "${MUSIC_RUNTIME_DIR}" ] || [ ! -f "${MUSIC_RUNTIME_MANIFEST}" ]; then
+        echo "Missing music runtime component at ${MUSIC_RUNTIME_DIR}. Run Scripts/build-runtime-bundle.sh first." >&2
+        exit 1
+    fi
     RUNTIME_TAG="runtime-${RUNTIME_VERSION}"
     RUNTIME_ARCHIVE="${OUTPUT_DIR}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+    MUSIC_RUNTIME_ARCHIVE="${OUTPUT_DIR}/runtime-music-macos-arm64-${RUNTIME_VERSION}.zip"
     RUNTIME_URL="https://github.com/${REPOSITORY}/releases/download/${RUNTIME_TAG}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+    MUSIC_RUNTIME_URL="https://github.com/${REPOSITORY}/releases/download/${RUNTIME_TAG}/runtime-music-macos-arm64-${RUNTIME_VERSION}.zip"
     echo "Creating ${RUNTIME_ARCHIVE}"
     rm -f "${RUNTIME_ARCHIVE}"
     COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent "${RUNTIME_DIR}" "${RUNTIME_ARCHIVE}"
@@ -238,11 +259,28 @@ else
         exit 1
     fi
     "${SCRIPT_DIR}/validate-runtime-release-archive.sh" \
+        --component base \
         --expected-version "${RUNTIME_VERSION}" \
         --expected-compatibility-api "${RUNTIME_COMPATIBILITY_API}" \
         "${RUNTIME_ARCHIVE}"
     RUNTIME_SHA="$(sha256_file "${RUNTIME_ARCHIVE}")"
     RUNTIME_SIZE="$(file_size "${RUNTIME_ARCHIVE}")"
+
+    echo "Creating ${MUSIC_RUNTIME_ARCHIVE}"
+    rm -f "${MUSIC_RUNTIME_ARCHIVE}"
+    COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent "${MUSIC_RUNTIME_DIR}" "${MUSIC_RUNTIME_ARCHIVE}"
+    if zipinfo -1 "${MUSIC_RUNTIME_ARCHIVE}" | grep -Eq '(^__MACOSX/|(^|/)\._[^/]+$)'; then
+        echo "Music runtime archive contains macOS metadata sidecars; refusing to publish." >&2
+        exit 1
+    fi
+    "${SCRIPT_DIR}/validate-runtime-release-archive.sh" \
+        --component music \
+        --expected-version "${RUNTIME_VERSION}" \
+        --expected-compatibility-api "${RUNTIME_COMPATIBILITY_API}" \
+        --base-runtime-dir "${RUNTIME_DIR}" \
+        "${MUSIC_RUNTIME_ARCHIVE}"
+    MUSIC_RUNTIME_SHA="$(sha256_file "${MUSIC_RUNTIME_ARCHIVE}")"
+    MUSIC_RUNTIME_SIZE="$(file_size "${MUSIC_RUNTIME_ARCHIVE}")"
 fi
 
 CATALOG_URL="https://github.com/${REPOSITORY}/releases/download/${CATALOG_TAG}/model-catalog.json"
@@ -259,7 +297,10 @@ CATALOG_URL="https://github.com/${REPOSITORY}/releases/download/${CATALOG_TAG}/m
     "${RUNTIME_SIZE}" \
     "${RUNTIME_COMPATIBILITY_API}" \
     "${INCLUDE_RUNTIME}" \
-    "${CATALOG_MIN_APP_VERSION}" <<'PY'
+    "${CATALOG_MIN_APP_VERSION}" \
+    "${MUSIC_RUNTIME_URL}" \
+    "${MUSIC_RUNTIME_SHA}" \
+    "${MUSIC_RUNTIME_SIZE}" <<'PY'
 import json
 import sys
 
@@ -276,6 +317,9 @@ runtime_size = int(sys.argv[10]) if sys.argv[10] else None
 runtime_compatibility_api = int(sys.argv[11]) if sys.argv[11] else None
 include_runtime = sys.argv[12] == "1"
 catalog_min_app_version = sys.argv[13]
+music_runtime_url = sys.argv[14]
+music_runtime_sha = sys.argv[15]
+music_runtime_size = int(sys.argv[16]) if sys.argv[16] else None
 
 manifest = {
     "schemaVersion": 1,
@@ -294,6 +338,7 @@ if include_runtime:
         "version": runtime_version,
         "platform": "macos",
         "arch": "arm64",
+        "component": "base",
         "url": runtime_url,
         "sha256": runtime_sha,
         "sizeBytes": runtime_size,
@@ -302,6 +347,20 @@ if include_runtime:
     if catalog_min_app_version:
         runtime_asset["minAppVersion"] = catalog_min_app_version
     manifest["runtimes"].append(runtime_asset)
+    if music_runtime_url and music_runtime_sha:
+        music_runtime_asset = {
+            "version": runtime_version,
+            "platform": "macos",
+            "arch": "arm64",
+            "component": "music",
+            "url": music_runtime_url,
+            "sha256": music_runtime_sha,
+            "sizeBytes": music_runtime_size,
+            "compatibilityApi": runtime_compatibility_api,
+        }
+        if catalog_min_app_version:
+            music_runtime_asset["minAppVersion"] = catalog_min_app_version
+        manifest["runtimes"].append(music_runtime_asset)
 
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2)
@@ -334,6 +393,8 @@ echo "Legal assets: ${OUTPUT_DIR}/LICENSE, ${OUTPUT_DIR}/NOTICE, ${OUTPUT_DIR}/T
 if [ "${SKIP_RUNTIME_ARCHIVE}" = "0" ]; then
     echo "Runtime asset: ${RUNTIME_ARCHIVE}"
     echo "Runtime SHA-256: ${RUNTIME_SHA}"
+    echo "Music runtime asset: ${MUSIC_RUNTIME_ARCHIVE}"
+    echo "Music runtime SHA-256: ${MUSIC_RUNTIME_SHA}"
 elif [ "${INCLUDE_RUNTIME}" = "1" ]; then
     echo "Runtime archive skipped; existing runtime entry was reused in the generated channel."
 else

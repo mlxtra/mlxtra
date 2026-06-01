@@ -1,8 +1,9 @@
 {
-  "runtimeVersion": "0.1.4",
+  "runtimeVersion": "0.1.5",
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
+  "component": "base",
   "channel": "stable",
   "pythonVersion": "3.12.8",
   "pythonPath": "venv/bin/python3",
@@ -23,23 +24,19 @@
     "torch==2.11.0",
     "torchvision==0.26.0"
   ],
-  "isolatedPackages": [
-    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
-  ],
+  "isolatedPackages": [],
   "supportedBackends": [
     "vlm",
     "llm",
     "image",
-    "audio",
-    "music"
+    "audio"
   ],
   "capabilities": [
     "chat",
     "vision",
     "image-generation",
     "image-editing",
-    "speech-generation",
-    "music-generation"
+    "speech-generation"
   ],
   "imageRuntimes": {
     "mflux": {
@@ -53,7 +50,13 @@
         "ZImage",
         "ZImageTurbo"
       ],
-      "quantizeBits": [3, 4, 5, 6, 8]
+      "quantizeBits": [
+        3,
+        4,
+        5,
+        6,
+        8
+      ]
     }
   },
   "audioRuntimes": {

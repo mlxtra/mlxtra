@@ -64,19 +64,6 @@ class RuntimeManager: ObservableObject {
 
             let bridgePath = bridgeScriptPath()
             try Self.validateRequiredFile(bridgePath, error: .bridgeScriptNotFound(bridgePath.path))
-
-            let aceStepPython = acestepPythonExecutablePath()
-            try Self.validateRequiredFile(
-                aceStepPython,
-                error: .runtimeComponentNotFound("ACE-Step Python executable", aceStepPython.path),
-                executable: true
-            )
-
-            let aceStepHelper = acestepDownloadHelperPath()
-            try Self.validateRequiredFile(
-                aceStepHelper,
-                error: .runtimeComponentNotFound("ACE-Step download helper", aceStepHelper.path)
-            )
         } catch let runtimeError as RuntimeError {
             state = .error(runtimeError.localizedDescription)
             throw runtimeError

@@ -1685,6 +1685,18 @@ def handle_music_generation(request: dict) -> None:
         _forward_acestep_subprocess(ace_python, helper_path, request)
         return
 
+    send_json(
+        {
+            "type": "error",
+            "message": (
+                "Music runtime component is not installed. Install the music "
+                "runtime from Models settings, then retry ACE-Step generation."
+            ),
+        },
+        request=request,
+    )
+    return
+
     model_id = request.get("model")
     if not model_id:
         send_json({"type": "error", "message": "No model provided for music generation"}, request=request)

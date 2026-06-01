@@ -9,7 +9,7 @@ RUNTIME_DEPENDENCIES_DIR="$(
 RUNTIME_DEPENDENCY_LOCK_FILE="${RUNTIME_DEPENDENCIES_DIR}/runtime-locks/macos-arm64.lock.json"
 RUNTIME_DEPENDENCY_LOCK_VALIDATOR="${RUNTIME_DEPENDENCIES_DIR}/runtime-locks/validate-runtime-lock.py"
 
-RUNTIME_VERSION="0.1.4"
+RUNTIME_VERSION="0.1.5"
 PYTHON_VERSION="3.12.8"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-macos11.pkg"
 PYTHON_PKG_NAME="python-${PYTHON_VERSION}-macos11.pkg"
@@ -63,7 +63,6 @@ RUNTIME_SUPPORTED_BACKENDS=(
     "llm"
     "image"
     "audio"
-    "music"
 )
 
 RUNTIME_CAPABILITIES=(
@@ -72,6 +71,13 @@ RUNTIME_CAPABILITIES=(
     "image-generation"
     "image-editing"
     "speech-generation"
+)
+
+RUNTIME_MUSIC_SUPPORTED_BACKENDS=(
+    "music"
+)
+
+RUNTIME_MUSIC_CAPABILITIES=(
     "music-generation"
 )
 

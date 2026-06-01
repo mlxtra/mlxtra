@@ -17,10 +17,11 @@ struct CatalogReleaseAsset: Codable, Equatable {
     let sizeBytes: Int64?
 }
 
-struct RuntimeReleaseAsset: Codable, Equatable, Identifiable {
+struct RuntimeReleaseAsset: Codable, Equatable, Identifiable, Sendable {
     let version: String
     let platform: String
     let arch: String
+    let component: RuntimeComponent
     let url: URL
     let sha256: String
     let sizeBytes: Int64?
@@ -31,6 +32,7 @@ struct RuntimeReleaseAsset: Codable, Equatable, Identifiable {
         version: String,
         platform: String,
         arch: String,
+        component: RuntimeComponent = .base,
         url: URL,
         sha256: String,
         sizeBytes: Int64?,
@@ -40,6 +42,7 @@ struct RuntimeReleaseAsset: Codable, Equatable, Identifiable {
         self.version = version
         self.platform = platform
         self.arch = arch
+        self.component = component
         self.url = url
         self.sha256 = sha256
         self.sizeBytes = sizeBytes
@@ -47,7 +50,34 @@ struct RuntimeReleaseAsset: Codable, Equatable, Identifiable {
         self.minAppVersion = minAppVersion
     }
 
-    var id: String { "\(platform)-\(arch)-\(version)" }
+    var id: String { "\(platform)-\(arch)-\(component.rawValue)-\(version)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case platform
+        case arch
+        case component
+        case url
+        case sha256
+        case sizeBytes
+        case compatibilityApi
+        case minAppVersion
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            version: try container.decode(String.self, forKey: .version),
+            platform: try container.decode(String.self, forKey: .platform),
+            arch: try container.decode(String.self, forKey: .arch),
+            component: try container.decodeIfPresent(RuntimeComponent.self, forKey: .component) ?? .base,
+            url: try container.decode(URL.self, forKey: .url),
+            sha256: try container.decode(String.self, forKey: .sha256),
+            sizeBytes: try container.decodeIfPresent(Int64.self, forKey: .sizeBytes),
+            compatibilityApi: try container.decode(Int.self, forKey: .compatibilityApi),
+            minAppVersion: try container.decodeIfPresent(String.self, forKey: .minAppVersion)
+        )
+    }
 }
 
 struct ModelCatalog: Codable, Equatable {

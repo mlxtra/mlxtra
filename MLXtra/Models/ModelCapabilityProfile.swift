@@ -348,14 +348,36 @@ struct ModelSource: Codable, Equatable {
 struct ModelRuntimeRequirement: Codable, Equatable {
     let minVersion: String
     let compatibilityApi: Int
+    let component: RuntimeComponent
 
-    init(minVersion: String = "0.1.0", compatibilityApi: Int = 1) {
+    init(
+        minVersion: String = "0.1.0",
+        compatibilityApi: Int = 1,
+        component: RuntimeComponent = .base
+    ) {
         self.minVersion = minVersion
         self.compatibilityApi = compatibilityApi
+        self.component = component
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case minVersion
+        case compatibilityApi
+        case component
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            minVersion: try container.decodeIfPresent(String.self, forKey: .minVersion) ?? "0.1.0",
+            compatibilityApi: try container.decodeIfPresent(Int.self, forKey: .compatibilityApi) ?? 1,
+            component: try container.decodeIfPresent(RuntimeComponent.self, forKey: .component) ?? .base
+        )
     }
 
     func isSatisfied(by manifest: RuntimeManifest?) -> Bool {
         guard let manifest else { return false }
+        guard manifest.component == component else { return false }
         guard manifest.compatibilityApi == compatibilityApi else { return false }
         return VersionComparator.compare(manifest.runtimeVersion, minVersion) != .orderedAscending
     }
@@ -592,7 +614,8 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         fit(hardwareMemoryGB: hardwareMemoryGB) != .heavy
     }
 
-    func isRuntimeCompatible(manifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()) -> Bool {
+    func isRuntimeCompatible(manifest: RuntimeManifest? = nil) -> Bool {
+        let manifest = manifest ?? RuntimeManager.activeRuntimeManifest(component: runtime.component)
         guard let manifest else { return false }
         return runtime.isSatisfied(by: manifest)
             && manifest.supports(backend: backend)

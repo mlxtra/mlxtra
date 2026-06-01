@@ -168,16 +168,20 @@ struct ModelManagerRow: View {
     private var runtimeAction: some View {
         switch runtimeUpdateManager.state {
         case .available(let asset):
-            if isPendingDownload {
-                queuedRuntimeAction
-            } else {
-                runtimeSetupStatus("Setting up")
-            }
-            Color.clear
-                .frame(width: 0, height: 0)
-                .task(id: asset.version) {
-                    runtimeUpdateManager.installRuntimeInBackground(asset)
+            if asset.component == model.runtime.component {
+                if isPendingDownload {
+                    queuedRuntimeAction
+                } else {
+                    runtimeSetupStatus("Setting up")
                 }
+                Color.clear
+                    .frame(width: 0, height: 0)
+                    .task(id: asset.id) {
+                        runtimeUpdateManager.installRuntimeInBackground(asset)
+                    }
+            } else {
+                queueDownloadButton
+            }
         case .installing:
             if isPendingDownload {
                 queuedRuntimeAction
@@ -192,7 +196,10 @@ struct ModelManagerRow: View {
             }
         case .failed:
             Button {
-                runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
+                runtimeUpdateManager.bootstrapStableRuntimeInBackground(
+                    reportFailures: true,
+                    component: model.runtime.component
+                )
             } label: {
                 Label("Retry Setup", systemImage: "arrow.clockwise")
             }

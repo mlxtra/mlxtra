@@ -55,6 +55,7 @@ struct RuntimeManifest: Codable, Equatable {
     let compatibilityApi: Int
     let platform: String
     let arch: String
+    let component: RuntimeComponent
     let channel: String?
     let pythonVersion: String?
     let pythonPath: String?
@@ -72,6 +73,7 @@ struct RuntimeManifest: Codable, Equatable {
         compatibilityApi: Int,
         platform: String = "macos",
         arch: String = "arm64",
+        component: RuntimeComponent = .base,
         channel: String? = "stable",
         pythonVersion: String? = nil,
         pythonPath: String? = nil,
@@ -88,6 +90,7 @@ struct RuntimeManifest: Codable, Equatable {
         self.compatibilityApi = compatibilityApi
         self.platform = platform
         self.arch = arch
+        self.component = component
         self.channel = channel
         self.pythonVersion = pythonVersion
         self.pythonPath = pythonPath
@@ -106,6 +109,7 @@ struct RuntimeManifest: Codable, Equatable {
         case compatibilityApi
         case platform
         case arch
+        case component
         case channel
         case pythonVersion
         case pythonPath
@@ -125,6 +129,7 @@ struct RuntimeManifest: Codable, Equatable {
         compatibilityApi = try container.decode(Int.self, forKey: .compatibilityApi)
         platform = try container.decodeIfPresent(String.self, forKey: .platform) ?? "macos"
         arch = try container.decodeIfPresent(String.self, forKey: .arch) ?? "arm64"
+        component = try container.decodeIfPresent(RuntimeComponent.self, forKey: .component) ?? .base
         channel = try container.decodeIfPresent(String.self, forKey: .channel)
         pythonVersion = try container.decodeIfPresent(String.self, forKey: .pythonVersion)
         pythonPath = try container.decodeIfPresent(String.self, forKey: .pythonPath)

@@ -47,6 +47,10 @@ extension RuntimeManager {
         guard model.source.helper == .aceStep else {
             throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
         }
+        guard Self.activeRuntimeManifest(component: .music) != nil else {
+            let componentPath = activeRuntimeURL.appendingPathComponent("acestep-venv/bin/python").path
+            throw RuntimeError.runtimeComponentNotFound("Music runtime component", componentPath)
+        }
 
         let aceStepPython = acestepPythonExecutablePath()
         let aceStepHelper = acestepDownloadHelperPath()

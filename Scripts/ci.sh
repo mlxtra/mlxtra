@@ -36,11 +36,16 @@ run_metadata() {
 }
 
 run_py_compile() {
+    local ace_helper="MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py"
+    if [ ! -f "${ace_helper}" ]; then
+        ace_helper="MLXtra/Resources/runtime/music-macos-arm64/acestep_download_helper.py"
+    fi
+
     python3 -m py_compile \
         MLXtra/Resources/python_bridge.py \
         MLXtra/Resources/acestep_bridge.py \
         MLXtra/Resources/bridge_utils.py \
-        MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py \
+        "${ace_helper}" \
         Scripts/validate-release-metadata.py \
         Tests/IntegrationTests/test_all_models_integration.py \
         Tests/IntegrationTests/test_bridge.py \
@@ -51,14 +56,24 @@ run_py_compile() {
 
 run_runtime_archive() {
     local archive=".build/release/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+    local music_archive=".build/release/runtime-music-macos-arm64-${RUNTIME_VERSION}.zip"
     if [ ! -e "${archive}" ]; then
         echo "No staged runtime release archive found; skipping runtime archive validation."
         return 0
     fi
 
     Scripts/validate-runtime-release-archive.sh \
+        --component base \
         --expected-version "${RUNTIME_VERSION}" \
         "${archive}"
+
+    if [ -e "${music_archive}" ]; then
+        Scripts/validate-runtime-release-archive.sh \
+            --component music \
+            --expected-version "${RUNTIME_VERSION}" \
+            --base-runtime-dir "MLXtra/Resources/runtime/macos-arm64" \
+            "${music_archive}"
+    fi
 }
 
 run_python_tests() {

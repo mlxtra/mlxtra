@@ -22,7 +22,7 @@ MLXtra's remote catalog/runtime update flow.
 
 The script creates or updates:
   - catalog-<version> release with model-catalog.json
-  - runtime-<version> release with runtime-macos-arm64-<version>.zip and legal files
+  - runtime-<version> release with base and music runtime zip assets plus legal files
   - stable release with stable-channel.json as the moving channel pointer
 
 Options:
@@ -316,6 +316,7 @@ upload_immutable_asset "${CATALOG_TAG}" "${CATALOG_ASSET}"
 if [ -n "${RUNTIME_VERSION}" ]; then
     RUNTIME_TAG="runtime-${RUNTIME_VERSION}"
     RUNTIME_ARCHIVE="${OUTPUT_DIR}/runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+    MUSIC_RUNTIME_ARCHIVE="${OUTPUT_DIR}/runtime-music-macos-arm64-${RUNTIME_VERSION}.zip"
     if [ -f "${RUNTIME_ARCHIVE}" ]; then
         ensure_release \
             "${RUNTIME_TAG}" \
@@ -323,11 +324,23 @@ if [ -n "${RUNTIME_VERSION}" ]; then
             "Immutable MLXtra macOS arm64 runtime asset ${RUNTIME_VERSION}." \
             "0"
         upload_immutable_asset "${RUNTIME_TAG}" "${RUNTIME_ARCHIVE}"
+        if [ -f "${MUSIC_RUNTIME_ARCHIVE}" ]; then
+            upload_immutable_asset "${RUNTIME_TAG}" "${MUSIC_RUNTIME_ARCHIVE}"
+        fi
         upload_immutable_asset "${RUNTIME_TAG}" "${OUTPUT_DIR}/LICENSE"
         upload_immutable_asset "${RUNTIME_TAG}" "${OUTPUT_DIR}/NOTICE"
         upload_immutable_asset "${RUNTIME_TAG}" "${OUTPUT_DIR}/THIRD_PARTY_NOTICES.md"
     else
         verify_remote_asset_exists "${RUNTIME_TAG}" "runtime-macos-arm64-${RUNTIME_VERSION}.zip"
+        if /usr/bin/python3 - "${CHANNEL_ASSET}" <<'PY'
+import json
+import sys
+channel = json.load(open(sys.argv[1], encoding="utf-8"))
+raise SystemExit(0 if any(r.get("component") == "music" for r in channel.get("runtimes", [])) else 1)
+PY
+        then
+            verify_remote_asset_exists "${RUNTIME_TAG}" "runtime-music-macos-arm64-${RUNTIME_VERSION}.zip"
+        fi
         echo "Runtime archive not staged; verified existing runtime asset on ${RUNTIME_TAG}."
     fi
 else

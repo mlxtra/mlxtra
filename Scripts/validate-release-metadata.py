@@ -17,6 +17,7 @@ KNOWN_MODALITIES = {"vision", "chat", "image", "audio", "speech", "music"}
 KNOWN_BACKENDS = {"vlm", "llm", "image", "audio", "music"}
 KNOWN_SOURCE_TYPES = {"hugging_face_snapshot", "component_bundle"}
 KNOWN_DOWNLOAD_HELPERS = {"ace_step"}
+KNOWN_RUNTIME_COMPONENTS = {"base", "music"}
 KNOWN_PARAMETER_TYPES = {"decimal", "integer", "boolean", "option", "text"}
 KNOWN_AVAILABILITY = {"visible", "hidden", "requires_hf_access"}
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:[-.][0-9A-Za-z]+)?$")
@@ -220,11 +221,17 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
     validator.require(isinstance(runtime, dict), f"{path}.runtime must be an object")
     runtime_api = None
     min_runtime = None
+    runtime_component = "base"
     if isinstance(runtime, dict):
         min_runtime = runtime.get("minVersion")
         validate_version(min_runtime, f"{path}.runtime.minVersion", validator)
         runtime_api = runtime.get("compatibilityApi")
         require_int(runtime_api, f"{path}.runtime.compatibilityApi", validator, minimum=1)
+        runtime_component = runtime.get("component", "base")
+        validator.require(
+            runtime_component in KNOWN_RUNTIME_COMPONENTS,
+            f"{path}.runtime.component is unsupported: {runtime_component}",
+        )
 
     runtime_options = model.get("runtimeOptions")
     if runtime_options is not None:
@@ -330,6 +337,7 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
         "capabilities": set(capabilities if isinstance(capabilities, list) else []),
         "runtimeApi": runtime_api,
         "minRuntimeVersion": min_runtime,
+        "runtimeComponent": runtime_component,
         "availability": availability,
         "runtimeOptions": runtime_options if isinstance(runtime_options, dict) else None,
     }
@@ -424,6 +432,11 @@ def validate_channel(
             else:
                 require_int(size_bytes, f"{runtime_path}.sizeBytes", validator, minimum=1)
             require_int(runtime.get("compatibilityApi"), f"{runtime_path}.compatibilityApi", validator, minimum=1)
+            component = runtime.get("component", "base")
+            validator.require(
+                component in KNOWN_RUNTIME_COMPONENTS,
+                f"{runtime_path}.component is unsupported: {component}",
+            )
             min_app_version = runtime.get("minAppVersion")
             validator.require(isinstance(min_app_version, str) and bool(min_app_version.strip()), f"{runtime_path}.minAppVersion is required")
             if isinstance(min_app_version, str):
@@ -445,6 +458,11 @@ def validate_runtime_manifest(
     require_int(manifest.get("compatibilityApi"), "runtime.compatibilityApi", validator, minimum=1)
     validator.require(manifest.get("platform") == "macos", "runtime.platform must be macos")
     validator.require(manifest.get("arch") == "arm64", "runtime.arch must be arm64")
+    manifest_component = manifest.get("component", "base")
+    validator.require(
+        manifest_component in KNOWN_RUNTIME_COMPONENTS,
+        "runtime.component is unsupported",
+    )
 
     backends = set(manifest.get("supportedBackends", []))
     capabilities = set(manifest.get("capabilities", []))
@@ -488,6 +506,8 @@ def validate_runtime_manifest(
         if requirement.get("availability") == "hidden":
             continue
         if requirement.get("runtimeApi") != manifest.get("compatibilityApi"):
+            continue
+        if requirement.get("runtimeComponent", "base") != manifest_component:
             continue
         minimum_runtime = requirement.get("minRuntimeVersion")
         if isinstance(manifest_version, str) and isinstance(minimum_runtime, str):
@@ -553,6 +573,7 @@ def validate_runtime_channel_drift(
     manifest_api = manifest.get("compatibilityApi")
     manifest_platform = manifest.get("platform")
     manifest_arch = manifest.get("arch")
+    manifest_component = manifest.get("component", "base")
     runtimes = channel.get("runtimes")
     if not isinstance(runtimes, list):
         return
@@ -561,6 +582,8 @@ def validate_runtime_channel_drift(
         if not isinstance(runtime, dict):
             continue
         if runtime.get("platform") != manifest_platform or runtime.get("arch") != manifest_arch:
+            continue
+        if runtime.get("component", "base") != manifest_component:
             continue
 
         runtime_path = f"channel.runtimes[{index}]"

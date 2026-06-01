@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "2026.05.25.8",
-  "minAppVersion": "1.0.6",
+  "catalogVersion": "2026.06.01.1",
+  "minAppVersion": "1.0.10",
   "models": [
     {
       "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -940,7 +940,8 @@
       },
       "runtime": {
         "minVersion": "0.1.0",
-        "compatibilityApi": 1
+        "compatibilityApi": 1,
+        "component": "music"
       },
       "ranking": {
         "quality": 100,

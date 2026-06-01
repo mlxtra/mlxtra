@@ -1321,7 +1321,7 @@ final class ModelDownloadManagerTests: XCTestCase {
 
     func testAceStepDownloadHelperUsageErrorUsesTypedEvent() throws {
         let helperPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py")
+            .appendingPathComponent("MLXtra/Resources/runtime/music-macos-arm64/acestep_download_helper.py")
 
         let process = Process()
         let outputPipe = Pipe()

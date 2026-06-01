@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/runtime-dependencies.sh"
 BUILD_DIR="${PROJECT_DIR}/.build/runtime"
 CACHE_DIR="${PROJECT_DIR}/.build/runtime-cache"
 OUTPUT_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
+MUSIC_OUTPUT_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/music-macos-arm64"
+MUSIC_OUTPUT_DIR_EXPLICIT=0
 FORCED_WHEELHOUSE="${BUILD_DIR}/forced-wheelhouse"
 FRESH_CACHE=0
 SKIP_VERIFY=0
@@ -23,6 +25,8 @@ Options:
   --build-dir PATH     Temporary build directory. Default: ${BUILD_DIR}
   --cache-dir PATH     Persistent download/pip cache. Default: ${CACHE_DIR}
   --output-dir PATH    Runtime output directory. Default: ${OUTPUT_DIR}
+  --music-output-dir PATH
+                       Music runtime component output directory. Default: sibling music-macos-arm64.
   --fresh-cache        Delete the persistent runtime cache before building.
   --skip-verify        Skip final import/version verification.
   -h, --help           Show this help.
@@ -129,6 +133,12 @@ while [ "$#" -gt 0 ]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
+        --music-output-dir)
+            require_option_value "$1" "${2:-}"
+            MUSIC_OUTPUT_DIR="$2"
+            MUSIC_OUTPUT_DIR_EXPLICIT=1
+            shift 2
+            ;;
         --fresh-cache)
             FRESH_CACHE=1
             shift
@@ -161,6 +171,10 @@ absolute_path() {
 BUILD_DIR="$(absolute_path "${BUILD_DIR}")"
 CACHE_DIR="$(absolute_path "${CACHE_DIR}")"
 OUTPUT_DIR="$(absolute_path "${OUTPUT_DIR}")"
+if [ "${MUSIC_OUTPUT_DIR_EXPLICIT}" = "0" ]; then
+    MUSIC_OUTPUT_DIR="$(dirname "${OUTPUT_DIR}")/music-macos-arm64"
+fi
+MUSIC_OUTPUT_DIR="$(absolute_path "${MUSIC_OUTPUT_DIR}")"
 FORCED_WHEELHOUSE="${BUILD_DIR}/forced-wheelhouse"
 
 validate_runtime_dependency_lock
@@ -179,6 +193,7 @@ mkdir -p "${CACHE_DIR}"
 mkdir -p "${OUTPUT_DIR}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-${CACHE_DIR}/pip}"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_NO_COMPILE=1
 mkdir -p "${PIP_CACHE_DIR}"
 
 echo "Step 1: Preparing Python ${PYTHON_VERSION} package..."
@@ -301,7 +316,7 @@ echo "Step 4: Installing dependencies..."
 VENV_PIP="${BUILD_DIR}/venv/bin/pip"
 VENV_PYTHON="${BUILD_DIR}/venv/bin/python"
 
-"${VENV_PIP}" install --upgrade pip
+"${VENV_PIP}" install --no-compile --upgrade pip
 
 mkdir -p "${FORCED_WHEELHOUSE}"
 echo "Downloading MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
@@ -316,23 +331,35 @@ echo "Downloading MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
 
 echo "Installing MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
 "${VENV_PIP}" install \
+    --no-compile \
     --no-index \
     --find-links "${FORCED_WHEELHOUSE}" \
     "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
 
 for package in "${RUNTIME_MAIN_PYPI_PACKAGES[@]}"; do
     echo "Installing ${package}..."
-    "${VENV_PIP}" install "${package}"
+    "${VENV_PIP}" install --no-compile "${package}"
 done
 
 for package in "${RUNTIME_TORCH_PACKAGES[@]}"; do
     echo "Installing ${package}..."
-    "${VENV_PIP}" install "${package}" --index-url https://download.pytorch.org/whl/cpu
+    "${VENV_PIP}" install --no-compile "${package}" --index-url https://download.pytorch.org/whl/cpu
 done
 
 echo "Step 5: Creating runtime structure..."
 mkdir -p "${OUTPUT_DIR}"
-rm -rf "${OUTPUT_DIR}/venv" "${OUTPUT_DIR}/python" "${OUTPUT_DIR}/acestep-venv"
+ACE_DOWNLOAD_HELPER_CACHE="${BUILD_DIR}/acestep_download_helper.py"
+for helper_source in \
+    "${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py" \
+    "${MUSIC_OUTPUT_DIR}/acestep_download_helper.py"
+do
+    if [ -f "${helper_source}" ]; then
+        cp -f "${helper_source}" "${ACE_DOWNLOAD_HELPER_CACHE}"
+        break
+    fi
+done
+rm -rf "${OUTPUT_DIR}/venv" "${OUTPUT_DIR}/python" "${OUTPUT_DIR}/shared" "${OUTPUT_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep_download_helper.py" "${OUTPUT_DIR}/runtime-music-manifest.json"
+rm -rf "${MUSIC_OUTPUT_DIR}"
 
 # Copy Python framework first so venv interpreter links can be made relative to it.
 mkdir -p "${OUTPUT_DIR}/python"
@@ -343,7 +370,7 @@ remove_external_symlinks "${OUTPUT_DIR}/python/Frameworks" "${OUTPUT_DIR}"
 
 cp -R "${BUILD_DIR}/venv" "${OUTPUT_DIR}/venv"
 
-ACE_DOWNLOAD_HELPER_SOURCE="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py"
+ACE_DOWNLOAD_HELPER_SOURCE="${ACE_DOWNLOAD_HELPER_CACHE}"
 ACE_DOWNLOAD_HELPER_DEST="${OUTPUT_DIR}/acestep_download_helper.py"
 if [ ! -f "${ACE_DOWNLOAD_HELPER_SOURCE}" ] && [ ! -f "${ACE_DOWNLOAD_HELPER_DEST}" ]; then
     echo "ACE-Step download helper source is missing." >&2
@@ -360,13 +387,14 @@ fi
 echo "Creating isolated ACE-Step runtime..."
 create_build_venv "${BUILD_DIR}/acestep-venv"
 ACE_PIP="${BUILD_DIR}/acestep-venv/bin/pip"
-"${ACE_PIP}" install --upgrade pip
+"${ACE_PIP}" install --no-compile --upgrade pip
 echo "Installing ACE-Step MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
 "${ACE_PIP}" install \
+    --no-compile \
     --no-index \
     --find-links "${FORCED_WHEELHOUSE}" \
     "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
-"${ACE_PIP}" install "${ACE_STEP_PACKAGE}"
+"${ACE_PIP}" install --no-compile "${ACE_STEP_PACKAGE}"
 cp -R "${BUILD_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep-venv"
 
 relocate_venv() {
@@ -417,9 +445,184 @@ CFG
 codesign_native_artifacts() {
     local target_dir="$1"
 
+    [ -d "${target_dir}" ] || return 0
     while IFS= read -r -d '' binary; do
         codesign --force --sign - "${binary}" 2>/dev/null || true
     done < <(find "${target_dir}" -type f \( -name "*.so" -o -name "*.dylib" \) -print0)
+}
+
+prune_runtime_tree() {
+    local root_dir="$1"
+
+    /usr/bin/python3 - "${root_dir}" <<'PY'
+import pathlib
+import shutil
+import sys
+
+root = pathlib.Path(sys.argv[1])
+if not root.exists():
+    raise SystemExit(0)
+
+removed_files = 0
+removed_dirs = 0
+for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+    name = path.name
+    if path.is_dir():
+        if name == "__pycache__" or (
+            name in {"test", "tests"}
+            and "site-packages" in path.parts
+        ):
+            shutil.rmtree(path, ignore_errors=True)
+            removed_dirs += 1
+        continue
+    if path.is_file() and (name.endswith((".pyc", ".pyo", ".h"))):
+        path.unlink(missing_ok=True)
+        removed_files += 1
+
+print(f"Pruned {removed_files} files and {removed_dirs} directories from {root}")
+PY
+}
+
+dedupe_shared_site_packages() {
+    local runtime_root="$1"
+    local main_site_packages="${runtime_root}/venv/lib/python3.12/site-packages"
+    local ace_site_packages="${runtime_root}/acestep-venv/lib/python3.12/site-packages"
+    local shared_site_packages="${runtime_root}/shared/lib/python3.12/site-packages"
+
+    /usr/bin/python3 - "${main_site_packages}" "${ace_site_packages}" "${shared_site_packages}" <<'PY'
+import csv
+import filecmp
+import os
+import pathlib
+import shutil
+import sys
+
+main_site = pathlib.Path(sys.argv[1])
+ace_site = pathlib.Path(sys.argv[2])
+shared_site = pathlib.Path(sys.argv[3])
+
+if not main_site.is_dir() or not ace_site.is_dir():
+    raise SystemExit(0)
+
+allowed = {
+    "aiohttp", "anyio", "attrs", "certifi", "cffi", "charset-normalizer",
+    "click", "contourpy", "cycler", "fastapi", "filelock", "fonttools",
+    "frozenlist", "fsspec", "hf-xet", "httpcore", "httpx", "idna",
+    "jinja2", "kiwisolver", "matplotlib", "mlx", "mlx-metal", "mpmath",
+    "multidict", "networkx", "numpy", "packaging", "pillow", "protobuf",
+    "pydantic", "pydantic-core", "pygments", "pyparsing", "python-dateutil",
+    "pyyaml", "regex", "requests", "rich", "safetensors", "scipy",
+    "sentencepiece", "six", "sniffio", "starlette", "sympy", "tokenizers",
+    "torch", "torchvision", "tqdm", "typing-extensions", "urllib3", "uvicorn",
+    "yarl",
+}
+
+
+def norm(name: str) -> str:
+    return name.lower().replace("_", "-").replace(".", "-")
+
+
+def metadata_for(dist_info: pathlib.Path):
+    metadata = dist_info / "METADATA"
+    if not metadata.is_file():
+        return None
+    name = None
+    version = None
+    for line in metadata.read_text(errors="ignore").splitlines():
+        if line.startswith("Name: "):
+            name = line.removeprefix("Name: ").strip()
+        elif line.startswith("Version: "):
+            version = line.removeprefix("Version: ").strip()
+    if not name or not version:
+        return None
+    return norm(name), version
+
+
+def record_tops(dist_info: pathlib.Path):
+    tops = {dist_info.name}
+    record = dist_info / "RECORD"
+    if not record.is_file():
+        return tops
+    with record.open(newline="", errors="ignore") as handle:
+        for row in csv.reader(handle):
+            if not row:
+                continue
+            rel = row[0]
+            if not rel or rel.startswith("../"):
+                continue
+            top = rel.split("/", 1)[0]
+            if top and top not in {"bin", "__pycache__"}:
+                tops.add(top)
+    return tops
+
+
+def same_path(lhs: pathlib.Path, rhs: pathlib.Path) -> bool:
+    if lhs.is_symlink() or rhs.is_symlink():
+        return lhs.is_symlink() and rhs.is_symlink() and os.readlink(lhs) == os.readlink(rhs)
+    if lhs.is_file() and rhs.is_file():
+        return filecmp.cmp(lhs, rhs, shallow=False)
+    if lhs.is_dir() and rhs.is_dir():
+        lhs_entries = sorted(p.name for p in lhs.iterdir())
+        rhs_entries = sorted(p.name for p in rhs.iterdir())
+        if lhs_entries != rhs_entries:
+            return False
+        return all(same_path(lhs / name, rhs / name) for name in lhs_entries)
+    return False
+
+
+main_dists = {}
+for dist in main_site.glob("*.dist-info"):
+    info = metadata_for(dist)
+    if info:
+        main_dists[info[0]] = (info[1], dist)
+
+candidate_tops = set()
+for ace_dist in ace_site.glob("*.dist-info"):
+    info = metadata_for(ace_dist)
+    if not info:
+        continue
+    name, version = info
+    main_info = main_dists.get(name)
+    if name not in allowed or main_info is None or main_info[0] != version:
+        continue
+    candidate_tops.update(record_tops(main_info[1]))
+    candidate_tops.update(record_tops(ace_dist))
+
+shared_site.mkdir(parents=True, exist_ok=True)
+linked = []
+for top in sorted(candidate_tops):
+    main_path = main_site / top
+    ace_path = ace_site / top
+    shared_path = shared_site / top
+    if not main_path.exists() or not ace_path.exists():
+        continue
+    if main_path.is_symlink() or ace_path.is_symlink():
+        continue
+    if not same_path(main_path, ace_path):
+        continue
+    if shared_path.exists() and not same_path(shared_path, main_path):
+        continue
+    if not shared_path.exists():
+        if main_path.is_dir():
+            shutil.copytree(main_path, shared_path, symlinks=True)
+        else:
+            shutil.copy2(main_path, shared_path, follow_symlinks=False)
+    for site, path in ((main_site, main_path), (ace_site, ace_path)):
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        rel = os.path.relpath(shared_path, start=site)
+        path.symlink_to(rel)
+    linked.append(top)
+
+if linked:
+    print(f"Shared {len(linked)} duplicate package entries:")
+    for top in linked:
+        print(f"  {top}")
+else:
+    print("No duplicate package entries were shared.")
+PY
 }
 
 relocate_python_framework() {
@@ -491,8 +694,12 @@ relocate_python_framework() {
 relocate_python_framework
 relocate_venv "${OUTPUT_DIR}/venv"
 relocate_venv "${OUTPUT_DIR}/acestep-venv"
+prune_runtime_tree "${OUTPUT_DIR}/venv"
+prune_runtime_tree "${OUTPUT_DIR}/acestep-venv"
+dedupe_shared_site_packages "${OUTPUT_DIR}"
 codesign_native_artifacts "${OUTPUT_DIR}/venv"
 codesign_native_artifacts "${OUTPUT_DIR}/acestep-venv"
+codesign_native_artifacts "${OUTPUT_DIR}/shared"
 
 validate_mlx_wheel_platform() {
     local site_packages="$1"
@@ -569,6 +776,7 @@ cat > "${OUTPUT_DIR}/runtime-manifest.json" << EOF
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
+  "component": "base",
   "channel": "stable",
   "pythonVersion": "${PYTHON_VERSION}",
   "pythonPath": "venv/bin/python3",
@@ -579,9 +787,7 @@ cat > "${OUTPUT_DIR}/runtime-manifest.json" << EOF
   "packages": [
 $(json_array_items 4 "${RUNTIME_MAIN_PACKAGES[@]}")
   ],
-  "isolatedPackages": [
-    "ace-step @ ${ACE_STEP_PACKAGE}"
-  ],
+  "isolatedPackages": [],
   "supportedBackends": [
 $(json_array_items 4 "${RUNTIME_SUPPORTED_BACKENDS[@]}")
   ],
@@ -606,6 +812,35 @@ $(json_number_array_items 8 "${RUNTIME_MFLUX_QUANTIZE_BITS[@]}")
 $(json_array_items 6 "${RUNTIME_AUDIO_ADAPTERS[@]}")
     ]
   }
+}
+EOF
+
+cat > "${OUTPUT_DIR}/runtime-music-manifest.json" << EOF
+{
+  "runtimeVersion": "${RUNTIME_VERSION}",
+  "compatibilityApi": 1,
+  "platform": "macos",
+  "arch": "arm64",
+  "component": "music",
+  "channel": "stable",
+  "pythonVersion": "${PYTHON_VERSION}",
+  "pythonPath": "acestep-venv/bin/python3",
+  "executables": {
+    "python": "acestep-venv/bin/python3",
+    "pip": "acestep-venv/bin/pip"
+  },
+  "packages": [
+$(json_array_items 4 "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}")
+  ],
+  "isolatedPackages": [
+    "ace-step @ ${ACE_STEP_PACKAGE}"
+  ],
+  "supportedBackends": [
+$(json_array_items 4 "${RUNTIME_MUSIC_SUPPORTED_BACKENDS[@]}")
+  ],
+  "capabilities": [
+$(json_array_items 4 "${RUNTIME_MUSIC_CAPABILITIES[@]}")
+  ]
 }
 EOF
 
@@ -657,13 +892,24 @@ print('ACE-Step mlx-metal: ' + mlx_metal)
 "
 fi
 
+echo "Step 8: Splitting music runtime component..."
+mkdir -p "${MUSIC_OUTPUT_DIR}"
+mv "${OUTPUT_DIR}/acestep-venv" "${MUSIC_OUTPUT_DIR}/acestep-venv"
+mv "${OUTPUT_DIR}/acestep_download_helper.py" "${MUSIC_OUTPUT_DIR}/acestep_download_helper.py"
+mv "${OUTPUT_DIR}/runtime-music-manifest.json" "${MUSIC_OUTPUT_DIR}/runtime-music-manifest.json"
+validate_self_contained_symlinks "${OUTPUT_DIR}"
+validate_self_contained_symlinks "${MUSIC_OUTPUT_DIR}"
+
 echo ""
 echo "=== Build Complete ==="
-echo "Runtime bundle created at: ${OUTPUT_DIR}"
-echo "Size: $(du -sh "${OUTPUT_DIR}" | cut -f1)"
+echo "Base runtime bundle created at: ${OUTPUT_DIR}"
+echo "Base size: $(du -sh "${OUTPUT_DIR}" | cut -f1)"
+echo "Music runtime component created at: ${MUSIC_OUTPUT_DIR}"
+echo "Music component size: $(du -sh "${MUSIC_OUTPUT_DIR}" | cut -f1)"
 echo ""
 echo "To use:"
 echo "  1. Publish it as a runtime-macos-arm64-<version>.zip GitHub release asset"
-echo "  2. Reference that asset from MLXtra/Resources/stable-channel.json"
-echo "  3. Python executable: ${OUTPUT_DIR}/venv/bin/python3"
-echo "  4. Test: PYTHONHOME=${OUTPUT_DIR}/python/Frameworks/Versions/3.12 ${OUTPUT_DIR}/venv/bin/python3 -c 'import csv; print(\"OK\")'"
+echo "  2. Publish ${MUSIC_OUTPUT_DIR} as runtime-music-macos-arm64-<version>.zip"
+echo "  3. Reference both assets from MLXtra/Resources/stable-channel.json"
+echo "  4. Python executable: ${OUTPUT_DIR}/venv/bin/python3"
+echo "  5. Test: PYTHONHOME=${OUTPUT_DIR}/python/Frameworks/Versions/3.12 ${OUTPUT_DIR}/venv/bin/python3 -c 'import csv; print(\"OK\")'"

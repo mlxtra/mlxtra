@@ -11,6 +11,7 @@ ACE_PYTHON="${RUNTIME_DIR}/acestep-venv/bin/python"
 MAIN_SITE_PACKAGES="${RUNTIME_DIR}/venv/lib/python3.12/site-packages"
 ACE_SITE_PACKAGES="${RUNTIME_DIR}/acestep-venv/lib/python3.12/site-packages"
 MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
+MUSIC_MANIFEST="${RUNTIME_DIR}/runtime-music-manifest.json"
 BUILD_RUNTIME_SCRIPT="${SCRIPT_DIR}/build-runtime-bundle.sh"
 BOOTSTRAP_RUNTIME_ON_BUILD="${MLXTRA_BOOTSTRAP_RUNTIME_ON_BUILD:-1}"
 
@@ -59,12 +60,10 @@ runtime_bootstrap_required() {
     [ -d "${RUNTIME_DIR}" ] || return 0
     [ -d "${PYTHON_HOME}" ] || return 0
     [ -x "${MAIN_PYTHON}" ] || return 0
-    [ -x "${ACE_PYTHON}" ] || return 0
     [ -f "${MANIFEST}" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" ] || return 0
-    [ -f "${RUNTIME_DIR}/acestep_download_helper.py" ] || return 0
     return 1
 }
 
@@ -88,12 +87,10 @@ bootstrap_runtime_if_needed
 require_directory "${RUNTIME_DIR}" "Runtime bundle"
 require_directory "${PYTHON_HOME}" "Bundled Python home"
 require_executable "${MAIN_PYTHON}" "Main runtime Python"
-require_executable "${ACE_PYTHON}" "ACE-Step runtime Python"
 require_file "${MANIFEST}" "Runtime manifest"
 require_file "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" "Python bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" "ACE-Step bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" "Bridge utilities"
-require_file "${RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
 
 validate_manifest() {
     RUNTIME_EXPECTED_PACKAGES="$(printf '%s\n' "${RUNTIME_MAIN_PACKAGES[@]}")" \
@@ -191,11 +188,13 @@ if _csv.__name__ != "_csv" or csv.__name__ != "csv":
     raise SystemExit("bundled Python standard library is incomplete")
 PY
 
-    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${ACE_PYTHON}" - <<'PY'
+    if [ -f "${MUSIC_MANIFEST}" ]; then
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${ACE_PYTHON}" - <<'PY'
 import importlib.metadata as metadata
 
 metadata.version("ace-step")
 PY
+    fi
 }
 
 validate_download_helpers() {
@@ -206,20 +205,26 @@ for package in ("huggingface_hub", "tqdm"):
     importlib.import_module(package)
 PY
 
-    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${ACE_PYTHON}" - <<'PY'
+    if [ -f "${MUSIC_MANIFEST}" ]; then
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${ACE_PYTHON}" - <<'PY'
 import importlib
 
 for package in ("huggingface_hub", "tqdm", "acestep"):
     importlib.import_module(package)
 PY
+    fi
 }
 
 validate_download_helper_structure() {
     require_directory "${MAIN_SITE_PACKAGES}/huggingface_hub" "Main runtime huggingface_hub package"
     require_directory "${MAIN_SITE_PACKAGES}/tqdm" "Main runtime tqdm package"
-    require_directory "${ACE_SITE_PACKAGES}/huggingface_hub" "ACE-Step runtime huggingface_hub package"
-    require_directory "${ACE_SITE_PACKAGES}/tqdm" "ACE-Step runtime tqdm package"
-    require_directory "${ACE_SITE_PACKAGES}/acestep" "ACE-Step runtime acestep package"
+    if [ -f "${MUSIC_MANIFEST}" ]; then
+        require_executable "${ACE_PYTHON}" "ACE-Step runtime Python"
+        require_file "${RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
+        require_directory "${ACE_SITE_PACKAGES}/huggingface_hub" "ACE-Step runtime huggingface_hub package"
+        require_directory "${ACE_SITE_PACKAGES}/tqdm" "ACE-Step runtime tqdm package"
+        require_directory "${ACE_SITE_PACKAGES}/acestep" "ACE-Step runtime acestep package"
+    fi
 }
 
 validate_self_contained_symlinks() {

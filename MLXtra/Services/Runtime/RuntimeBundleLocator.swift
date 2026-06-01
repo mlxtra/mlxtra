@@ -54,17 +54,64 @@ extension RuntimeManager {
     }
 
     nonisolated static func activeRuntimeManifest() -> RuntimeManifest? {
+        activeRuntimeManifest(component: .base)
+    }
+
+    nonisolated static func activeRuntimeManifest(component: RuntimeComponent) -> RuntimeManifest? {
         let runtimeURL = activeRuntimeBundleURL()
         guard isRuntimeBundleStructurallyValid(runtimeURL) else {
             return nil
         }
-        return runtimeManifest(at: runtimeURL)
+        switch component {
+        case .base:
+            return runtimeManifest(at: runtimeURL)
+        case .music:
+            if isRuntimeComponentStructurallyValid(.music, at: runtimeURL),
+               let manifest = runtimeManifest(at: runtimeURL, component: .music) {
+                return manifest
+            }
+            return legacyMusicRuntimeManifest(at: runtimeURL)
+        }
     }
 
     nonisolated static func runtimeManifest(at runtimeURL: URL) -> RuntimeManifest? {
-        let manifestURL = runtimeURL.appendingPathComponent("runtime-manifest.json")
+        runtimeManifest(at: runtimeURL, component: .base)
+    }
+
+    nonisolated static func runtimeManifest(at runtimeURL: URL, component: RuntimeComponent) -> RuntimeManifest? {
+        let manifestURL = runtimeURL.appendingPathComponent(component.manifestFilename)
         guard let data = try? Data(contentsOf: manifestURL) else { return nil }
         return try? JSONDecoder().decode(RuntimeManifest.self, from: data)
+    }
+
+    nonisolated static func effectiveRuntimeManifest() -> RuntimeManifest? {
+        guard let base = activeRuntimeManifest(component: .base) else {
+            return nil
+        }
+        guard let music = activeRuntimeManifest(component: .music) else {
+            return base
+        }
+        let supportedBackends = Array(Set(base.supportedBackends).union(music.supportedBackends))
+            .sorted { $0.rawValue < $1.rawValue }
+        let capabilities = Array(Set(base.capabilities).union(music.capabilities)).sorted()
+        return RuntimeManifest(
+            runtimeVersion: base.runtimeVersion,
+            compatibilityApi: base.compatibilityApi,
+            platform: base.platform,
+            arch: base.arch,
+            component: .base,
+            channel: base.channel,
+            pythonVersion: base.pythonVersion,
+            pythonPath: base.pythonPath,
+            executables: base.executables,
+            packages: base.packages,
+            isolatedPackages: Array(Set(base.isolatedPackages).union(music.isolatedPackages)).sorted(),
+            supportedModels: mergeSupportedModels(base.supportedModels, music.supportedModels),
+            supportedBackends: supportedBackends,
+            capabilities: capabilities,
+            imageRuntimes: base.imageRuntimes,
+            audioRuntimes: base.audioRuntimes
+        )
     }
 
     nonisolated static func isRuntimeBundleStructurallyValid(
@@ -74,15 +121,13 @@ extension RuntimeManager {
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: runtimeURL.path, isDirectory: &isDirectory),
               isDirectory.boolValue,
-              runtimeManifest(at: runtimeURL) != nil else {
+              runtimeManifest(at: runtimeURL)?.component == .base else {
             return false
         }
 
         let requiredFiles = [
             "venv/bin/python",
-            "acestep-venv/bin/python",
             "python/Frameworks/Versions/3.12",
-            "acestep_download_helper.py",
             "runtime-manifest.json",
         ]
         guard requiredFiles.allSatisfy({ relativePath in
@@ -93,10 +138,80 @@ extension RuntimeManager {
 
         let requiredExecutables = [
             "venv/bin/python",
-            "acestep-venv/bin/python",
         ]
         return requiredExecutables.allSatisfy { relativePath in
             fileManager.isExecutableFile(atPath: runtimeURL.appendingPathComponent(relativePath).path)
+        }
+    }
+
+    nonisolated static func isRuntimeComponentStructurallyValid(
+        _ component: RuntimeComponent,
+        at runtimeURL: URL,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        switch component {
+        case .base:
+            return isRuntimeBundleStructurallyValid(runtimeURL, fileManager: fileManager)
+        case .music:
+            guard isRuntimeBundleStructurallyValid(runtimeURL, fileManager: fileManager),
+                  runtimeManifest(at: runtimeURL, component: .music)?.component == .music else {
+                return false
+            }
+            let requiredFiles = [
+                "acestep-venv/bin/python",
+                "acestep_download_helper.py",
+                RuntimeComponent.music.manifestFilename,
+            ]
+            guard requiredFiles.allSatisfy({ relativePath in
+                fileManager.fileExists(atPath: runtimeURL.appendingPathComponent(relativePath).path)
+            }) else {
+                return false
+            }
+            return fileManager.isExecutableFile(
+                atPath: runtimeURL.appendingPathComponent("acestep-venv/bin/python").path
+            )
+        }
+    }
+
+    private nonisolated static func legacyMusicRuntimeManifest(at runtimeURL: URL) -> RuntimeManifest? {
+        guard let base = runtimeManifest(at: runtimeURL),
+              base.supports(backend: .music),
+              base.capabilities.contains("music-generation"),
+              fileManagerForLegacyMusic.fileExists(atPath: runtimeURL.appendingPathComponent("acestep-venv/bin/python").path),
+              fileManagerForLegacyMusic.isExecutableFile(atPath: runtimeURL.appendingPathComponent("acestep-venv/bin/python").path),
+              fileManagerForLegacyMusic.fileExists(atPath: runtimeURL.appendingPathComponent("acestep_download_helper.py").path) else {
+            return nil
+        }
+        return RuntimeManifest(
+            runtimeVersion: base.runtimeVersion,
+            compatibilityApi: base.compatibilityApi,
+            platform: base.platform,
+            arch: base.arch,
+            component: .music,
+            channel: base.channel,
+            pythonVersion: base.pythonVersion,
+            pythonPath: "acestep-venv/bin/python3",
+            executables: [
+                "python": "acestep-venv/bin/python3",
+            ],
+            packages: [],
+            isolatedPackages: base.isolatedPackages,
+            supportedModels: base.supportedModels,
+            supportedBackends: [.music],
+            capabilities: ["music-generation"]
+        )
+    }
+
+    private nonisolated static var fileManagerForLegacyMusic: FileManager {
+        .default
+    }
+
+    private nonisolated static func mergeSupportedModels(_ lhs: [String]?, _ rhs: [String]?) -> [String]? {
+        switch (lhs, rhs) {
+        case (nil, _), (_, nil):
+            return nil
+        case (.some(let lhs), .some(let rhs)):
+            return Array(Set(lhs).union(rhs)).sorted()
         }
     }
 }

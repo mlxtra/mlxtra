@@ -456,7 +456,10 @@ struct ModelDownloadRow: View {
     private func requestDownload() {
         guard !model.source.usesComponentBundle || model.isRuntimeCompatible else {
             pendingDownloadModelId = model.modelId
-            runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
+            runtimeUpdateManager.bootstrapStableRuntimeInBackground(
+                reportFailures: true,
+                component: model.runtime.component
+            )
             return
         }
 

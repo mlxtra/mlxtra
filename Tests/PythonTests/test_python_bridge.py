@@ -1198,6 +1198,27 @@ class TestAceStepForwarding(unittest.TestCase):
             forwarder.assert_called_once()
             assert Path(forwarder.call_args.args[0]).resolve() == ace_python.resolve()
 
+    def test_handle_music_generation_reports_missing_music_runtime(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_python = Path(temp_dir) / "missing-acestep-python"
+            with patch.object(
+                python_bridge,
+                "_candidate_acestep_python_paths",
+                return_value=[missing_python],
+            ), patch.object(python_bridge, "send_json") as send_json:
+                python_bridge.handle_music_generation(
+                    {
+                        "request_id": "req-music",
+                        "type": "music.generate",
+                        "parameters": {"caption": "clockwork piano"},
+                    }
+                )
+
+        send_json.assert_called_once()
+        payload = send_json.call_args.args[0]
+        assert payload["type"] == "error"
+        assert "Music runtime component is not installed" in payload["message"]
+
     def test_forward_acestep_subprocess_round_trips_request_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             helper = Path(temp_dir) / "helper.py"

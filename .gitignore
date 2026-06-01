@@ -45,6 +45,11 @@ DerivedData/
 MLXtra/Resources/runtime/macos-arm64/python/
 MLXtra/Resources/runtime/macos-arm64/venv/
 MLXtra/Resources/runtime/macos-arm64/acestep-venv/
+MLXtra/Resources/runtime/macos-arm64/shared/
+MLXtra/Resources/runtime/music-macos-arm64/*
+!MLXtra/Resources/runtime/music-macos-arm64/
+!MLXtra/Resources/runtime/music-macos-arm64/acestep_download_helper.py
+!MLXtra/Resources/runtime/music-macos-arm64/runtime-music-manifest.json
 
 ## Python
 **/__pycache__/

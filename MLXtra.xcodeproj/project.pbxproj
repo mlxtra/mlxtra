@@ -37,6 +37,7 @@
 		8A0900010000000000000005 /* ProcessPipeReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001005 /* ProcessPipeReader.swift */; };
 		8A0900010000000000000006 /* SHA256Checksum.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001006 /* SHA256Checksum.swift */; };
 		8A0900010000000000000007 /* RuntimeManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001007 /* RuntimeManifest.swift */; };
+		8A090001000000000000001E /* RuntimeComponent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000101E /* RuntimeComponent.swift */; };
 		8A0900010000000000000008 /* RuntimeUpdateTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001008 /* RuntimeUpdateTypes.swift */; };
 		8A0900010000000000000009 /* RuntimeUpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0900010000000000001009 /* RuntimeUpdateManager.swift */; };
 		8A090001000000000000000A /* RuntimeBundleLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A090001000000000000100A /* RuntimeBundleLocator.swift */; };
@@ -246,6 +247,7 @@
 		8A0900010000000000001005 /* ProcessPipeReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessPipeReader.swift; sourceTree = "<group>"; };
 		8A0900010000000000001006 /* SHA256Checksum.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SHA256Checksum.swift; sourceTree = "<group>"; };
 		8A0900010000000000001007 /* RuntimeManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeManifest.swift; sourceTree = "<group>"; };
+		8A090001000000000000101E /* RuntimeComponent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeComponent.swift; sourceTree = "<group>"; };
 		8A0900010000000000001008 /* RuntimeUpdateTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeUpdateTypes.swift; sourceTree = "<group>"; };
 		8A0900010000000000001009 /* RuntimeUpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeUpdateManager.swift; sourceTree = "<group>"; };
 		8A090001000000000000100A /* RuntimeBundleLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeBundleLocator.swift; sourceTree = "<group>"; };
@@ -479,6 +481,7 @@
 				8A0900010000000000001005 /* ProcessPipeReader.swift */,
 				8A0900010000000000001006 /* SHA256Checksum.swift */,
 				8A0900010000000000001007 /* RuntimeManifest.swift */,
+				8A090001000000000000101E /* RuntimeComponent.swift */,
 				8A0900010000000000001008 /* RuntimeUpdateTypes.swift */,
 				8A0900010000000000001009 /* RuntimeUpdateManager.swift */,
 				8A0900010000000000001017 /* RuntimeDownloadSpeedTracker.swift */,
@@ -716,6 +719,7 @@
 				8A0900010000000000000005 /* ProcessPipeReader.swift in Sources */,
 				8A0900010000000000000006 /* SHA256Checksum.swift in Sources */,
 				8A0900010000000000000007 /* RuntimeManifest.swift in Sources */,
+				8A090001000000000000001E /* RuntimeComponent.swift in Sources */,
 				8A0900010000000000000008 /* RuntimeUpdateTypes.swift in Sources */,
 				8A0900010000000000000009 /* RuntimeUpdateManager.swift in Sources */,
 				8A0900010000000000000017 /* RuntimeDownloadSpeedTracker.swift in Sources */,
@@ -952,7 +956,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -962,7 +966,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.9;
+				MARKETING_VERSION = 1.0.10;
 				MLXTRA_SPARKLE_PUBLIC_ED_KEY = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -979,7 +983,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -989,7 +993,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.9;
+				MARKETING_VERSION = 1.0.10;
 				MLXTRA_SPARKLE_PUBLIC_ED_KEY = "zmggfE9gunhZqX+A7QJ2rc6SCiWS6z8zNO3B9RMaOwU=";
 				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1004,7 +1008,7 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1013,7 +1017,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.9;
+				MARKETING_VERSION = 1.0.10;
 				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1028,7 +1032,7 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1037,7 +1041,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.9;
+				MARKETING_VERSION = 1.0.10;
 				PRODUCT_BUNDLE_IDENTIFIER = com.omercelik.mlxtra.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;

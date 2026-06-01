@@ -24,6 +24,7 @@ final class RuntimeUpdateManager: ObservableObject {
     @Published private(set) var runtimeActivationProgress: RuntimeActivationProgress?
 
     private let currentManifestProvider: () -> RuntimeManifest?
+    private let currentComponentManifestProvider: (RuntimeComponent) -> RuntimeManifest?
     private let appVersionProvider: () -> String?
     private let channelSession: URLSession
     private let runtimeArchiveInstaller: RuntimeArchiveInstaller
@@ -36,6 +37,9 @@ final class RuntimeUpdateManager: ObservableObject {
 
     init(
         currentManifestProvider: @escaping () -> RuntimeManifest? = { RuntimeManager.activeRuntimeManifest() },
+        currentComponentManifestProvider: @escaping (RuntimeComponent) -> RuntimeManifest? = {
+            RuntimeManager.activeRuntimeManifest(component: $0)
+        },
         appVersionProvider: @escaping () -> String? = {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         },
@@ -49,6 +53,7 @@ final class RuntimeUpdateManager: ObservableObject {
             .appendingPathComponent("runtime")
     ) {
         self.currentManifestProvider = currentManifestProvider
+        self.currentComponentManifestProvider = currentComponentManifestProvider
         self.appVersionProvider = appVersionProvider
         self.channelSession = channelSession
         self.runtimeArchiveInstaller = runtimeArchiveInstaller
@@ -65,10 +70,15 @@ final class RuntimeUpdateManager: ObservableObject {
 
     func bootstrapStableRuntimeInBackground(
         channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
-        reportFailures: Bool = false
+        reportFailures: Bool = false,
+        component: RuntimeComponent = .base
     ) {
         startBackgroundTask {
-            await $0.bootstrapStableRuntimeIfNeeded(channelURL: channelURL, reportFailures: reportFailures)
+            await $0.bootstrapStableRuntimeIfNeeded(
+                channelURL: channelURL,
+                reportFailures: reportFailures,
+                component: component
+            )
         }
     }
 
@@ -80,8 +90,20 @@ final class RuntimeUpdateManager: ObservableObject {
 
     func bootstrapStableRuntimeIfNeeded(
         channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
-        reportFailures: Bool = false
+        reportFailures: Bool = false,
+        component: RuntimeComponent = .base
     ) async {
+        if component != .base, currentManifest(for: .base) == nil {
+            await bootstrapStableRuntimeIfNeeded(
+                channelURL: channelURL,
+                reportFailures: reportFailures,
+                component: .base
+            )
+            guard currentManifest(for: .base) != nil else {
+                return
+            }
+        }
+
         switch state {
         case .checking, .installing:
             return
@@ -89,7 +111,11 @@ final class RuntimeUpdateManager: ObservableObject {
             break
         }
 
-        await refreshStableChannel(channelURL: channelURL, reportFailures: reportFailures)
+        await refreshStableChannel(
+            channelURL: channelURL,
+            reportFailures: reportFailures,
+            component: component
+        )
         if case .available(let asset) = state {
             await installRuntime(asset)
         }
@@ -97,7 +123,8 @@ final class RuntimeUpdateManager: ObservableObject {
 
     func refreshStableChannel(
         channelURL: URL = ReleaseChannelManifest.defaultChannelURL,
-        reportFailures: Bool = true
+        reportFailures: Bool = true,
+        component: RuntimeComponent = .base
     ) async {
         guard !isInstalling else { return }
 
@@ -117,7 +144,7 @@ final class RuntimeUpdateManager: ObservableObject {
             guard isCurrentRefresh(refreshID) else { return }
             channel = manifest
 
-            let selection = runtimeUpdateSelection(in: manifest)
+            let selection = runtimeUpdateSelection(in: manifest, component: component)
             newerRuntimeRequiringAppUpdate = selection.newerRuntimeRequiringAppUpdate
 
             if let asset = selection.compatibleRuntime {
@@ -176,9 +203,13 @@ final class RuntimeUpdateManager: ObservableObject {
                 completedStep: 1,
                 totalSteps: 5
             )
-            let installedURL = try await installRuntimeArchiveWithStructuredProgress(archiveURL, installID: installID)
+            let installedURL = try await installRuntimeArchiveWithStructuredProgress(
+                archiveURL,
+                asset: asset,
+                installID: installID
+            )
             guard isCurrentInstall(installID) else { return }
-            guard let manifest = RuntimeManager.runtimeManifest(at: installedURL) else {
+            guard let manifest = RuntimeManager.runtimeManifest(at: installedURL, component: asset.component) else {
                 throw RuntimeUpdateError.invalidRuntime
             }
             let runtimeVersion = manifest.runtimeVersion
@@ -291,11 +322,20 @@ final class RuntimeUpdateManager: ObservableObject {
         let newerRuntimeRequiringAppUpdate: RuntimeAppUpdateRequirement?
     }
 
-    private func runtimeUpdateSelection(in manifest: ReleaseChannelManifest) -> RuntimeUpdateSelection {
-        let current = currentManifestProvider()
+    private func runtimeUpdateSelection(
+        in manifest: ReleaseChannelManifest,
+        component: RuntimeComponent = .base
+    ) -> RuntimeUpdateSelection {
+        let current = currentManifest(for: component)
+        let base = currentManifest(for: .base)
         let candidates = manifest.runtimes
             .filter { $0.platform == "macos" && $0.arch == "arm64" }
+            .filter { $0.component == component }
             .filter { asset in
+                if component != .base {
+                    guard let base else { return false }
+                    guard asset.compatibilityApi == base.compatibilityApi else { return false }
+                }
                 guard let current else { return true }
                 guard asset.compatibilityApi == current.compatibilityApi else { return false }
                 return VersionComparator.compare(asset.version, current.runtimeVersion) == .orderedDescending
@@ -319,6 +359,15 @@ final class RuntimeUpdateManager: ObservableObject {
             compatibleRuntime: compatibleRuntime,
             newerRuntimeRequiringAppUpdate: appBlockedRuntime
         )
+    }
+
+    private func currentManifest(for component: RuntimeComponent) -> RuntimeManifest? {
+        switch component {
+        case .base:
+            return currentManifestProvider()
+        case .music:
+            return currentComponentManifestProvider(component)
+        }
     }
 
     private func runtimeAssetSupportsCurrentApp(_ asset: RuntimeReleaseAsset) -> Bool {
@@ -352,7 +401,7 @@ final class RuntimeUpdateManager: ObservableObject {
         try FileManager.default.createDirectory(at: runtimeArchiveCacheDirectory, withIntermediateDirectories: true)
 
         let archiveExtension = asset.url.pathExtension.isEmpty ? "zip" : asset.url.pathExtension
-        let archiveName = "runtime-\(asset.sha256.lowercased())"
+        let archiveName = "runtime-\(asset.component.rawValue)-\(asset.sha256.lowercased())"
         let destination = runtimeArchiveCacheDirectory
             .appendingPathComponent(archiveName)
             .appendingPathExtension(archiveExtension)
@@ -430,7 +479,11 @@ final class RuntimeUpdateManager: ObservableObject {
         }
     }
 
-    private func installRuntimeArchiveWithStructuredProgress(_ archiveURL: URL, installID: UUID) async throws -> URL {
+    private func installRuntimeArchiveWithStructuredProgress(
+        _ archiveURL: URL,
+        asset: RuntimeReleaseAsset,
+        installID: UUID
+    ) async throws -> URL {
         let installer = runtimeArchiveInstaller
         let (progressStream, progressContinuation) = AsyncStream.makeStream(
             of: RuntimeActivationProgress.self,
@@ -443,8 +496,18 @@ final class RuntimeUpdateManager: ObservableObject {
         }
         let installerTask = Task.detached(priority: .utility) {
             defer { progressContinuation.finish() }
-            return try installer(archiveURL) { progress in
-                progressContinuation.yield(progress)
+            switch asset.component {
+            case .base:
+                return try installer(archiveURL) { progress in
+                    progressContinuation.yield(progress)
+                }
+            case .music:
+                return try RuntimeManager.installRuntimeComponentArchive(
+                    archiveURL,
+                    component: asset.component
+                ) { progress in
+                    progressContinuation.yield(progress)
+                }
             }
         }
 

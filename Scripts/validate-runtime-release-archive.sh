@@ -7,6 +7,8 @@ source "${SCRIPT_DIR}/runtime-dependencies.sh"
 ARCHIVE_PATH=""
 EXPECTED_VERSION=""
 EXPECTED_COMPATIBILITY_API=""
+COMPONENT="base"
+BASE_RUNTIME_DIR=""
 RUN_IMPORT_SMOKE=1
 RUN_METAL_SMOKE=0
 KEEP_EXTRACTED=0
@@ -20,6 +22,8 @@ The archive is extracted with ditto and checked with the same structural
 requirements used by the app's runtime installer.
 
 Options:
+  --component base|music                 Archive component to validate. Default: base.
+  --base-runtime-dir path                Installed base runtime root for music import checks.
   --expected-version version             Require runtime-manifest.json runtimeVersion.
   --expected-compatibility-api number    Require runtime-manifest.json compatibilityApi.
   --skip-import-smoke                    Skip extracted Python import checks.
@@ -45,6 +49,16 @@ while [ "$#" -gt 0 ]; do
         --expected-version)
             require_option_value "$1" "${2:-}"
             EXPECTED_VERSION="$2"
+            shift 2
+            ;;
+        --component)
+            require_option_value "$1" "${2:-}"
+            COMPONENT="$2"
+            shift 2
+            ;;
+        --base-runtime-dir)
+            require_option_value "$1" "${2:-}"
+            BASE_RUNTIME_DIR="$2"
             shift 2
             ;;
         --expected-compatibility-api)
@@ -89,6 +103,16 @@ fi
 if [ ! -f "${ARCHIVE_PATH}" ]; then
     echo "Runtime archive does not exist: ${ARCHIVE_PATH}" >&2
     exit 1
+fi
+
+if [ "${COMPONENT}" != "base" ] && [ "${COMPONENT}" != "music" ]; then
+    echo "--component must be base or music" >&2
+    exit 2
+fi
+
+if [ "${COMPONENT}" = "music" ] && [ "${RUN_IMPORT_SMOKE}" = "1" ] && [ -z "${BASE_RUNTIME_DIR}" ]; then
+    echo "--component music import checks require --base-runtime-dir" >&2
+    exit 2
 fi
 
 if ! command -v zipinfo >/dev/null 2>&1; then
@@ -147,10 +171,43 @@ PY
 
 /usr/bin/ditto -x -k "${ARCHIVE_PATH}" "${EXTRACT_ROOT}/extract"
 
+copy_runtime_tree() {
+    local source_dir="$1"
+    local destination_dir="$2"
+
+    /usr/bin/python3 - "${source_dir}" "${destination_dir}" <<'PY'
+import pathlib
+import shutil
+import sys
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+
+
+def ignored(_directory, names):
+    return {
+        name
+        for name in names
+        if name in {".DS_Store", "Icon\r"} or name.startswith("._")
+    }
+
+
+if destination.exists() or destination.is_symlink():
+    if destination.is_dir() and not destination.is_symlink():
+        shutil.rmtree(destination)
+    else:
+        destination.unlink()
+
+destination.parent.mkdir(parents=True, exist_ok=True)
+shutil.copytree(source, destination, symlinks=True, ignore=ignored)
+PY
+}
+
 RUNTIME_ROOT="$(
     EXPECTED_VERSION="${EXPECTED_VERSION}" \
     EXPECTED_COMPATIBILITY_API="${EXPECTED_COMPATIBILITY_API}" \
     EXPECTED_MLX_WHEEL_PLATFORM="${RUNTIME_MLX_WHEEL_PLATFORM}" \
+    COMPONENT="${COMPONENT}" \
     /usr/bin/python3 - "${EXTRACT_ROOT}/extract" <<'PY'
 import json
 import os
@@ -161,22 +218,36 @@ extract_root = pathlib.Path(sys.argv[1])
 expected_version = os.environ.get("EXPECTED_VERSION") or None
 expected_compatibility_api = os.environ.get("EXPECTED_COMPATIBILITY_API") or None
 expected_mlx_wheel_platform = os.environ["EXPECTED_MLX_WHEEL_PLATFORM"]
+component = os.environ["COMPONENT"]
 
-required_paths = [
-    "venv/bin/python",
-    "acestep-venv/bin/python",
-    "python/Frameworks/Versions/3.12",
-    "acestep_download_helper.py",
-    "runtime-manifest.json",
-]
-required_executables = [
-    "venv/bin/python",
-    "acestep-venv/bin/python",
-]
+if component == "base":
+    manifest_name = "runtime-manifest.json"
+    required_paths = [
+        "venv/bin/python",
+        "python/Frameworks/Versions/3.12",
+        manifest_name,
+    ]
+    required_executables = [
+        "venv/bin/python",
+    ]
+    wheel_site_packages = [
+        "venv/lib/python3.12/site-packages",
+    ]
+else:
+    manifest_name = "runtime-music-manifest.json"
+    required_paths = [
+        "acestep-venv/bin/python",
+        "acestep_download_helper.py",
+        manifest_name,
+    ]
+    required_executables = [
+        "acestep-venv/bin/python",
+    ]
+    wheel_site_packages = []
 
 
 def load_manifest(root):
-    manifest_path = root / "runtime-manifest.json"
+    manifest_path = root / manifest_name
     if not manifest_path.is_file():
         return None
     try:
@@ -206,6 +277,11 @@ runtime_root = normalized_runtime_root()
 manifest = load_manifest(runtime_root)
 if manifest is None:
     raise SystemExit("Extracted runtime manifest is missing or invalid JSON")
+
+if manifest.get("component", "base") != component:
+    raise SystemExit(
+        f"Runtime component mismatch: expected {component}, got {manifest.get('component', 'base')}"
+    )
 
 if expected_version and manifest.get("runtimeVersion") != expected_version:
     raise SystemExit(
@@ -262,10 +338,7 @@ def validate_wheel_tag(site_packages, wheel_stem):
         )
 
 
-for relative_site_packages in (
-    "venv/lib/python3.12/site-packages",
-    "acestep-venv/lib/python3.12/site-packages",
-):
+for relative_site_packages in wheel_site_packages:
     site_packages = runtime_root / relative_site_packages
     validate_wheel_tag(site_packages, "mlx")
     validate_wheel_tag(site_packages, "mlx_metal")
@@ -274,10 +347,25 @@ print(runtime_root)
 PY
 )"
 
+if [ "${COMPONENT}" = "music" ]; then
+    BASE_RUNTIME_DIR="$(cd "${BASE_RUNTIME_DIR}" && pwd -P)"
+    OVERLAY_ROOT="${EXTRACT_ROOT}/installed-base-overlay"
+    copy_runtime_tree "${BASE_RUNTIME_DIR}" "${OVERLAY_ROOT}"
+    rm -rf \
+        "${OVERLAY_ROOT}/acestep-venv" \
+        "${OVERLAY_ROOT}/acestep_download_helper.py" \
+        "${OVERLAY_ROOT}/runtime-music-manifest.json"
+    copy_runtime_tree "${RUNTIME_ROOT}/acestep-venv" "${OVERLAY_ROOT}/acestep-venv"
+    cp "${RUNTIME_ROOT}/acestep_download_helper.py" "${OVERLAY_ROOT}/acestep_download_helper.py"
+    cp "${RUNTIME_ROOT}/runtime-music-manifest.json" "${OVERLAY_ROOT}/runtime-music-manifest.json"
+    RUNTIME_ROOT="${OVERLAY_ROOT}"
+fi
+
 PYTHON_HOME="${RUNTIME_ROOT}/python/Frameworks/Versions/3.12"
 
 if [ "${RUN_IMPORT_SMOKE}" = "1" ]; then
-    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/venv/bin/python" - <<'PY'
+    if [ "${COMPONENT}" = "base" ]; then
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/venv/bin/python" - <<'PY'
 import csv
 import importlib.metadata as metadata
 
@@ -287,8 +375,10 @@ for package in ("mlx", "mlx-metal", "mlx-vlm"):
 if csv.__name__ != "csv":
     raise SystemExit("bundled Python standard library import failed")
 PY
+    fi
 
-    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/acestep-venv/bin/python" - <<'PY'
+    if [ "${COMPONENT}" = "music" ]; then
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/acestep-venv/bin/python" - <<'PY'
 import importlib.metadata as metadata
 from acestep.inference import GenerationConfig
 
@@ -298,22 +388,27 @@ for package in ("ace-step", "mlx", "mlx-metal"):
 if GenerationConfig is None:
     raise SystemExit("ACE-Step import failed")
 PY
+    fi
 fi
 
 if [ "${RUN_METAL_SMOKE}" = "1" ]; then
-    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/venv/bin/python" - <<'PY'
+    if [ "${COMPONENT}" = "base" ]; then
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/venv/bin/python" - <<'PY'
 import mlx.core as mx
 
 if (mx.array([1, 2, 3]) + 1).tolist() != [2, 3, 4]:
     raise SystemExit("Main MLX Metal smoke failed")
 PY
+    fi
 
-    PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/acestep-venv/bin/python" - <<'PY'
+    if [ "${COMPONENT}" = "music" ]; then
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/acestep-venv/bin/python" - <<'PY'
 import mlx.core as mx
 
 if (mx.array([1, 2, 3]) + 1).tolist() != [2, 3, 4]:
     raise SystemExit("ACE-Step MLX Metal smoke failed")
 PY
+    fi
 fi
 
 echo "Runtime release archive validation passed"

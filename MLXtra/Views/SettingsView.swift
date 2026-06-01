@@ -448,7 +448,10 @@ struct SettingsView: View {
     private func requestModelDownload(_ model: DownloadableModel) {
         guard !model.source.usesComponentBundle || model.isRuntimeCompatible else {
             pendingDownloadModelId = model.modelId
-            runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: true)
+            runtimeUpdateManager.bootstrapStableRuntimeInBackground(
+                reportFailures: true,
+                component: model.runtime.component
+            )
             return
         }
 
@@ -480,6 +483,10 @@ struct SettingsView: View {
             pendingDownloadModelId = ""
         case .notDownloaded, .failed:
             guard !model.source.usesComponentBundle || model.isRuntimeCompatible else {
+                runtimeUpdateManager.bootstrapStableRuntimeInBackground(
+                    reportFailures: true,
+                    component: model.runtime.component
+                )
                 return
             }
             downloadManager.download(model)

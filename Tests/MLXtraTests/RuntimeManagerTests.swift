@@ -627,14 +627,14 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(selected, bundled)
     }
 
-    func testPreferredRuntimeFallsBackWhenInstalledRuntimeIsMissingAceStepPython() throws {
+    func testPreferredRuntimeFallsBackWhenInstalledRuntimeIsMissingBasePython() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let installed = root.appendingPathComponent("installed")
         let bundled = root.appendingPathComponent("bundled")
         try makeRuntimeBundle(at: installed, version: "0.2.0")
         try makeRuntimeBundle(at: bundled, version: "0.1.0")
-        try FileManager.default.removeItem(at: installed.appendingPathComponent("acestep-venv/bin/python"))
+        try FileManager.default.removeItem(at: installed.appendingPathComponent("venv/bin/python"))
 
         let selected = RuntimeManager.preferredRuntimeBundleURL(
             installed: installed,
@@ -781,8 +781,62 @@ final class RuntimeManagerTests: XCTestCase {
             return
         }
         XCTAssertEqual(asset.version, "0.1.2")
-        XCTAssertEqual(asset.id, "macos-arm64-0.1.2")
+        XCTAssertEqual(asset.id, "macos-arm64-base-0.1.2")
         XCTAssertEqual(manager.availableRuntime, asset)
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshFindsMissingMusicComponent() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.2", component: "base"),
+                makeRuntimeAsset(version: "0.1.2", component: "music"),
+            ]
+        )
+
+        let baseManifest = makeRuntimeManifest(version: "0.1.2", compatibilityApi: 1)
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { baseManifest },
+            currentComponentManifestProvider: { component in
+                component == .base ? baseManifest : nil
+            }
+        )
+        await manager.refreshStableChannel(channelURL: channelURL, component: .music)
+
+        guard case .available(let asset) = manager.state else {
+            XCTFail("Expected compatible music runtime component to be available")
+            return
+        }
+        XCTAssertEqual(asset.component, .music)
+        XCTAssertEqual(asset.version, "0.1.2")
+        XCTAssertEqual(asset.id, "macos-arm64-music-0.1.2")
+    }
+
+    @MainActor
+    func testRuntimeUpdateRefreshRequiresBaseForMusicComponent() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try writeRuntimeChannel(
+            to: channelURL,
+            runtimes: [
+                makeRuntimeAsset(version: "0.1.2", component: "music"),
+            ]
+        )
+
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            currentComponentManifestProvider: { _ in nil }
+        )
+        await manager.refreshStableChannel(channelURL: channelURL, component: .music)
+
+        XCTAssertEqual(manager.state, .idle)
     }
 
     @MainActor
@@ -922,6 +976,35 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertTrue(
             FileManager.default.isExecutableFile(
                 atPath: currentURL.appendingPathComponent("acestep-venv/bin/python").path
+            )
+        )
+    }
+
+    func testRuntimeComponentInstallAllowsMusicPythonSymlinkToBaseRuntime() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let baseRuntimeRoot = directory.appendingPathComponent("active-base")
+        try makeBaseRuntimeBundle(at: baseRuntimeRoot, version: "0.1.1")
+
+        let componentRoot = directory.appendingPathComponent("runtime-music-macos-arm64")
+        try makeMusicRuntimeComponent(at: componentRoot, version: "0.1.1")
+        let archiveURL = directory.appendingPathComponent("runtime-music-macos-arm64-0.1.1.zip")
+        try makeZipArchive(from: componentRoot, at: archiveURL)
+
+        let installedURL = try RuntimeManager.installRuntimeComponentArchive(
+            archiveURL,
+            component: .music,
+            activeRuntimeRoot: baseRuntimeRoot,
+            installRoot: directory.appendingPathComponent("installed-runtimes")
+        )
+
+        XCTAssertEqual(installedURL, baseRuntimeRoot)
+        XCTAssertTrue(RuntimeManager.isRuntimeComponentStructurallyValid(.music, at: baseRuntimeRoot))
+        XCTAssertEqual(RuntimeManager.runtimeManifest(at: baseRuntimeRoot, component: .music)?.component, .music)
+        XCTAssertTrue(
+            FileManager.default.isExecutableFile(
+                atPath: baseRuntimeRoot.appendingPathComponent("acestep-venv/bin/python").path
             )
         )
     }
@@ -1479,6 +1562,40 @@ final class RuntimeManagerTests: XCTestCase {
         try data.write(to: url.appendingPathComponent("runtime-manifest.json"))
     }
 
+    private func makeBaseRuntimeBundle(at url: URL, version: String) throws {
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("venv/bin"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: url.appendingPathComponent("python/Frameworks/Versions/3.12/bin"),
+            withIntermediateDirectories: true
+        )
+        try writeExecutableFile(at: url.appendingPathComponent("venv/bin/python"))
+        try writeExecutableFile(at: url.appendingPathComponent("python/Frameworks/Versions/3.12/bin/python3"))
+        let manifest = makeRuntimeManifest(version: version, compatibilityApi: 1)
+        let data = try JSONEncoder().encode(manifest)
+        try data.write(to: url.appendingPathComponent("runtime-manifest.json"))
+    }
+
+    private func makeMusicRuntimeComponent(at url: URL, version: String) throws {
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("acestep-venv/bin"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: url.appendingPathComponent("acestep-venv/bin/python").path,
+            withDestinationPath: "../../python/Frameworks/Versions/3.12/bin/python3"
+        )
+        FileManager.default.createFile(atPath: url.appendingPathComponent("acestep_download_helper.py").path, contents: Data())
+        let manifest = RuntimeManifest(
+            runtimeVersion: version,
+            compatibilityApi: 1,
+            component: .music,
+            pythonPath: "acestep-venv/bin/python3",
+            executables: ["python": "acestep-venv/bin/python3"],
+            isolatedPackages: ["ace-step"],
+            supportedBackends: [.music],
+            capabilities: ["music-generation"]
+        )
+        let data = try JSONEncoder().encode(manifest)
+        try data.write(to: url.appendingPathComponent(RuntimeComponent.music.manifestFilename))
+    }
+
     private func makeRuntimeManifest(version: String, compatibilityApi: Int) -> RuntimeManifest {
         RuntimeManifest(
             runtimeVersion: version,
@@ -1519,6 +1636,7 @@ final class RuntimeManagerTests: XCTestCase {
         version: String,
         platform: String = "macos",
         arch: String = "arm64",
+        component: String = "base",
         url: URL? = nil,
         sha256: String = String(repeating: "2", count: 64),
         sizeBytes: Int64 = 2048,
@@ -1529,6 +1647,7 @@ final class RuntimeManagerTests: XCTestCase {
             "version": version,
             "platform": platform,
             "arch": arch,
+            "component": component,
             "url": (url ?? URL(string: "https://example.com/runtime-\(version).zip")!).absoluteString,
             "sha256": sha256,
             "sizeBytes": sizeBytes,

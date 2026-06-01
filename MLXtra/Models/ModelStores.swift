@@ -23,7 +23,7 @@ struct ModelSelectionStore {
     func storedProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
-        runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
+        runtimeManifest: RuntimeManifest? = nil
     ) -> ModelCapabilityProfile? {
         guard let modelId = selectedModelId(for: modality),
               let profile = ModelCapabilityProfile.embeddedProfile(modelId: modelId),
@@ -33,8 +33,7 @@ struct ModelSelectionStore {
             return nil
         }
 
-        if let runtimeManifest,
-           !profile.isRuntimeCompatible(manifest: runtimeManifest) {
+        if !profile.isRuntimeCompatible(manifest: runtimeManifest) {
             return nil
         }
 
@@ -44,7 +43,7 @@ struct ModelSelectionStore {
     func selectedProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
-        runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest()
+        runtimeManifest: RuntimeManifest? = nil
     ) -> ModelCapabilityProfile? {
         if let profile = storedProfile(
             for: modality,
@@ -63,7 +62,7 @@ struct ModelSelectionStore {
     func selectedAvailableProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
-        runtimeManifest: RuntimeManifest? = RuntimeManager.activeRuntimeManifest(),
+        runtimeManifest: RuntimeManifest? = nil,
         isAvailable: (DownloadableModel) -> Bool
     ) -> ModelCapabilityProfile? {
         if let profile = storedProfile(
@@ -102,11 +101,7 @@ struct ModelSelectionStore {
             hardwareMemoryGB: hardwareMemoryGB
         )
         let compatibleProfiles = sortedProfiles.filter { profile in
-            if let runtimeManifest {
-                return profile.isRuntimeCompatible(manifest: runtimeManifest)
-            }
-
-            return profile.isRuntimeCompatible()
+            profile.isRuntimeCompatible(manifest: runtimeManifest)
         }
         let candidateProfiles = compatibleProfiles.isEmpty ? sortedProfiles : compatibleProfiles
 
@@ -248,7 +243,7 @@ struct DownloadableModel: Identifiable, Equatable {
     }
 
     var isRuntimeCompatible: Bool {
-        let manifest = RuntimeManager.activeRuntimeManifest()
+        let manifest = RuntimeManager.activeRuntimeManifest(component: runtime.component)
         return runtime.isSatisfied(by: manifest)
             && (manifest?.supports(backend: backend) ?? false)
             && (manifest?.supports(runtimeOptions: runtimeOptions) ?? false)
