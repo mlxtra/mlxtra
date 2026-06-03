@@ -64,7 +64,7 @@ struct ModelSettingsModelSorter {
             fitRank: ModelFit
                 .classify(estimatedMemoryGB: model.estimatedMemoryGB, hardwareMemoryGB: hardwareMemoryGB)
                 .settingsSortRank,
-            sizeRank: model.downloadSizeGB,
+            sizeRank: model.totalDownloadSizeGB,
             name: model.name
         )
     }

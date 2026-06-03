@@ -40,11 +40,6 @@ struct ModelSelectionStore {
             return nil
         }
 
-        if let manifest = resolvedRuntimeManifest(for: profile, override: runtimeManifest),
-           !profile.isRuntimeCompatible(manifest: manifest) {
-            return nil
-        }
-
         return profile
     }
 
@@ -63,7 +58,10 @@ struct ModelSelectionStore {
 
         return ModelCapabilityProfile.bestProfile(
             for: modality,
-            hardwareMemoryGB: hardwareMemoryGB
+            hardwareMemoryGB: hardwareMemoryGB,
+            runtimeManifestProvider: { profile in
+                resolvedRuntimeManifest(for: profile, override: runtimeManifest)
+            }
         )
     }
 
@@ -77,7 +75,8 @@ struct ModelSelectionStore {
             for: modality,
             hardwareMemoryGB: hardwareMemoryGB,
             runtimeManifest: runtimeManifest
-        ), isAvailable(profile.downloadableModel) {
+        ), isRuntimeCompatible(profile, override: runtimeManifest),
+           isAvailable(profile.downloadableModel) {
             return profile
         }
 
@@ -126,6 +125,16 @@ struct ModelSelectionStore {
         override: RuntimeManifest?
     ) -> RuntimeManifest? {
         override ?? activeRuntimeManifestProvider(profile.runtime.component)
+    }
+
+    private func isRuntimeCompatible(
+        _ profile: ModelCapabilityProfile,
+        override: RuntimeManifest?
+    ) -> Bool {
+        guard let manifest = resolvedRuntimeManifest(for: profile, override: override) else {
+            return false
+        }
+        return profile.isRuntimeCompatible(manifest: manifest)
     }
 }
 
@@ -223,6 +232,7 @@ struct DownloadableModel: Identifiable, Equatable {
     let source: ModelSource
     let runtime: ModelRuntimeRequirement
     let runtimeOptions: ModelRuntimeOptions?
+    let acceleration: ModelAcceleration?
 
     init(
         id: String,
@@ -235,7 +245,8 @@ struct DownloadableModel: Identifiable, Equatable {
         estimatedMemoryGB: Double? = nil,
         source: ModelSource? = nil,
         runtime: ModelRuntimeRequirement = ModelRuntimeRequirement(),
-        runtimeOptions: ModelRuntimeOptions? = nil
+        runtimeOptions: ModelRuntimeOptions? = nil,
+        acceleration: ModelAcceleration? = nil
     ) {
         self.id = id
         self.name = name
@@ -248,6 +259,7 @@ struct DownloadableModel: Identifiable, Equatable {
         self.source = source ?? ModelSource.defaultSource(modelId: modelId)
         self.runtime = runtime
         self.runtimeOptions = runtimeOptions
+        self.acceleration = acceleration
     }
 
     static func embeddedModel(modelId: String) -> DownloadableModel? {
@@ -262,6 +274,25 @@ struct DownloadableModel: Identifiable, Equatable {
 
     var isRuntimeCompatible: Bool {
         isRuntimeCompatible(with: nil)
+    }
+
+    var totalDownloadSizeGB: Double {
+        downloadSizeGB + (acceleration?.downloadSizeGB ?? 0)
+    }
+
+    var snapshotRequirements: [ModelSnapshotRequirement] {
+        var requirements: [ModelSnapshotRequirement] = []
+        if !source.usesComponentBundle {
+            requirements.append(ModelSnapshotRequirement(
+                modelId: source.downloadRepository ?? modelId,
+                revision: source.revision ?? "main",
+                purpose: .base
+            ))
+        }
+        if let accelerationRequirement = acceleration?.snapshotRequirement {
+            requirements.append(accelerationRequirement)
+        }
+        return requirements
     }
 
     func isRuntimeCompatible(with manifest: RuntimeManifest?) -> Bool {

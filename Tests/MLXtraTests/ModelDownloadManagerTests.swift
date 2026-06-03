@@ -1132,6 +1132,88 @@ final class ModelDownloadManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testDownloadIncludesAccelerationSnapshot() async throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        let controller = SequencedNativeDownloadController()
+        let manager = ModelDownloadManager(
+            refreshStatusesOnInit: false,
+            checkpointsPathOverride: checkpointsPath,
+            huggingFaceCacheRootOverride: cacheRoot,
+            nativeDownloader: SequencedNativeDownloader(controller: controller),
+            modelStorageStatusProvider: { _, _, _ in .downloaded }
+        )
+        let model = DownloadableModel(
+            id: "org/accelerated-model",
+            name: "Accelerated Model",
+            subtitle: "Test model",
+            modelId: "org/accelerated-model",
+            modality: .vision,
+            downloadSizeGB: 1.0,
+            source: ModelSource(type: .huggingFaceSnapshot, repo: "org/accelerated-model", revision: "main"),
+            acceleration: ModelAcceleration(modelId: "org/accelerated-drafter", downloadSizeGB: 0.25)
+        )
+
+        manager.download(model)
+        await controller.waitForCall(1)
+        await controller.releaseCall(1, outcome: .success)
+        await controller.waitForCall(2)
+        await controller.releaseCall(2, outcome: .success)
+        await waitUntil { !manager.hasTrackedTask(for: model) }
+
+        let repoIDs = await controller.repoIDs
+        XCTAssertEqual(repoIDs, ["org/accelerated-model", "org/accelerated-drafter"])
+        XCTAssertEqual(manager.state(for: model), .downloaded)
+    }
+
+    @MainActor
+    func testDownloadSkipsExistingBaseSnapshotWhenOnlyAccelerationIsMissing() async throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+        try makeCompletedHuggingFaceSnapshot(
+            modelId: "org/accelerated-model",
+            cacheRoot: cacheRoot
+        )
+
+        let controller = SequencedNativeDownloadController()
+        let manager = ModelDownloadManager(
+            refreshStatusesOnInit: false,
+            checkpointsPathOverride: checkpointsPath,
+            huggingFaceCacheRootOverride: cacheRoot,
+            nativeDownloader: SequencedNativeDownloader(controller: controller),
+            modelStorageStatusProvider: { _, _, _ in .downloaded }
+        )
+        let model = DownloadableModel(
+            id: "org/accelerated-model",
+            name: "Accelerated Model",
+            subtitle: "Test model",
+            modelId: "org/accelerated-model",
+            modality: .vision,
+            downloadSizeGB: 1.0,
+            source: ModelSource(type: .huggingFaceSnapshot, repo: "org/accelerated-model", revision: "main"),
+            acceleration: ModelAcceleration(modelId: "org/accelerated-drafter", downloadSizeGB: 0.25)
+        )
+
+        manager.download(model)
+        await controller.waitForCall(1)
+        await controller.releaseCall(1, outcome: .success)
+        await waitUntil { !manager.hasTrackedTask(for: model) }
+
+        let repoIDs = await controller.repoIDs
+        XCTAssertEqual(repoIDs, ["org/accelerated-drafter"])
+        XCTAssertEqual(manager.state(for: model), .downloaded)
+    }
+
+    @MainActor
     func testRefreshStatusesDoesNotRestoreStatusWhileCancelledDownloadIsStopping() async throws {
         let cacheRoot = try makeTemporaryDirectory()
         let checkpointsPath = try makeTemporaryDirectory()
@@ -1418,6 +1500,28 @@ final class ModelDownloadManagerTests: XCTestCase {
         return url
     }
 
+    private func makeCompletedHuggingFaceSnapshot(
+        modelId: String,
+        revision: String = "main",
+        resolvedRevision: String = "test-revision",
+        cacheRoot: URL
+    ) throws {
+        let modelCachePath = RuntimeManager.modelCachePath(
+            modelId: modelId,
+            huggingFaceCacheRoot: cacheRoot
+        )
+        let snapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent(resolvedRevision)
+        let refsPath = modelCachePath.appendingPathComponent("refs")
+
+        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: refsPath, withIntermediateDirectories: true)
+        try Data(resolvedRevision.utf8).write(to: refsPath.appendingPathComponent(revision))
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+    }
+
     @MainActor
     private func waitUntil(
         timeout: TimeInterval = 2.0,
@@ -1518,6 +1622,7 @@ private final class SequencedNativeDownloader: NativeModelDownloading, @unchecke
         cacheRoot: URL,
         progress: @escaping NativeModelDownloadService.ProgressHandler
     ) async throws {
+        await controller.recordRepoID(repoID)
         let callIndex = await controller.enterCall()
         await progress(
             NativeModelDownloadProgress(
@@ -1559,6 +1664,11 @@ private actor SequencedNativeDownloadController {
     private var callContinuations: [Int: CheckedContinuation<Void, Never>] = [:]
     private var releaseOutcomes: [Int: SequencedNativeDownloadOutcome] = [:]
     private var releaseContinuations: [Int: CheckedContinuation<SequencedNativeDownloadOutcome, Never>] = [:]
+    private(set) var repoIDs: [String] = []
+
+    func recordRepoID(_ repoID: String) {
+        repoIDs.append(repoID)
+    }
 
     func enterCall() -> Int {
         callCount += 1

@@ -253,11 +253,19 @@ extension ModelDownloadManager {
 
         var isRepairableFailure: Bool {
             guard let message = failureMessage?.lowercased() else { return false }
-            return message.contains("incomplete")
+            return isUpdateRequiredFailure
+                || message.contains("incomplete")
                 || message.contains("not found in cache")
+                || message.contains("files are missing")
                 || message.contains("missing files")
                 || message.contains("missing components")
+                || message.contains("repair")
                 || message.contains("redownload")
+        }
+
+        var isUpdateRequiredFailure: Bool {
+            guard let message = failureMessage?.lowercased() else { return false }
+            return message.contains("model update required")
         }
     }
 

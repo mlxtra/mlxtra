@@ -252,6 +252,184 @@ class TestChatCompletionPerformance(unittest.TestCase):
         self.assertEqual(complete["choices"][0]["message"]["content"], "A")
         self.assertNotIn("<tool_call>", "".join(chunks))
 
+    def test_chat_completion_passes_drafter_to_stream_generate(self):
+        python_bridge.DRAFTER_MODEL_REGISTRY.clear()
+        observed_kwargs = {}
+
+        def fake_load_model_if_needed(model_id, request=None):
+            return ("model", object(), {"model_type": "fake"})
+
+        def fake_apply_chat_template(processor, config, messages, num_images=0, **kwargs):
+            return "prompt"
+
+        def fake_stream_generate(*args, **kwargs):
+            observed_kwargs.update(kwargs)
+            yield types.SimpleNamespace(
+                text="A",
+                prompt_tokens=7,
+                generation_tokens=1,
+                prompt_tps=None,
+                generation_tps=None,
+                peak_memory=None,
+            )
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.__path__ = []
+        mlx_vlm_module.stream_generate = fake_stream_generate
+        prompt_utils_module = types.ModuleType("mlx_vlm.prompt_utils")
+        prompt_utils_module.apply_chat_template = fake_apply_chat_template
+        speculative_module = types.ModuleType("mlx_vlm.speculative")
+        speculative_module.__path__ = []
+        drafters_module = types.ModuleType("mlx_vlm.speculative.drafters")
+        drafters_module.load_drafter = MagicMock(return_value=("drafter-model", "mtp"))
+        speculative_module.drafters = drafters_module
+        mlx_vlm_module.speculative = speculative_module
+        mlx_module = types.ModuleType("mlx")
+        mlx_core_module = types.ModuleType("mlx.core")
+        mlx_core_module.clear_cache = lambda: None
+        mlx_module.core = mlx_core_module
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "request_id": "req-drafter",
+            "parameters": {
+                "runtimeOptions": {
+                    "acceleration": {
+                        "draftModel": "/tmp/drafter",
+                        "draftBlockSize": 4,
+                    }
+                }
+            },
+        }
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mlx": mlx_module,
+                "mlx.core": mlx_core_module,
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.prompt_utils": prompt_utils_module,
+                "mlx_vlm.speculative": speculative_module,
+                "mlx_vlm.speculative.drafters": drafters_module,
+            },
+        ), patch.object(
+            python_bridge, "load_model_if_needed", fake_load_model_if_needed
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        drafters_module.load_drafter.assert_called_once_with("/tmp/drafter", kind=None)
+        self.assertEqual(observed_kwargs["draft_model"], "drafter-model")
+        self.assertEqual(observed_kwargs["draft_kind"], "mtp")
+        self.assertEqual(observed_kwargs["draft_block_size"], 4)
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        self.assertTrue(any(message.get("status") == "acceleration_ready" for message in messages))
+        self.assertEqual(messages[-1]["type"], "chat.completion.complete")
+        self.assertEqual(
+            messages[-1]["acceleration"],
+            {
+                "requested": True,
+                "active": True,
+                "state": "active",
+                "draft_kind": "mtp",
+            },
+        )
+
+    def test_chat_completion_falls_back_when_drafter_generation_fails(self):
+        python_bridge.DRAFTER_MODEL_REGISTRY.clear()
+        generation_attempts = []
+
+        def fake_load_model_if_needed(model_id, request=None):
+            return ("model", object(), {"model_type": "fake"})
+
+        def fake_apply_chat_template(processor, config, messages, num_images=0, **kwargs):
+            return "prompt"
+
+        def fake_stream_generate(*args, **kwargs):
+            if "draft_model" in kwargs:
+                generation_attempts.append("draft")
+                raise RuntimeError("drafter rejected")
+                yield
+            generation_attempts.append("base")
+            yield types.SimpleNamespace(
+                text="B",
+                prompt_tokens=7,
+                generation_tokens=1,
+                prompt_tps=None,
+                generation_tps=None,
+                peak_memory=None,
+            )
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.__path__ = []
+        mlx_vlm_module.stream_generate = fake_stream_generate
+        prompt_utils_module = types.ModuleType("mlx_vlm.prompt_utils")
+        prompt_utils_module.apply_chat_template = fake_apply_chat_template
+        speculative_module = types.ModuleType("mlx_vlm.speculative")
+        speculative_module.__path__ = []
+        drafters_module = types.ModuleType("mlx_vlm.speculative.drafters")
+        drafters_module.load_drafter = MagicMock(return_value=("drafter-model", "mtp"))
+        speculative_module.drafters = drafters_module
+        mlx_vlm_module.speculative = speculative_module
+        mlx_module = types.ModuleType("mlx")
+        mlx_core_module = types.ModuleType("mlx.core")
+        mlx_core_module.clear_cache = lambda: None
+        mlx_module.core = mlx_core_module
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "request_id": "req-drafter-fallback",
+            "parameters": {
+                "runtimeOptions": {
+                    "acceleration": {
+                        "draftModel": "/tmp/drafter",
+                    }
+                }
+            },
+        }
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mlx": mlx_module,
+                "mlx.core": mlx_core_module,
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.prompt_utils": prompt_utils_module,
+                "mlx_vlm.speculative": speculative_module,
+                "mlx_vlm.speculative.drafters": drafters_module,
+            },
+        ), patch.object(
+            python_bridge, "load_model_if_needed", fake_load_model_if_needed
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        self.assertEqual(generation_attempts, ["draft", "base"])
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        self.assertTrue(any(message.get("status") == "acceleration_unavailable" for message in messages))
+        complete = messages[-1]
+        self.assertEqual(complete["type"], "chat.completion.complete")
+        self.assertEqual(complete["choices"][0]["message"]["content"], "B")
+        self.assertEqual(
+            complete["acceleration"],
+            {
+                "requested": True,
+                "active": False,
+                "state": "fallback",
+            },
+        )
+
     def test_chat_completion_clears_mlx_cache_after_stream_error(self):
         def fake_load_model_if_needed(model_id, request=None):
             return ("model", object(), {"model_type": "fake"})

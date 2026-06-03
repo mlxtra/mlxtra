@@ -7,9 +7,16 @@ final class ModelCapabilityProfileTests: XCTestCase {
     private let qwen2BModelId = "mlx-community/Qwen3.5-2B-MLX-4bit"
 
     func testHardwareRankingForLowMediumAndHighMemoryMachines() {
-        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 4.0)?.modelId, qwen2BModelId)
-        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 8.0)?.modelId, gemma4ModelId)
-        XCTAssertEqual(ModelCapabilityProfile.bestProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId, qwen9BModelId)
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+        let store = ModelSelectionStore(
+            userDefaults: defaults,
+            activeRuntimeManifestProvider: { _ in self.testRuntimeManifest }
+        )
+
+        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 4.0)?.modelId, qwen2BModelId)
+        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 8.0)?.modelId, gemma4ModelId)
+        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId, qwen9BModelId)
 
         XCTAssertEqual(ModelFit.classify(estimatedMemoryGB: 3.0, hardwareMemoryGB: 4.0), .compatible)
         XCTAssertEqual(ModelFit.classify(estimatedMemoryGB: 6.0, hardwareMemoryGB: 8.0), .compatible)
@@ -23,7 +30,14 @@ final class ModelCapabilityProfileTests: XCTestCase {
 
         let store = ModelSelectionStore(userDefaults: defaults)
 
-        XCTAssertEqual(store.selectedProfile(for: .vision, hardwareMemoryGB: 16.0)?.modelId, qwen9BModelId)
+        XCTAssertEqual(
+            store.selectedProfile(
+                for: .vision,
+                hardwareMemoryGB: 16.0,
+                runtimeManifest: testRuntimeManifest
+            )?.modelId,
+            qwen9BModelId
+        )
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
 
         store.setSelectedModelId(gemma4ModelId, for: .vision)
@@ -53,7 +67,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
         )
     }
 
-    func testStoredSelectionFallsBackWhenRuntimeManifestIsExplicitlyIncompatible() {
+    func testStoredSelectionSurvivesExplicitlyIncompatibleRuntimeManifest() {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
@@ -65,12 +79,13 @@ final class ModelCapabilityProfileTests: XCTestCase {
         )
         store.setSelectedModelId(gemma4ModelId, for: .vision)
 
-        XCTAssertNil(
+        XCTAssertEqual(
             store.storedProfile(
                 for: .vision,
                 hardwareMemoryGB: 16.0,
                 runtimeManifest: incompatibleManifest
-            )
+            )?.modelId,
+            gemma4ModelId
         )
     }
 
@@ -455,6 +470,78 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(profile.ranking.quality, 90)
     }
 
+    func testCatalogDecodingPreservesAccelerationMetadata() throws {
+        let data = try makeCatalogJSON(
+            modelId: "org/example-vlm",
+            acceleration: """
+              "acceleration": {
+                "modelId": "org/example-drafter",
+                "downloadSizeGB": 0.25,
+                "source": {
+                  "type": "hugging_face_snapshot",
+                  "repo": "org/example-drafter",
+                  "revision": "main",
+                  "components": []
+                },
+                "draftKind": "mtp",
+                "draftBlockSize": 4
+              },
+            """
+        )
+
+        let profile = try XCTUnwrap(ModelCatalogService.decodeCatalog(data: data, appVersion: "1.0.0").profiles.first)
+        let acceleration = try XCTUnwrap(profile.acceleration)
+
+        XCTAssertEqual(acceleration.modelId, "org/example-drafter")
+        XCTAssertEqual(acceleration.downloadRepository, "org/example-drafter")
+        XCTAssertEqual(acceleration.downloadSizeGB, 0.25)
+        XCTAssertEqual(acceleration.draftKind, "mtp")
+        XCTAssertEqual(acceleration.draftBlockSize, 4)
+        XCTAssertEqual(profile.totalDownloadSizeGB, 1.25)
+        XCTAssertEqual(
+            profile.snapshotRequirements.map(\.modelId),
+            ["org/example-vlm", "org/example-drafter"]
+        )
+    }
+
+    func testExecutionParametersIncludeDownloadedAccelerationPath() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheRoot) }
+        let drafterSnapshot = try makeCachedSnapshot(modelId: "org/example-drafter", cacheRoot: cacheRoot)
+        let profile = ModelCapabilityProfile(
+            id: "org/example-vlm",
+            name: "Example VLM",
+            subtitle: "Test model",
+            modelId: "org/example-vlm",
+            modality: .vision,
+            backend: .vlm,
+            icon: "eye",
+            downloadSizeGB: 1.0,
+            estimatedMemoryGB: 4.0,
+            acceleration: ModelAcceleration(
+                modelId: "org/example-drafter",
+                downloadSizeGB: 0.25,
+                draftKind: "mtp",
+                draftBlockSize: 4
+            ),
+            parameters: [],
+            presets: []
+        )
+
+        let parameters = profile.executionParameters(
+            merging: ["temperature": 0.2],
+            huggingFaceCacheRoot: cacheRoot
+        )
+        let runtimeOptions = try XCTUnwrap(parameters["runtimeOptions"] as? [String: Any])
+        let acceleration = try XCTUnwrap(runtimeOptions["acceleration"] as? [String: Any])
+
+        XCTAssertEqual(parameters["temperature"] as? Double, 0.2)
+        XCTAssertEqual(acceleration["draftModel"] as? String, drafterSnapshot.path)
+        XCTAssertEqual(acceleration["source"] as? String, "org/example-drafter")
+        XCTAssertEqual(acceleration["draftKind"] as? String, "mtp")
+        XCTAssertEqual(acceleration["draftBlockSize"] as? Int, 4)
+    }
+
     func testBundledModelCatalogFileDecodes() throws {
         let data = try Data(contentsOf: URL(fileURLWithPath: "MLXtra/Resources/model-catalog.json"))
 
@@ -515,6 +602,66 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertFalse(ModelCatalogService.shouldReplaceCatalog(current: current, with: older))
         XCTAssertTrue(ModelCatalogService.shouldReplaceCatalog(current: current, with: current))
         XCTAssertTrue(ModelCatalogService.shouldReplaceCatalog(current: current, with: newer))
+    }
+
+    func testReleaseChannelEnvironmentOverrideAcceptsURLsAndPaths() throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/mlxtra-local-channel.json")
+        XCTAssertEqual(
+            ReleaseChannelManifest.localChannelURLFromEnvironment([
+                ReleaseChannelManifest.localChannelURLEnvironmentKey: fileURL.absoluteString
+            ]),
+            fileURL
+        )
+        XCTAssertEqual(
+            ReleaseChannelManifest.localChannelURLFromEnvironment([
+                ReleaseChannelManifest.localChannelURLEnvironmentKey: "/tmp/mlxtra-local-channel.json"
+            ]),
+            fileURL
+        )
+        XCTAssertEqual(
+            ReleaseChannelManifest.localChannelURLFromEnvironment([
+                ReleaseChannelManifest.localChannelURLEnvironmentKey: "https://example.test/stable-channel.json"
+            ]),
+            URL(string: "https://example.test/stable-channel.json")
+        )
+    }
+
+    @MainActor
+    func testCatalogRefreshAcceptsLocalFileChannelAndCatalog() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let catalogData = try makeCatalogJSON(
+            modelId: "org/local-file-vlm",
+            catalogVersion: "2026.06.03.local"
+        )
+        let catalogURL = directory.appendingPathComponent("model-catalog.json")
+        try catalogData.write(to: catalogURL)
+
+        let channelURL = directory.appendingPathComponent("stable-channel.json")
+        try Data("""
+        {
+          "schemaVersion": 1,
+          "channel": "local",
+          "catalog": {
+            "version": "2026.06.03.local",
+            "url": "\(catalogURL.absoluteString)",
+            "sha256": "\(SHA256Checksum.hexDigest(for: catalogData))",
+            "sizeBytes": \(catalogData.count)
+          },
+          "runtimes": []
+        }
+        """.utf8).write(to: channelURL)
+
+        let service = ModelCatalogService(
+            cacheDirectory: directory.appendingPathComponent("cache"),
+            loadCachedCatalog: false,
+            loadBundledCatalog: false
+        )
+        await service.refreshFromStableChannel(channelURL: channelURL)
+
+        XCTAssertNil(service.lastRefreshError)
+        XCTAssertEqual(service.profile(modelId: "org/local-file-vlm")?.modelId, "org/local-file-vlm")
     }
 
     func testCatalogServiceFallsBackWhenNoCacheOrBundleIsAvailable() {
@@ -804,6 +951,30 @@ final class ModelCapabilityProfileTests: XCTestCase {
         return defaults
     }
 
+    private func makeTemporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MLXtraTests")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func makeCachedSnapshot(modelId: String, cacheRoot: URL) throws -> URL {
+        let modelCachePath = RuntimeManager.modelCachePath(modelId: modelId, huggingFaceCacheRoot: cacheRoot)
+        let snapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("revision")
+        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: modelCachePath.appendingPathComponent("refs"),
+            withIntermediateDirectories: true
+        )
+        try Data("revision".utf8).write(to: modelCachePath.appendingPathComponent("refs/main"))
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+        return snapshotPath
+    }
+
     private func makeDownloadableModel(
         id: String,
         size: Double,
@@ -832,6 +1003,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
         catalogVersion: String = "test",
         duplicateModel: Bool = false,
         duplicateModelIdWithDifferentProfileId: Bool = false,
+        acceleration: String = "",
         parameters: String = "[]"
     ) throws -> Data {
         let model = """
@@ -854,6 +1026,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
                 "revision": "main",
                 "components": []
               },
+        \(acceleration)
               "runtime": {
                 "minVersion": "\(minRuntimeVersion)",
                 "compatibilityApi": 1

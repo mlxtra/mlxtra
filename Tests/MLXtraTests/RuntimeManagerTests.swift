@@ -84,8 +84,8 @@ final class RuntimeManagerTests: XCTestCase {
         let chatProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "mlx-community/Qwen3.5-9B-MLX-4bit"))
         let speechProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "mlx-community/Kokoro-82M-4bit"))
 
-        XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: chatProfile.modelId), chatProfile.downloadSizeGB)
-        XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: speechProfile.modelId), speechProfile.downloadSizeGB)
+        XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: chatProfile.modelId), chatProfile.totalDownloadSizeGB)
+        XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: speechProfile.modelId), speechProfile.totalDownloadSizeGB)
         XCTAssertEqual(runtimeManager.estimatedModelSize(modelId: "unknown/model"), 5.0)
     }
 
@@ -423,6 +423,69 @@ final class RuntimeManagerTests: XCTestCase {
                 huggingFaceCacheRoot: cacheRoot
             ),
             .missing
+        )
+    }
+
+    func testModelStorageStatusRequiresAccelerationSnapshot() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        let model = DownloadableModel(
+            id: "org/base-model",
+            name: "Base Model",
+            subtitle: "Test model",
+            modelId: "org/base-model",
+            modality: .vision,
+            downloadSizeGB: 1.0,
+            source: ModelSource(type: .huggingFaceSnapshot, repo: "org/base-model", revision: "main"),
+            acceleration: ModelAcceleration(modelId: "org/base-drafter", downloadSizeGB: 0.25)
+        )
+        let storageURLs = ModelDownloadStorage.storageURLs(
+            for: model,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: cacheRoot
+        )
+
+        XCTAssertEqual(storageURLs.count, 2)
+        XCTAssertTrue(storageURLs[0].path.contains("models--org--base-model"))
+        XCTAssertTrue(storageURLs[1].path.contains("models--org--base-drafter"))
+
+        let baseSnapshot = try makeNativeSnapshotDirectory(modelId: "org/base-model", cacheRoot: cacheRoot)
+        try Data("{}".utf8).write(to: baseSnapshot.appendingPathComponent("config.json"))
+        try Data([1]).write(to: baseSnapshot.appendingPathComponent("model.safetensors"))
+
+        guard case .incomplete(let message) = RuntimeManager.modelStorageStatus(
+            model: model,
+            checkpointsPath: checkpointsPath,
+            huggingFaceCacheRoot: cacheRoot
+        ) else {
+            return XCTFail("Expected missing acceleration files to be repairable incomplete")
+        }
+        XCTAssertTrue(message.contains("Model update required"))
+        XCTAssertTrue(message.contains("acceleration files are missing"))
+
+        let drafterSnapshot = try makeNativeSnapshotDirectory(modelId: "org/base-drafter", cacheRoot: cacheRoot)
+        try Data("{}".utf8).write(to: drafterSnapshot.appendingPathComponent("config.json"))
+        try Data([1]).write(to: drafterSnapshot.appendingPathComponent("model.safetensors"))
+
+        XCTAssertEqual(
+            RuntimeManager.modelStorageStatus(
+                model: model,
+                checkpointsPath: checkpointsPath,
+                huggingFaceCacheRoot: cacheRoot
+            ),
+            .downloaded
+        )
+        XCTAssertEqual(
+            RuntimeManager.downloadedSnapshotPath(
+                modelId: "org/base-drafter",
+                huggingFaceCacheRoot: cacheRoot
+            )?.path,
+            drafterSnapshot.path
         )
     }
 

@@ -11,6 +11,9 @@ enum ChatExecutionRequestBuilder {
     ) -> ExecutionRequest {
         let isDirectMediaGeneration = generation.isImageGeneration || generation.isSpeechGeneration
         let chatExecutionParameters = generation.executionParameters(for: activeChatProfile)
+        let runtimeExecutionParameters = isDirectMediaGeneration
+            ? nil
+            : generation.runtimeExecutionParameters(for: activeChatProfile)
         let mediaExecutionParameters = isDirectMediaGeneration
             ? generation.executionParameters(for: executionProfile)
             : nil
@@ -47,7 +50,7 @@ enum ChatExecutionRequestBuilder {
             repetitionPenalty: isDirectMediaGeneration ? nil : repetitionPenalty,
             chatTemplateKwargs: chatTemplateKwargs,
             tools: tools,
-            parameters: mediaExecutionParameters
+            parameters: mediaExecutionParameters ?? runtimeExecutionParameters
         )
     }
 

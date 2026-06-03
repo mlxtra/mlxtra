@@ -143,19 +143,22 @@ struct GenerationPerformanceMetrics: Codable, Equatable {
     var outputTokenCount: Int
     var totalDuration: TimeInterval
     var measuredAt: Date
+    var accelerationState: GenerationAccelerationState?
 
     init(
         timeToFirstToken: TimeInterval? = nil,
         tokensPerSecond: Double? = nil,
         outputTokenCount: Int = 0,
         totalDuration: TimeInterval,
-        measuredAt: Date = Date()
+        measuredAt: Date = Date(),
+        accelerationState: GenerationAccelerationState? = nil
     ) {
         self.timeToFirstToken = timeToFirstToken
         self.tokensPerSecond = tokensPerSecond
         self.outputTokenCount = outputTokenCount
         self.totalDuration = totalDuration
         self.measuredAt = measuredAt
+        self.accelerationState = accelerationState
     }
 
     static func measured(
@@ -163,7 +166,8 @@ struct GenerationPerformanceMetrics: Codable, Equatable {
         firstOutputAt: Date?,
         completedAt: Date = Date(),
         outputTokenCount: Int,
-        backendTokensPerSecond: Double? = nil
+        backendTokensPerSecond: Double? = nil,
+        accelerationState: GenerationAccelerationState? = nil
     ) -> GenerationPerformanceMetrics {
         let totalDuration = max(completedAt.timeIntervalSince(startedAt), 0)
         let timeToFirstToken = firstOutputAt.map { max($0.timeIntervalSince(startedAt), 0) }
@@ -179,7 +183,8 @@ struct GenerationPerformanceMetrics: Codable, Equatable {
             tokensPerSecond: tokensPerSecond,
             outputTokenCount: outputTokenCount,
             totalDuration: totalDuration,
-            measuredAt: completedAt
+            measuredAt: completedAt,
+            accelerationState: accelerationState
         )
     }
 }

@@ -357,8 +357,11 @@ extension ChatViewModel {
             guard ownsActiveLyricsDraft(draftToken) else { return }
 
             loadingMessage = "Generating lyrics..."
-            let chatExecutionParameters = modelParameterStore.executionParameters(for: chatProfile)
+            let baseChatExecutionParameters = modelParameterStore.executionParameters(for: chatProfile)
+            let chatExecutionParameters = chatProfile.executionParameters(merging: baseChatExecutionParameters)
             let chatTemplateKwargs = chatProfile.runtimeOptions?.chatTemplateKwargs(from: chatExecutionParameters)
+            let runtimeOptions = chatProfile.runtimeExecutionOptions()
+            let requestParameters = runtimeOptions.isEmpty ? nil : ["runtimeOptions": runtimeOptions]
             let request = ExecutionRequest(
                 backend: .vlm,
                 modelId: chatProfile.modelId,
@@ -379,7 +382,8 @@ extension ChatViewModel {
                 minP: chatExecutionParameters["min_p"] as? Double ?? chatProfile.doubleParameterDefault("min_p", fallback: 0),
                 repetitionPenalty: chatExecutionParameters["repetition_penalty"] as? Double ?? chatProfile.doubleParameterDefault("repetition_penalty", fallback: 1.0),
                 chatTemplateKwargs: chatTemplateKwargs,
-                tools: nil
+                tools: nil,
+                parameters: requestParameters
             )
 
             let stream = try await vlmExecutor.execute(request: request)

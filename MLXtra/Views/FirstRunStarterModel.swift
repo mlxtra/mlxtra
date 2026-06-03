@@ -71,6 +71,6 @@ struct FirstRunStarterModel: Identifiable {
             return lhsFit.sortRank < rhsFit.sortRank
         }
 
-        return lhs.downloadSizeGB < rhs.downloadSizeGB
+        return lhs.totalDownloadSizeGB < rhs.totalDownloadSizeGB
     }
 }

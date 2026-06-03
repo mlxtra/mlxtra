@@ -90,7 +90,7 @@ struct SettingsView: View {
         .alert(item: $removalCandidate) { model in
             Alert(
                 title: Text("Remove \(model.name)?"),
-                message: Text("This frees about \(formatSize(model.downloadSizeGB)). You can download it again later."),
+                message: Text("This frees about \(formatSize(model.totalDownloadSizeGB)). You can download it again later."),
                 primaryButton: .destructive(Text("Remove Model")) {
                     Task {
                         await downloadManager.remove(model)
@@ -525,7 +525,7 @@ struct SettingsView: View {
     private var downloadedSizeGB: Double {
         allModels
             .filter { downloadManager.state(for: $0) == .downloaded }
-            .reduce(0) { $0 + $1.downloadSizeGB }
+            .reduce(0) { $0 + $1.totalDownloadSizeGB }
     }
 
     private func defaultModelId(for mode: SettingsModelMode) -> String? {

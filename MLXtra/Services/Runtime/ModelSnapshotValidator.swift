@@ -1,6 +1,33 @@
 import Foundation
 
 extension RuntimeManager {
+    nonisolated static func downloadedSnapshotPath(
+        modelId: String,
+        revision: String = "main",
+        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
+    ) -> URL? {
+        let modelCachePath = modelCachePath(modelId: modelId, huggingFaceCacheRoot: huggingFaceCacheRoot)
+        let snapshotsPath = modelCachePath.appendingPathComponent("snapshots")
+        guard FileManager.default.fileExists(atPath: snapshotsPath.path) else {
+            return nil
+        }
+
+        for snapshotPath in snapshotCandidates(
+            modelCachePath: modelCachePath,
+            snapshotsPath: snapshotsPath,
+            revision: revision
+        ) {
+            if let nativeStatus = nativeSnapshotStorageStatus(snapshotPath),
+               nativeStatus == .downloaded {
+                return snapshotPath
+            }
+            if snapshotContainsModelFiles(snapshotPath) {
+                return snapshotPath
+            }
+        }
+        return nil
+    }
+
     nonisolated static func nativeSnapshotStorageStatus(_ snapshotPath: URL) -> ModelStorageStatus? {
         let inProgressURL = snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
         if FileManager.default.fileExists(atPath: inProgressURL.path) {

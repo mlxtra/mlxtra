@@ -125,8 +125,22 @@ final class VLMResponseEventParser: @unchecked Sendable {
             promptTokensPerSecond: bridgeDouble(performance?["prompt_tokens_per_second"]),
             generationTokensPerSecond: bridgeDouble(performance?["generation_tokens_per_second"])
                 ?? bridgeDouble(performance?["tokens_per_second"]),
-            peakMemoryGB: bridgeDouble(performance?["peak_memory_gb"])
+            peakMemoryGB: bridgeDouble(performance?["peak_memory_gb"]),
+            accelerationState: accelerationState(from: json)
         )
+    }
+
+    private static func accelerationState(from json: BridgeJSONMessage) -> GenerationAccelerationState? {
+        guard let acceleration = json["acceleration"] as? [String: Any] else { return nil }
+        if let state = acceleration["state"] as? String {
+            return GenerationAccelerationState(rawValue: state)
+        }
+
+        guard (acceleration["requested"] as? Bool) == true else { return nil }
+        if (acceleration["active"] as? Bool) == true {
+            return .active
+        }
+        return .unavailable
     }
 
     private static func executionToolCall(from dict: [String: Any]) -> ExecutionToolCall? {

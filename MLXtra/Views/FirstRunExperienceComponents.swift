@@ -49,7 +49,7 @@ struct FirstRunBestChatModelView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                Text("Recommended for local Chat on this Mac. Download size \(formatSize(item.model.downloadSizeGB)); memory estimate \(memoryEstimateLabel).")
+                Text("Recommended for local Chat on this Mac. Download size \(formatSize(item.model.totalDownloadSizeGB)); memory estimate \(memoryEstimateLabel).")
                     .font(MLXtraDesignSystem.Typography.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -207,7 +207,7 @@ struct FirstRunStarterModelButton: View {
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
-                        Text(formatSize(item.model.downloadSizeGB))
+                        Text(formatSize(item.model.totalDownloadSizeGB))
                             .font(MLXtraDesignSystem.Typography.microMedium)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)

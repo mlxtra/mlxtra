@@ -323,7 +323,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set("", forKey: ModelSelectionStore.chatKey)
-        let downloadedProfile = try XCTUnwrap(testVisionProfiles.last)
+        let downloadedProfile = try visionProfile("mlx-community/Qwen3.5-2B-MLX-4bit")
         let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [downloadedProfile.modelId])
         let viewModel = ChatViewModel(
             chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
@@ -344,8 +344,8 @@ final class ChatViewModelLogicTests: XCTestCase {
     func testDownloadedDefaultDoesNotOverrideStoredDownloadedVisionSelection() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let storedProfile = try XCTUnwrap(testVisionProfiles.last)
-        let downloadedProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != storedProfile.modelId })
+        let storedProfile = try visionProfile("mlx-community/gemma-4-e2b-it-4bit")
+        let downloadedProfile = try visionProfile("mlx-community/Qwen3.5-2B-MLX-4bit")
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(storedProfile.modelId, for: .vision)
         XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), storedProfile.modelId)
         let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [
@@ -371,8 +371,8 @@ final class ChatViewModelLogicTests: XCTestCase {
     func testDownloadedDefaultReplacesStoredMissingVisionSelection() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let storedMissingProfile = try XCTUnwrap(testVisionProfiles.last)
-        let downloadedProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != storedMissingProfile.modelId })
+        let storedMissingProfile = try visionProfile("mlx-community/gemma-4-e2b-it-4bit")
+        let downloadedProfile = try visionProfile("mlx-community/Qwen3.5-2B-MLX-4bit")
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(storedMissingProfile.modelId, for: .vision)
         XCTAssertEqual(defaults.string(forKey: ModelSelectionStore.chatKey), storedMissingProfile.modelId)
         let runtimeManager = DefaultSelectionRuntimeManager(downloadedModelIds: [downloadedProfile.modelId])
@@ -522,8 +522,8 @@ final class ChatViewModelLogicTests: XCTestCase {
     func testLaunchPreloadCancelsWhenModelSelectionChangesBeforeDelay() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let profile = try XCTUnwrap(testVisionProfiles.first)
-        let alternateProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != profile.modelId })
+        let profile = try visionProfile("mlx-community/Qwen3.5-2B-MLX-4bit")
+        let alternateProfile = try visionProfile("mlx-community/Qwen3.6-35B-A3B-4bit")
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [
@@ -1752,6 +1752,12 @@ final class ChatViewModelLogicTests: XCTestCase {
 
     private var testVisionProfiles: [ModelCapabilityProfile] {
         ModelCapabilityProfile.sortedProfiles(for: .vision)
+    }
+
+    private func visionProfile(_ modelId: String) throws -> ModelCapabilityProfile {
+        let profile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: modelId))
+        XCTAssertEqual(profile.modality, .vision)
+        return profile
     }
 }
 

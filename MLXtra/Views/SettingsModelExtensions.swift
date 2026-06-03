@@ -51,6 +51,9 @@ extension ModelDownloadManager.DownloadState {
     var recoveryActionTitle: String {
         switch self {
         case .failed:
+            if isUpdateRequiredFailure {
+                return "Update"
+            }
             return isRepairableFailure ? "Repair" : "Retry"
         case .notDownloaded:
             return "Download"
@@ -64,6 +67,9 @@ extension ModelDownloadManager.DownloadState {
     var recoveryActionIcon: String {
         switch self {
         case .failed:
+            if isUpdateRequiredFailure {
+                return "arrow.triangle.2.circlepath"
+            }
             return isRepairableFailure ? "wrench.and.screwdriver" : "arrow.clockwise"
         case .notDownloaded:
             return "arrow.down.circle"
@@ -75,11 +81,17 @@ extension ModelDownloadManager.DownloadState {
     }
 
     var failureStatusTitle: String {
-        isRepairableFailure ? "Needs repair" : "Failed"
+        if isUpdateRequiredFailure {
+            return "Update needed"
+        }
+        return isRepairableFailure ? "Needs repair" : "Failed"
     }
 
     var failureStatusIcon: String {
-        isRepairableFailure ? "wrench.and.screwdriver.fill" : "exclamationmark.triangle.fill"
+        if isUpdateRequiredFailure {
+            return "arrow.triangle.2.circlepath"
+        }
+        return isRepairableFailure ? "wrench.and.screwdriver.fill" : "exclamationmark.triangle.fill"
     }
 
     var failureTint: Color {
@@ -140,6 +152,9 @@ extension ModelDownloadManager.DownloadState {
         case .notDownloaded:
             return "missing"
         case .failed:
+            if isUpdateRequiredFailure {
+                return "update"
+            }
             return isRepairableFailure ? "repair" : "failed"
         }
     }

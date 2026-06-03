@@ -63,6 +63,6 @@ extension RuntimeManager {
     }
 
     func estimatedModelSize(modelId: String) -> Double {
-        ModelCapabilityProfile.embeddedProfile(modelId: modelId)?.downloadSizeGB ?? 5.0
+        ModelCapabilityProfile.embeddedProfile(modelId: modelId)?.totalDownloadSizeGB ?? 5.0
     }
 }

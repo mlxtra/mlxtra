@@ -20,6 +20,34 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertEqual(model.modelId, "org/test-model")
         XCTAssertEqual(model.modality, .vision)
         XCTAssertEqual(model.downloadSizeGB, 5.0)
+        XCTAssertEqual(model.totalDownloadSizeGB, 5.0)
+    }
+
+    func testDownloadableModelTotalSizeIncludesAcceleration() {
+        let model = DownloadableModel(
+            id: "test-id",
+            name: "Test Model",
+            subtitle: "Test subtitle",
+            modelId: "org/test-model",
+            modality: .vision,
+            downloadSizeGB: 5.0,
+            acceleration: ModelAcceleration(modelId: "org/test-drafter", downloadSizeGB: 0.25)
+        )
+
+        XCTAssertEqual(model.totalDownloadSizeGB, 5.25)
+        XCTAssertEqual(model.snapshotRequirements.map(\.modelId), ["org/test-model", "org/test-drafter"])
+    }
+
+    func testUpdateRequiredFailureUsesUpdateAction() {
+        let state = ModelDownloadManager.DownloadState.failed(
+            "Model update required: acceleration files are missing. Update will download the included acceleration files."
+        )
+
+        XCTAssertTrue(state.isUpdateRequiredFailure)
+        XCTAssertTrue(state.isRepairableFailure)
+        XCTAssertEqual(state.failureStatusTitle, "Update needed")
+        XCTAssertEqual(state.recoveryActionTitle, "Update")
+        XCTAssertEqual(state.accessibilityKey, "update")
     }
 
     func testDownloadableModelEquatable() {

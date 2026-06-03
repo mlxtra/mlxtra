@@ -363,16 +363,33 @@ final class ModelDownloadManager: ObservableObject {
 
     private func runSnapshotDownload(model: DownloadableModel, downloadToken: UUID) async throws {
         let modelId = model.id
-        let repoId = model.source.downloadRepository ?? model.modelId
-        let revision = model.source.revision ?? "main"
-
-        try await nativeDownloader.downloadHuggingFaceSnapshot(
-            repoID: repoId,
-            revision: revision,
-            cacheRoot: huggingFaceCacheRoot
-        ) { [weak self] progress in
-            await self?.handleNativeDownloadProgress(progress, modelId: modelId, downloadToken: downloadToken)
+        for requirement in model.snapshotRequirements {
+            try Task.checkCancellation()
+            if Self.snapshotRequirementIsAlreadyDownloaded(
+                requirement,
+                huggingFaceCacheRoot: huggingFaceCacheRoot
+            ) {
+                continue
+            }
+            try await nativeDownloader.downloadHuggingFaceSnapshot(
+                repoID: requirement.modelId,
+                revision: requirement.revision,
+                cacheRoot: huggingFaceCacheRoot
+            ) { [weak self] progress in
+                await self?.handleNativeDownloadProgress(progress, modelId: modelId, downloadToken: downloadToken)
+            }
         }
+    }
+
+    private nonisolated static func snapshotRequirementIsAlreadyDownloaded(
+        _ requirement: ModelSnapshotRequirement,
+        huggingFaceCacheRoot: URL
+    ) -> Bool {
+        RuntimeManager.downloadedSnapshotPath(
+            modelId: requirement.modelId,
+            revision: requirement.revision,
+            huggingFaceCacheRoot: huggingFaceCacheRoot
+        ) != nil
     }
 
     private func handleDownloadFailure(

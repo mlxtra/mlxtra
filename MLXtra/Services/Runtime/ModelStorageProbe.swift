@@ -106,11 +106,49 @@ extension RuntimeManager {
             )
         }
 
-        return huggingFaceModelStorageStatus(
-            modelId: model.source.downloadRepository ?? model.modelId,
-            revision: model.source.revision ?? "main",
+        return huggingFacePackageStorageStatus(
+            requirements: model.snapshotRequirements,
             huggingFaceCacheRoot: huggingFaceCacheRoot
         )
+    }
+
+    private nonisolated static func huggingFacePackageStorageStatus(
+        requirements: [ModelSnapshotRequirement],
+        huggingFaceCacheRoot: URL
+    ) -> ModelStorageStatus {
+        guard let baseRequirement = requirements.first(where: { $0.purpose == .base }) else {
+            return .incomplete("Model package is missing base snapshot metadata.")
+        }
+
+        switch huggingFaceModelStorageStatus(
+            modelId: baseRequirement.modelId,
+            revision: baseRequirement.revision,
+            huggingFaceCacheRoot: huggingFaceCacheRoot
+        ) {
+        case .downloaded:
+            break
+        case .missing:
+            return .missing
+        case .incomplete(let message):
+            return .incomplete(message)
+        }
+
+        for requirement in requirements where requirement.purpose == .acceleration {
+            switch huggingFaceModelStorageStatus(
+                modelId: requirement.modelId,
+                revision: requirement.revision,
+                huggingFaceCacheRoot: huggingFaceCacheRoot
+            ) {
+            case .downloaded:
+                continue
+            case .missing:
+                return .incomplete("Model update required: acceleration files are missing. Update will download the included acceleration files.")
+            case .incomplete(let message):
+                return .incomplete("Model update required: acceleration files are incomplete. Update will verify the included acceleration files. \(message)")
+            }
+        }
+
+        return .downloaded
     }
 
     private nonisolated static func aceStepModelStorageStatus(

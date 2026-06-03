@@ -430,7 +430,7 @@ extension ChatViewModel {
     }
 
     func modelDownloadRequiredMessage(for model: DownloadableModel, operation: String) -> String {
-        "Model download required: \(operation) needs \(model.name) (\(String(format: "%.1f", model.downloadSizeGB)) GB)."
+        "Model download required: \(operation) needs \(model.name) (\(String(format: "%.1f", model.totalDownloadSizeGB)) GB)."
     }
 
     func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {

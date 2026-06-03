@@ -466,6 +466,13 @@ private struct GenerationMetricsLabel: View {
         return parts.joined(separator: " · ")
     }
 
+    private var accessibilitySummary: String {
+        if let accelerationState = metrics.accelerationState {
+            return "\(summary). \(accelerationState.displayText)"
+        }
+        return summary
+    }
+
     var body: some View {
         HStack(spacing: MLXtraDesignSystem.Spacing.xs) {
             Image(systemName: "speedometer")
@@ -476,10 +483,38 @@ private struct GenerationMetricsLabel: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .accessibilityIdentifier("message.performanceMetrics")
+
+            if let accelerationState = metrics.accelerationState {
+                Image(systemName: accelerationIcon(for: accelerationState))
+                    .font(.system(size: MLXtraDesignSystem.Icon.micro, weight: .semibold))
+                    .foregroundStyle(accelerationTint(for: accelerationState))
+                    .help(accelerationState.displayText)
+                    .accessibilityIdentifier("message.accelerationState")
+            }
         }
         .foregroundStyle(.tertiary)
-        .help(summary)
-        .accessibilityLabel(summary)
+        .help(accessibilitySummary)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private func accelerationIcon(for state: GenerationAccelerationState) -> String {
+        switch state {
+        case .active:
+            return "bolt.fill"
+        case .fallback, .unavailable:
+            return "bolt.slash.fill"
+        }
+    }
+
+    private func accelerationTint(for state: GenerationAccelerationState) -> Color {
+        switch state {
+        case .active:
+            return .green
+        case .fallback:
+            return .orange
+        case .unavailable:
+            return .secondary
+        }
     }
 
     private func formatSeconds(_ seconds: TimeInterval) -> String {

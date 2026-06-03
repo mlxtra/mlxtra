@@ -76,7 +76,8 @@ struct ChatStreamPerformanceTracker {
             startedAt: startedAt,
             firstOutputAt: firstOutputAt,
             completedAt: completedAt,
-            outputTokenCount: outputTokenCount(for: usage)
+            outputTokenCount: outputTokenCount(for: usage),
+            accelerationState: usage.accelerationState
         )
     }
 
@@ -89,7 +90,8 @@ struct ChatStreamPerformanceTracker {
             firstOutputAt: firstOutputAt,
             completedAt: completedAt,
             outputTokenCount: outputTokenCount(for: usage),
-            backendTokensPerSecond: usage.tokensPerSecond
+            backendTokensPerSecond: usage.tokensPerSecond,
+            accelerationState: usage.accelerationState
         )
     }
 

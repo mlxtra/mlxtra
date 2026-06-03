@@ -79,7 +79,7 @@ struct ModelManagerRow: View {
             HStack(spacing: 7) {
                 readinessBadge
                 recommendationBadge
-                Text(formatSize(model.downloadSizeGB))
+                Text(formatSize(model.totalDownloadSizeGB))
                     .font(MLXtraDesignSystem.Typography.microMedium)
                     .foregroundStyle(.secondary)
             }
@@ -110,6 +110,10 @@ struct ModelManagerRow: View {
                 ModelDetailLine(label: "Backend", value: model.backend.displayName)
                 ModelDetailLine(label: "Runtime", value: "Runtime \(model.runtime.minVersion)+")
                 ModelDetailLine(label: "Memory", value: model.estimatedMemoryGB.map(formatSize) ?? "Unknown")
+                if let acceleration = model.acceleration {
+                    ModelDetailLine(label: "Acceleration", value: "Included, +\(formatSize(acceleration.downloadSizeGB))")
+                    ModelDetailLine(label: "Acceleration Source", value: acceleration.downloadRepository)
+                }
                 ModelDetailLine(label: "Storage", value: storageLabel)
             }
             .padding(.top, 6)
@@ -372,7 +376,7 @@ struct ModelManagerRow: View {
                 .controlSize(.small)
             }
             .accessibilityIdentifier(
-                failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
+                "settings.modelState.\(failedState.accessibilityKey)"
             )
         }
     }

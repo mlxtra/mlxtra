@@ -26,12 +26,13 @@ struct ChatGenerationRequest {
     }
 
     func executionParameters(for profile: ModelCapabilityProfile) -> [String: Any] {
-        var parameters = parametersByModelId[profile.modelId] ?? [:]
-        let runtimeOptions = profile.runtimeOptions?.executionDictionary ?? [:]
-        if !runtimeOptions.isEmpty {
-            parameters["runtimeOptions"] = runtimeOptions
-        }
-        return parameters
+        profile.executionParameters(merging: parametersByModelId[profile.modelId] ?? [:])
+    }
+
+    func runtimeExecutionParameters(for profile: ModelCapabilityProfile) -> [String: Any]? {
+        let runtimeOptions = profile.runtimeExecutionOptions()
+        guard !runtimeOptions.isEmpty else { return nil }
+        return ["runtimeOptions": runtimeOptions]
     }
 
     func chatTemplateKwargs(for profile: ModelCapabilityProfile) -> [String: Any]? {

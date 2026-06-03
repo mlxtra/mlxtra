@@ -214,12 +214,14 @@ final class ChatAndMessageTests: XCTestCase {
             firstOutputAt: firstOutputAt,
             completedAt: completedAt,
             outputTokenCount: 10,
-            backendTokensPerSecond: 4.5
+            backendTokensPerSecond: 4.5,
+            accelerationState: .active
         )
 
         XCTAssertEqual(metrics.timeToFirstToken, 1)
         XCTAssertEqual(metrics.outputTokenCount, 10)
         XCTAssertEqual(metrics.tokensPerSecond, 4.5)
+        XCTAssertEqual(metrics.accelerationState, .active)
     }
 
     func testChatStreamPerformanceTrackerFallsBackToObservedTokenEvents() {
@@ -249,7 +251,8 @@ final class ChatAndMessageTests: XCTestCase {
             usage: TokenUsage(
                 promptTokens: 4,
                 completionTokens: 8,
-                generationTokensPerSecond: 12.5
+                generationTokensPerSecond: 12.5,
+                accelerationState: .fallback
             ),
             completedAt: Date(timeIntervalSince1970: 111)
         )
@@ -257,7 +260,8 @@ final class ChatAndMessageTests: XCTestCase {
             usage: TokenUsage(
                 promptTokens: 4,
                 completionTokens: 8,
-                generationTokensPerSecond: 12.5
+                generationTokensPerSecond: 12.5,
+                accelerationState: .fallback
             ),
             completedAt: Date(timeIntervalSince1970: 111)
         )
@@ -265,7 +269,9 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertEqual(metrics.timeToFirstToken, 1)
         XCTAssertEqual(metrics.outputTokenCount, 8)
         XCTAssertEqual(metrics.tokensPerSecond, 12.5)
+        XCTAssertEqual(metrics.accelerationState, .fallback)
         XCTAssertEqual(appMeasured.tokensPerSecond, 0.8)
+        XCTAssertEqual(appMeasured.accelerationState, .fallback)
     }
 
     func testMessageDecodingWithLegacyToolCallKey() throws {

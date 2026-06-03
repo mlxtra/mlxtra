@@ -124,25 +124,45 @@ enum ExecutionEvent {
     case modelLoadProgress(ModelLoadProgress)
 }
 
+enum GenerationAccelerationState: String, Codable, Equatable {
+    case active
+    case fallback
+    case unavailable
+
+    var displayText: String {
+        switch self {
+        case .active:
+            return "Acceleration active"
+        case .fallback:
+            return "Acceleration fallback"
+        case .unavailable:
+            return "Acceleration unavailable"
+        }
+    }
+}
+
 struct TokenUsage {
     let promptTokens: Int
     let completionTokens: Int
     let promptTokensPerSecond: Double?
     let generationTokensPerSecond: Double?
     let peakMemoryGB: Double?
+    let accelerationState: GenerationAccelerationState?
 
     init(
         promptTokens: Int,
         completionTokens: Int,
         promptTokensPerSecond: Double? = nil,
         generationTokensPerSecond: Double? = nil,
-        peakMemoryGB: Double? = nil
+        peakMemoryGB: Double? = nil,
+        accelerationState: GenerationAccelerationState? = nil
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.promptTokensPerSecond = promptTokensPerSecond
         self.generationTokensPerSecond = generationTokensPerSecond
         self.peakMemoryGB = peakMemoryGB
+        self.accelerationState = accelerationState
     }
     
     var totalTokens: Int { promptTokens + completionTokens }

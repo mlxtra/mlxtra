@@ -2,12 +2,31 @@ import Combine
 import Foundation
 
 struct ReleaseChannelManifest: Codable, Equatable {
+    static let localChannelURLEnvironmentKey = "MLXTRA_STABLE_CHANNEL_URL"
+    private static let stableChannelURL = URL(string: "https://github.com/mlxtra/mlxtra/releases/download/stable/stable-channel.json")!
+
     let schemaVersion: Int
     let channel: String
     let catalog: CatalogReleaseAsset
     let runtimes: [RuntimeReleaseAsset]
 
-    static let defaultChannelURL = URL(string: "https://github.com/mlxtra/mlxtra/releases/download/stable/stable-channel.json")!
+    static var defaultChannelURL: URL {
+        localChannelURLFromEnvironment() ?? stableChannelURL
+    }
+
+    static func localChannelURLFromEnvironment(
+        _ environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL? {
+        guard let rawValue = environment[localChannelURLEnvironmentKey]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return nil
+        }
+        if let url = URL(string: rawValue), url.scheme != nil {
+            return url
+        }
+        return URL(fileURLWithPath: (rawValue as NSString).expandingTildeInPath)
+    }
 }
 
 struct CatalogReleaseAsset: Codable, Equatable {
@@ -136,17 +155,20 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
     init(
         fileManager: FileManager = .default,
         bundle: Bundle? = nil,
+        cacheDirectory: URL? = nil,
         loadCachedCatalog: Bool = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
         loadBundledCatalog: Bool = true
     ) {
         let initialCatalog = Self.loadInitialCatalog(
             fileManager: fileManager,
             bundle: bundle,
+            cacheDirectory: cacheDirectory,
             loadCachedCatalog: loadCachedCatalog,
             loadBundledCatalog: loadBundledCatalog
         )
         self.fileManager = fileManager
         self.bundle = bundle
+        self.cacheDirectory = cacheDirectory
         self.catalog = initialCatalog
         self.catalogSnapshot = initialCatalog
     }
@@ -160,12 +182,13 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
         channelURL: URL = ReleaseChannelManifest.defaultChannelURL
     ) async {
         do {
-            guard channelURL.scheme?.lowercased() == "https" else {
+            let localFilesAllowed = channelURL.isFileURL
+            guard Self.isAllowedReleaseMetadataURL(channelURL, localFilesAllowed: true) else {
                 throw ModelCatalogError.invalidReleaseURL(channelURL)
             }
             let channelData = try await Self.fetchValidatedData(from: channelURL)
             let channel = try JSONDecoder.catalogDecoder.decode(ReleaseChannelManifest.self, from: channelData)
-            guard channel.catalog.url.scheme?.lowercased() == "https" else {
+            guard Self.isAllowedReleaseMetadataURL(channel.catalog.url, localFilesAllowed: localFilesAllowed) else {
                 throw ModelCatalogError.invalidReleaseURL(channel.catalog.url)
             }
             let catalogData = try await Self.fetchValidatedData(from: channel.catalog.url)
@@ -208,6 +231,7 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
 
     private let fileManager: FileManager
     private let bundle: Bundle?
+    private let cacheDirectory: URL?
     private let catalogLock = NSLock()
     private var catalogSnapshot: ModelCatalog
 
@@ -220,6 +244,10 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
     }
 
     private static func fetchValidatedData(from url: URL) async throws -> Data {
+        if url.isFileURL {
+            return try Data(contentsOf: url)
+        }
+
         let (data, response) = try await URLSession.shared.data(from: url)
         guard let httpResponse = response as? HTTPURLResponse else {
             return data
@@ -230,15 +258,26 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
         return data
     }
 
+    private static func isAllowedReleaseMetadataURL(
+        _ url: URL,
+        localFilesAllowed: Bool
+    ) -> Bool {
+        if url.scheme?.lowercased() == "https" {
+            return true
+        }
+        return localFilesAllowed && url.isFileURL
+    }
+
     private static func loadInitialCatalog(
         fileManager: FileManager,
         bundle: Bundle?,
+        cacheDirectory: URL?,
         loadCachedCatalog: Bool,
         loadBundledCatalog: Bool
     ) -> ModelCatalog {
         let cachedCatalog: ModelCatalog? = {
             guard loadCachedCatalog,
-                  let data = try? Data(contentsOf: cachedCatalogURL(fileManager: fileManager)) else {
+                  let data = try? Data(contentsOf: cachedCatalogURL(fileManager: fileManager, cacheDirectory: cacheDirectory)) else {
                 return nil
             }
             return try? decodeCatalog(data: data)
@@ -293,7 +332,27 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
             guard seenModelIds.insert(profile.modelId).inserted else {
                 throw ModelCatalogError.duplicateModelId(profile.modelId)
             }
+            try validateAcceleration(profile.acceleration, profileId: profile.id)
             try validateParameters(profile.parameters, profileId: profile.id)
+        }
+    }
+
+    private static func validateAcceleration(
+        _ acceleration: ModelAcceleration?,
+        profileId: String
+    ) throws {
+        guard let acceleration else { return }
+        guard !acceleration.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ModelCatalogError.invalidParameter("\(profileId) has an empty acceleration model id")
+        }
+        guard acceleration.downloadSizeGB.isFinite, acceleration.downloadSizeGB > 0 else {
+            throw ModelCatalogError.invalidParameter("\(profileId) has an invalid acceleration download size")
+        }
+        guard !acceleration.source.usesComponentBundle else {
+            throw ModelCatalogError.invalidParameter("\(profileId) acceleration must use a Hugging Face snapshot")
+        }
+        if let draftBlockSize = acceleration.draftBlockSize, draftBlockSize <= 0 {
+            throw ModelCatalogError.invalidParameter("\(profileId) has an invalid acceleration draft block size")
         }
     }
 
@@ -380,12 +439,16 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
     }
 
     private func saveCachedCatalog(_ data: Data) throws {
-        let url = Self.cachedCatalogURL(fileManager: fileManager)
+        let url = Self.cachedCatalogURL(fileManager: fileManager, cacheDirectory: cacheDirectory)
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
     }
 
-    private static func cachedCatalogURL(fileManager: FileManager) -> URL {
+    private static func cachedCatalogURL(fileManager: FileManager, cacheDirectory: URL?) -> URL {
+        if let cacheDirectory {
+            return cacheDirectory.appendingPathComponent("model-catalog.json")
+        }
+
         let baseURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.homeDirectoryForCurrentUser
         return baseURL

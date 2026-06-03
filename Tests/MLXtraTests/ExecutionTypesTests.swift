@@ -210,12 +210,14 @@ final class ExecutionTypesTests: XCTestCase {
             completionTokens: 50,
             promptTokensPerSecond: 250,
             generationTokensPerSecond: 25,
-            peakMemoryGB: 3.5
+            peakMemoryGB: 3.5,
+            accelerationState: .active
         )
 
         XCTAssertEqual(usage.promptTokensPerSecond, 250)
         XCTAssertEqual(usage.tokensPerSecond, 25)
         XCTAssertEqual(usage.peakMemoryGB, 3.5)
+        XCTAssertEqual(usage.accelerationState, .active)
     }
 
     func testTokenUsageZeroTokens() {

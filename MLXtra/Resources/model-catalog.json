@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "2026.06.03.1",
-  "minAppVersion": "1.0.10",
+  "catalogVersion": "2026.06.03.2",
+  "minAppVersion": "1.0.12",
   "models": [
     {
       "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -22,8 +22,18 @@
         "revision": "main",
         "components": []
       },
+      "acceleration": {
+        "modelId": "mlx-community/Qwen3.5-9B-MTP-4bit",
+        "downloadSizeGB": 0.15,
+        "source": {
+          "type": "hugging_face_snapshot",
+          "repo": "mlx-community/Qwen3.5-9B-MTP-4bit",
+          "revision": "main",
+          "components": []
+        }
+      },
       "runtime": {
-        "minVersion": "0.1.0",
+        "minVersion": "0.1.6",
         "compatibilityApi": 1
       },
       "runtimeOptions": {
@@ -147,8 +157,18 @@
         "revision": "main",
         "components": []
       },
+      "acceleration": {
+        "modelId": "mlx-community/gemma-4-E4B-it-assistant-bf16",
+        "downloadSizeGB": 0.19,
+        "source": {
+          "type": "hugging_face_snapshot",
+          "repo": "mlx-community/gemma-4-E4B-it-assistant-bf16",
+          "revision": "main",
+          "components": []
+        }
+      },
       "runtime": {
-        "minVersion": "0.1.0",
+        "minVersion": "0.1.6",
         "compatibilityApi": 1
       },
       "ranking": {
@@ -390,8 +410,18 @@
         "revision": "main",
         "components": []
       },
+      "acceleration": {
+        "modelId": "mlx-community/gemma-4-E2B-it-assistant-bf16",
+        "downloadSizeGB": 0.19,
+        "source": {
+          "type": "hugging_face_snapshot",
+          "repo": "mlx-community/gemma-4-E2B-it-assistant-bf16",
+          "revision": "main",
+          "components": []
+        }
+      },
       "runtime": {
-        "minVersion": "0.1.0",
+        "minVersion": "0.1.6",
         "compatibilityApi": 1
       },
       "ranking": {
@@ -430,6 +460,16 @@
         "repo": "mlx-community/gemma-4-12B-it-4bit",
         "revision": "main",
         "components": []
+      },
+      "acceleration": {
+        "modelId": "mlx-community/gemma-4-12B-it-assistant-bf16",
+        "downloadSizeGB": 1.76,
+        "source": {
+          "type": "hugging_face_snapshot",
+          "repo": "mlx-community/gemma-4-12B-it-assistant-bf16",
+          "revision": "main",
+          "components": []
+        }
       },
       "runtime": {
         "minVersion": "0.1.6",
@@ -479,8 +519,18 @@
         "revision": "main",
         "components": []
       },
+      "acceleration": {
+        "modelId": "mlx-community/gemma-4-26B-A4B-it-assistant-bf16",
+        "downloadSizeGB": 0.87,
+        "source": {
+          "type": "hugging_face_snapshot",
+          "repo": "mlx-community/gemma-4-26B-A4B-it-assistant-bf16",
+          "revision": "main",
+          "components": []
+        }
+      },
       "runtime": {
-        "minVersion": "0.1.0",
+        "minVersion": "0.1.6",
         "compatibilityApi": 1
       },
       "ranking": {
@@ -520,8 +570,18 @@
         "revision": "main",
         "components": []
       },
+      "acceleration": {
+        "modelId": "mlx-community/Qwen3.6-27B-MTP-4bit",
+        "downloadSizeGB": 0.25,
+        "source": {
+          "type": "hugging_face_snapshot",
+          "repo": "mlx-community/Qwen3.6-27B-MTP-4bit",
+          "revision": "main",
+          "components": []
+        }
+      },
       "runtime": {
-        "minVersion": "0.1.0",
+        "minVersion": "0.1.6",
         "compatibilityApi": 1
       },
       "runtimeOptions": {
@@ -568,8 +628,18 @@
         "revision": "main",
         "components": []
       },
+      "acceleration": {
+        "modelId": "mlx-community/Qwen3.6-35B-A3B-MTP-4bit",
+        "downloadSizeGB": 0.49,
+        "source": {
+          "type": "hugging_face_snapshot",
+          "repo": "mlx-community/Qwen3.6-35B-A3B-MTP-4bit",
+          "revision": "main",
+          "components": []
+        }
+      },
       "runtime": {
-        "minVersion": "0.1.0",
+        "minVersion": "0.1.6",
         "compatibilityApi": 1
       },
       "runtimeOptions": {

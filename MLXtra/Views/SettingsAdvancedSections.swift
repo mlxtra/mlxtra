@@ -236,7 +236,7 @@ struct ModelDownloadRow: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
 
-                Text("\(formatSize(model.downloadSizeGB)) - \(storageLabel)")
+                Text("\(formatSize(model.totalDownloadSizeGB)) - \(storageLabel)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 
@@ -434,11 +434,11 @@ struct ModelDownloadRow: View {
                         Label(failedState.recoveryActionTitle, systemImage: failedState.recoveryActionIcon)
                     }
                     .accessibilityIdentifier(
-                        failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
+                        "settings.modelState.\(failedState.accessibilityKey)"
                     )
                 }
                 .accessibilityIdentifier(
-                    failedState.isRepairableFailure ? "settings.modelState.repair" : "settings.modelState.failed"
+                    "settings.modelState.\(failedState.accessibilityKey)"
                 )
             }
         }
@@ -488,7 +488,7 @@ struct RequiredDownloadCallout: View {
                 Text("Download needed")
                     .font(.headline)
 
-                Text("\(model.name), \(formatSize(model.downloadSizeGB))")
+                Text("\(model.name), \(formatSize(model.totalDownloadSizeGB))")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

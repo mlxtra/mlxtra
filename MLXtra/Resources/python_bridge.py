@@ -17,7 +17,7 @@ import subprocess
 import time
 import uuid
 import contextlib
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from pathlib import Path
 
 from bridge_utils import (
@@ -28,6 +28,7 @@ from bridge_utils import (
 )
 
 MODEL_REGISTRY: Dict[str, Any] = {}
+DRAFTER_MODEL_REGISTRY: Dict[str, Any] = {}
 IMAGE_MODEL_REGISTRY: Dict[str, Any] = {}
 AUDIO_MODEL_REGISTRY: Dict[str, Any] = {}
 MUSIC_MODEL_REGISTRY: Dict[str, Any] = {}
@@ -328,6 +329,7 @@ def unload_models(keep_registry: Optional[Dict[str, Any]] = None, keep_key: Opti
     removed = False
     for registry in (
         MODEL_REGISTRY,
+        DRAFTER_MODEL_REGISTRY,
         IMAGE_MODEL_REGISTRY,
         AUDIO_MODEL_REGISTRY,
         MUSIC_MODEL_REGISTRY,
@@ -411,6 +413,12 @@ def _mflux_options_from_request(request: Optional[dict]) -> dict:
     return mflux_options if isinstance(mflux_options, dict) else {}
 
 
+def _acceleration_options_from_request(request: Optional[dict]) -> dict:
+    runtime_options = _runtime_options_from_request(request)
+    acceleration_options = runtime_options.get("acceleration")
+    return acceleration_options if isinstance(acceleration_options, dict) else {}
+
+
 def _runtime_options_from_request(request: Optional[dict]) -> dict:
     if not isinstance(request, dict):
         return {}
@@ -424,6 +432,73 @@ def _runtime_options_from_request(request: Optional[dict]) -> dict:
         return {}
 
     return runtime_options
+
+
+def _positive_int(value: Any) -> Optional[int]:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _load_drafter_if_requested(
+    model_id: str,
+    request: Optional[dict] = None,
+) -> Tuple[Optional[Any], Optional[str], Optional[int]]:
+    acceleration_options = _acceleration_options_from_request(request)
+    draft_model_path = (
+        acceleration_options.get("draftModel")
+        or acceleration_options.get("draft_model")
+        or acceleration_options.get("model")
+        or acceleration_options.get("path")
+    )
+    if not draft_model_path:
+        return None, None, None
+
+    draft_model_path = str(draft_model_path)
+    draft_kind = acceleration_options.get("draftKind") or acceleration_options.get("draft_kind")
+    draft_kind = str(draft_kind) if draft_kind else None
+    draft_block_size = (
+        _positive_int(acceleration_options.get("draftBlockSize"))
+        or _positive_int(acceleration_options.get("draft_block_size"))
+    )
+    cache_key = f"{draft_model_path}:{draft_kind or 'auto'}"
+
+    if cache_key in DRAFTER_MODEL_REGISTRY:
+        draft_model, resolved_kind = DRAFTER_MODEL_REGISTRY[cache_key]
+        return draft_model, resolved_kind, draft_block_size
+
+    try:
+        from mlx_vlm.speculative.drafters import load_drafter
+
+        send_model_loading(
+            model_id,
+            "loading_acceleration",
+            backend="vlm",
+            request=request,
+            detail="Loading acceleration files",
+        )
+        draft_model, resolved_kind = load_drafter(draft_model_path, kind=draft_kind)
+        DRAFTER_MODEL_REGISTRY[cache_key] = (draft_model, resolved_kind)
+        send_model_loading(
+            model_id,
+            "acceleration_ready",
+            backend="vlm",
+            request=request,
+            detail="Acceleration ready",
+        )
+        return draft_model, resolved_kind, draft_block_size
+    except Exception as exc:
+        log_debug(f"[Python Bridge] Acceleration unavailable for {model_id}: {exc}")
+        send_model_loading(
+            model_id,
+            "acceleration_unavailable",
+            backend="vlm",
+            request=request,
+            detail="Acceleration unavailable; continuing without it",
+        )
+        return None, None, None
 
 
 def _audio_options_from_request(request: Optional[dict]) -> dict:
@@ -997,51 +1072,111 @@ def handle_chat_completion(request: dict) -> None:
         generation_tps = None
         peak_memory_gb = None
 
+        acceleration_options = _acceleration_options_from_request(request)
+        acceleration_requested = bool(
+            acceleration_options.get("draftModel")
+            or acceleration_options.get("draft_model")
+            or acceleration_options.get("model")
+            or acceleration_options.get("path")
+        )
+        acceleration_state = None
+
+        draft_model, draft_kind, draft_block_size = _load_drafter_if_requested(
+            model_id,
+            request=request,
+        )
+        if acceleration_requested:
+            acceleration_state = "active" if draft_model is not None else "unavailable"
+        generation_kwargs = {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "min_p": min_p,
+            "repetition_penalty": repetition_penalty,
+            "verbose": False,
+        }
+        if draft_model is not None:
+            generation_kwargs["draft_model"] = draft_model
+            if draft_kind:
+                generation_kwargs["draft_kind"] = draft_kind
+            if draft_block_size:
+                generation_kwargs["draft_block_size"] = draft_block_size
+
         generation_started_at = time.perf_counter()
         first_token_sent = False
-        for chunk in stream_generate(
-            model,
-            processor,
-            prompt,
-            image=images if images else None,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            min_p=min_p,
-            repetition_penalty=repetition_penalty,
-            verbose=False,
-        ):
-            token = chunk.text
-            full_response += token
-            token_buffer += token
-            prompt_tokens = chunk.prompt_tokens
-            completion_tokens = chunk.generation_tokens
-            prompt_tps = getattr(chunk, "prompt_tps", prompt_tps)
-            generation_tps = getattr(chunk, "generation_tps", generation_tps)
-            peak_memory_gb = getattr(chunk, "peak_memory", peak_memory_gb)
 
-            now = _mono()
-            if len(token_buffer) >= TOKEN_BATCH_SIZE or (now - _last_flush) >= TOKEN_BATCH_FLUSH_S:
-                if token_buffer:
-                    if not first_token_sent:
-                        send_timing(
-                            "chat.first_token",
-                            generation_started_at,
+        def consume_generation_stream(active_generation_kwargs: dict) -> None:
+            nonlocal token_buffer
+            nonlocal full_response
+            nonlocal prompt_tokens
+            nonlocal completion_tokens
+            nonlocal prompt_tps
+            nonlocal generation_tps
+            nonlocal peak_memory_gb
+            nonlocal first_token_sent
+            nonlocal _last_flush
+
+            for chunk in stream_generate(
+                model,
+                processor,
+                prompt,
+                image=images if images else None,
+                **active_generation_kwargs,
+            ):
+                token = chunk.text
+                full_response += token
+                token_buffer += token
+                prompt_tokens = chunk.prompt_tokens
+                completion_tokens = chunk.generation_tokens
+                prompt_tps = getattr(chunk, "prompt_tps", prompt_tps)
+                generation_tps = getattr(chunk, "generation_tps", generation_tps)
+                peak_memory_gb = getattr(chunk, "peak_memory", peak_memory_gb)
+
+                now = _mono()
+                if len(token_buffer) >= TOKEN_BATCH_SIZE or (now - _last_flush) >= TOKEN_BATCH_FLUSH_S:
+                    if token_buffer:
+                        if not first_token_sent:
+                            send_timing(
+                                "chat.first_token",
+                                generation_started_at,
+                                request=request,
+                                model=model_id,
+                                since_chat_request_ms=round(
+                                    (time.perf_counter() - request_started_at) * 1000, 3
+                                ),
+                            )
+                            first_token_sent = True
+                        send_json(
+                            {"type": "chat.completion.chunk",
+                             "choices": [{"delta": {"content": token_buffer}}]},
                             request=request,
-                            model=model_id,
-                            since_chat_request_ms=round(
-                                (time.perf_counter() - request_started_at) * 1000, 3
-                            ),
                         )
-                        first_token_sent = True
-                    send_json(
-                        {"type": "chat.completion.chunk",
-                         "choices": [{"delta": {"content": token_buffer}}]},
-                        request=request,
-                    )
-                    token_buffer = ""
-                    _last_flush = now
+                        token_buffer = ""
+                        _last_flush = now
+
+        try:
+            consume_generation_stream(generation_kwargs)
+        except Exception as generation_error:
+            if draft_model is None or full_response:
+                raise
+            log_debug(f"[Python Bridge] Acceleration failed during generation for {model_id}: {generation_error}")
+            send_model_loading(
+                model_id,
+                "acceleration_unavailable",
+                backend="vlm",
+                request=request,
+                detail="Acceleration unavailable; continuing without it",
+            )
+            generation_kwargs.pop("draft_model", None)
+            generation_kwargs.pop("draft_kind", None)
+            generation_kwargs.pop("draft_block_size", None)
+            DRAFTER_MODEL_REGISTRY.clear()
+            _clear_accelerator_cache()
+            generation_started_at = time.perf_counter()
+            first_token_sent = False
+            acceleration_state = "fallback"
+            consume_generation_stream(generation_kwargs)
 
         if token_buffer:
             if not first_token_sent:
@@ -1076,6 +1211,15 @@ def handle_chat_completion(request: dict) -> None:
             peak_memory_gb=peak_memory_gb,
             completion_tokens=completion_tokens,
         )
+        acceleration_payload = None
+        if acceleration_requested:
+            acceleration_payload = {
+                "requested": True,
+                "active": acceleration_state == "active",
+                "state": acceleration_state or "unavailable",
+            }
+            if draft_kind and acceleration_state == "active":
+                acceleration_payload["draft_kind"] = draft_kind
         send_timing("chat.request_total", request_started_at, request=request, model=model_id)
 
         if parsed_tool_calls:
@@ -1090,6 +1234,8 @@ def handle_chat_completion(request: dict) -> None:
             }
             if performance:
                 payload["performance"] = performance
+            if acceleration_payload:
+                payload["acceleration"] = acceleration_payload
             send_json(payload, request=request)
         else:
             payload = {
@@ -1102,6 +1248,8 @@ def handle_chat_completion(request: dict) -> None:
             }
             if performance:
                 payload["performance"] = performance
+            if acceleration_payload:
+                payload["acceleration"] = acceleration_payload
             send_json(payload, request=request)
 
     except Exception as e:

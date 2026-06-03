@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "channel": "stable",
   "catalog": {
-    "version": "2026.06.03.1",
-    "url": "https://github.com/mlxtra/mlxtra/releases/download/catalog-2026.06.03.1/model-catalog.json",
-    "sha256": "1b9955d3b9065d1506ef61930e56555d5aca91b0149944c7b54ecd05e4b12ed8",
-    "sizeBytes": 35238
+    "version": "2026.06.03.2",
+    "url": "https://github.com/mlxtra/mlxtra/releases/download/catalog-2026.06.03.2/model-catalog.json",
+    "sha256": "82ab2a073e0045fc74570f094484edbb3b1b5da57e0fe30b56df019cb4061f79",
+    "sizeBytes": 37480
   },
   "runtimes": [
     {

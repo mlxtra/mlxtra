@@ -10,12 +10,12 @@ enum ModelDownloadStorage {
             return model.source.components.map { checkpointsPath.appendingPathComponent($0) }
         }
 
-        return [
+        return model.snapshotRequirements.map {
             RuntimeManager.modelCachePath(
-                modelId: model.source.downloadRepository ?? model.modelId,
+                modelId: $0.modelId,
                 huggingFaceCacheRoot: huggingFaceCacheRoot
             )
-        ]
+        }
     }
 
     static func removeLocalFiles(
@@ -79,12 +79,12 @@ enum ModelDownloadStorage {
         if model.source.usesComponentBundle {
             roots = [checkpointsPath]
         } else {
-            roots = [
+            roots = model.snapshotRequirements.map {
                 RuntimeManager.modelCachePath(
-                    modelId: model.source.downloadRepository ?? model.modelId,
+                    modelId: $0.modelId,
                     huggingFaceCacheRoot: huggingFaceCacheRoot
                 )
-            ]
+            }
         }
 
         await Task.detached(priority: .utility) {

@@ -51,6 +51,11 @@ final class VLMResponseEventParserTests: XCTestCase {
                 "prompt_tokens_per_second": 13.5,
                 "tokens_per_second": 22.0,
                 "peak_memory_gb": 4.25
+            ],
+            "acceleration": [
+                "requested": true,
+                "active": true,
+                "state": "active"
             ]
         ]))
 
@@ -64,6 +69,28 @@ final class VLMResponseEventParserTests: XCTestCase {
         XCTAssertEqual(usage.promptTokensPerSecond, 13.5)
         XCTAssertEqual(usage.generationTokensPerSecond, 22.0)
         XCTAssertEqual(usage.peakMemoryGB, 4.25)
+        XCTAssertEqual(usage.accelerationState, .active)
+    }
+
+    func testCompletionParsesAccelerationFallbackState() throws {
+        let parser = VLMResponseEventParser(modelId: "mlx-community/test", backend: .llm)
+
+        let complete = try XCTUnwrap(parser.parse([
+            "type": "chat.completion.complete",
+            "choices": [
+                ["message": ["content": "Full response"]]
+            ],
+            "acceleration": [
+                "requested": true,
+                "active": false,
+                "state": "fallback"
+            ]
+        ]))
+
+        guard case .complete(_, let usage) = try XCTUnwrap(complete.events.first) else {
+            return XCTFail("Expected complete event")
+        }
+        XCTAssertEqual(usage.accelerationState, .fallback)
     }
 
     func testCompletionFallsBackToMessageContentWhenNoChunksWereSeen() throws {

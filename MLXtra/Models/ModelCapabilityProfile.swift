@@ -345,6 +345,86 @@ struct ModelSource: Codable, Equatable {
     }
 }
 
+enum ModelSnapshotPurpose: Equatable {
+    case base
+    case acceleration
+}
+
+struct ModelSnapshotRequirement: Equatable {
+    let modelId: String
+    let revision: String
+    let purpose: ModelSnapshotPurpose
+}
+
+struct ModelAcceleration: Codable, Equatable {
+    let modelId: String
+    let downloadSizeGB: Double
+    let source: ModelSource
+    let draftKind: String?
+    let draftBlockSize: Int?
+
+    init(
+        modelId: String,
+        downloadSizeGB: Double,
+        source: ModelSource? = nil,
+        draftKind: String? = nil,
+        draftBlockSize: Int? = nil
+    ) {
+        self.modelId = modelId
+        self.downloadSizeGB = downloadSizeGB
+        self.source = source ?? ModelSource.defaultSource(modelId: modelId)
+        self.draftKind = draftKind
+        self.draftBlockSize = draftBlockSize
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case modelId
+        case downloadSizeGB
+        case source
+        case draftKind
+        case draftBlockSize
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let modelId = try container.decode(String.self, forKey: .modelId)
+        self.init(
+            modelId: modelId,
+            downloadSizeGB: try container.decode(Double.self, forKey: .downloadSizeGB),
+            source: try container.decodeIfPresent(ModelSource.self, forKey: .source) ?? ModelSource.defaultSource(modelId: modelId),
+            draftKind: try container.decodeIfPresent(String.self, forKey: .draftKind),
+            draftBlockSize: try container.decodeIfPresent(Int.self, forKey: .draftBlockSize)
+        )
+    }
+
+    var downloadRepository: String {
+        source.downloadRepository ?? modelId
+    }
+
+    var snapshotRequirement: ModelSnapshotRequirement? {
+        guard !source.usesComponentBundle else { return nil }
+        return ModelSnapshotRequirement(
+            modelId: downloadRepository,
+            revision: source.revision ?? "main",
+            purpose: .acceleration
+        )
+    }
+
+    func executionDictionary(localModelPath: String) -> [String: Any] {
+        var options: [String: Any] = [
+            "draftModel": localModelPath,
+            "source": downloadRepository
+        ]
+        if let draftKind, !draftKind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            options["draftKind"] = draftKind
+        }
+        if let draftBlockSize, draftBlockSize > 0 {
+            options["draftBlockSize"] = draftBlockSize
+        }
+        return options
+    }
+}
+
 struct ModelRuntimeRequirement: Codable, Equatable {
     let minVersion: String
     let compatibilityApi: Int
@@ -535,6 +615,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     let source: ModelSource
     let runtime: ModelRuntimeRequirement
     let runtimeOptions: ModelRuntimeOptions?
+    let acceleration: ModelAcceleration?
     let availability: ModelAvailability?
     let ranking: ModelRanking
     let parameters: [ModelParameterDefinition]
@@ -556,6 +637,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         source: ModelSource? = nil,
         runtime: ModelRuntimeRequirement = ModelRuntimeRequirement(),
         runtimeOptions: ModelRuntimeOptions? = nil,
+        acceleration: ModelAcceleration? = nil,
         availability: ModelAvailability? = nil,
         ranking: ModelRanking = ModelRanking(),
         parameters: [ModelParameterDefinition],
@@ -576,6 +658,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         self.source = source ?? ModelSource.defaultSource(modelId: modelId)
         self.runtime = runtime
         self.runtimeOptions = runtimeOptions
+        self.acceleration = acceleration
         self.availability = availability
         self.ranking = ranking
         self.parameters = parameters
@@ -594,8 +677,56 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
             estimatedMemoryGB: estimatedMemoryGB,
             source: source,
             runtime: runtime,
-            runtimeOptions: runtimeOptions
+            runtimeOptions: runtimeOptions,
+            acceleration: acceleration
         )
+    }
+
+    var totalDownloadSizeGB: Double {
+        downloadSizeGB + (acceleration?.downloadSizeGB ?? 0)
+    }
+
+    var snapshotRequirements: [ModelSnapshotRequirement] {
+        var requirements: [ModelSnapshotRequirement] = []
+        if !source.usesComponentBundle {
+            requirements.append(ModelSnapshotRequirement(
+                modelId: source.downloadRepository ?? modelId,
+                revision: source.revision ?? "main",
+                purpose: .base
+            ))
+        }
+        if let accelerationRequirement = acceleration?.snapshotRequirement {
+            requirements.append(accelerationRequirement)
+        }
+        return requirements
+    }
+
+    func runtimeExecutionOptions(
+        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
+    ) -> [String: Any] {
+        var options = runtimeOptions?.executionDictionary ?? [:]
+        if let acceleration,
+           let snapshotRequirement = acceleration.snapshotRequirement,
+           let localPath = RuntimeManager.downloadedSnapshotPath(
+                modelId: snapshotRequirement.modelId,
+                revision: snapshotRequirement.revision,
+                huggingFaceCacheRoot: huggingFaceCacheRoot
+           )?.path {
+            options["acceleration"] = acceleration.executionDictionary(localModelPath: localPath)
+        }
+        return options
+    }
+
+    func executionParameters(
+        merging parameters: [String: Any],
+        huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
+    ) -> [String: Any] {
+        var merged = parameters
+        let runtimeOptions = runtimeExecutionOptions(huggingFaceCacheRoot: huggingFaceCacheRoot)
+        if !runtimeOptions.isEmpty {
+            merged["runtimeOptions"] = runtimeOptions
+        }
+        return merged
     }
 
     var supportsVision: Bool {
@@ -687,9 +818,14 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 
     static func bestProfile(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        runtimeManifestProvider: ((ModelCapabilityProfile) -> RuntimeManifest?)? = nil
     ) -> ModelCapabilityProfile? {
-        recommendedProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).first
+        recommendedProfiles(
+            for: modality,
+            hardwareMemoryGB: hardwareMemoryGB,
+            runtimeManifestProvider: runtimeManifestProvider
+        ).first
     }
 
     static func fallbackProfile(
@@ -705,10 +841,17 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 
     static func recommendedProfiles(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        runtimeManifestProvider: ((ModelCapabilityProfile) -> RuntimeManifest?)? = nil
     ) -> [ModelCapabilityProfile] {
         let allCandidates = profiles(for: modality)
-        let compatibleCandidates = allCandidates.filter { $0.isRuntimeCompatible() }
+        let compatibleCandidates = allCandidates.filter { profile in
+            if let runtimeManifestProvider {
+                guard let manifest = runtimeManifestProvider(profile) else { return false }
+                return profile.isRuntimeCompatible(manifest: manifest)
+            }
+            return profile.isRuntimeCompatible()
+        }
         let candidates = compatibleCandidates.isEmpty ? allCandidates : compatibleCandidates
         let comfortable = candidates.filter { $0.fit(hardwareMemoryGB: hardwareMemoryGB) == .recommended }
 
