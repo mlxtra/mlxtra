@@ -1,7 +1,7 @@
 {
   "lockVersion": 1,
   "runtime": {
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pythonVersion": "3.12.8",
     "mlxWheelPlatform": "macosx_14_0_arm64"
   },
@@ -13,7 +13,7 @@
   "pins": {
     "MLX_VERSION": "0.31.2",
     "MLX_METAL_VERSION": "0.31.2",
-    "MLX_VLM_VERSION": "0.5.0",
+    "MLX_VLM_VERSION": "0.6.1",
     "MLX_AUDIO_VERSION": "0.4.3",
     "MISAKI_VERSION": "0.9.4",
     "MFLUX_VERSION": "0.17.5",
@@ -31,7 +31,7 @@
       "mlx-metal==0.31.2"
     ],
     "mainPyPI": [
-      "mlx-vlm==0.5.0",
+      "mlx-vlm==0.6.1",
       "mlx-audio==0.4.3",
       "misaki[en]==0.9.4",
       "mflux==0.17.5",
@@ -46,7 +46,7 @@
     ],
     "main": [
       "mlx==0.31.2",
-      "mlx-vlm==0.5.0",
+      "mlx-vlm==0.6.1",
       "mlx-audio==0.4.3",
       "misaki[en]==0.9.4",
       "mflux==0.17.5",

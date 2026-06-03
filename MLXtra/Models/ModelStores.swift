@@ -261,9 +261,17 @@ struct DownloadableModel: Identifiable, Equatable {
     }
 
     var isRuntimeCompatible: Bool {
-        let manifest = RuntimeManager.activeRuntimeManifest(component: runtime.component)
+        isRuntimeCompatible(with: nil)
+    }
+
+    func isRuntimeCompatible(with manifest: RuntimeManifest?) -> Bool {
+        let manifest = manifest ?? RuntimeManager.activeRuntimeManifest(component: runtime.component)
         return runtime.isSatisfied(by: manifest)
             && (manifest?.supports(backend: backend) ?? false)
             && (manifest?.supports(runtimeOptions: runtimeOptions) ?? false)
+    }
+
+    func requiresRuntimeSetupBeforeDownload(manifest: RuntimeManifest? = nil) -> Bool {
+        !isRuntimeCompatible(with: manifest)
     }
 }

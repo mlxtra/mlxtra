@@ -61,18 +61,20 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(visionModels.count, 3)
     }
 
-    func testEmbeddedVisionModelsIncludeCatalogChatModels() {
-        let embeddedVisionModelIds = Set(DownloadableModel.embedded
-            .filter { $0.modality == .vision }
-            .map(\.modelId))
+    func testEmbeddedModelsMatchCatalogVisibleModels() throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: "MLXtra/Resources/model-catalog.json"))
+        let catalog = try ModelCatalogService.decodeCatalog(data: data, appVersion: nil)
+        let catalogModelsById = Dictionary(uniqueKeysWithValues: catalog.profiles
+            .filter(\.isCatalogVisible)
+            .map { ($0.modelId, $0.downloadableModel) })
+        let embeddedModelsById = Dictionary(uniqueKeysWithValues: DownloadableModel.embedded
+            .map { ($0.modelId, $0) })
 
-        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.5-9B-MLX-4bit"))
-        XCTAssertTrue(embeddedVisionModelIds.contains("google/gemma-4-e4b-it"))
-        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.5-2B-MLX-4bit"))
-        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/gemma-4-e2b-it-4bit"))
-        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
-        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
-        XCTAssertTrue(embeddedVisionModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
+        XCTAssertEqual(Set(embeddedModelsById.keys), Set(catalogModelsById.keys))
+        for (modelId, catalogModel) in catalogModelsById {
+            let embeddedModel = try XCTUnwrap(embeddedModelsById[modelId])
+            XCTAssertEqual(embeddedModel, catalogModel)
+        }
     }
 
     func testEmbeddedModelsContainsAllModalities() {
@@ -113,46 +115,68 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertEqual(ids.count, uniqueIds.count, "Embedded models should have unique IDs")
     }
 
-    func testEmbeddedMusicModel() {
-        let embedded = DownloadableModel.embedded
-        let musicModels = embedded.filter { $0.modality == .music }
+    func testEmbeddedModelLookupByModelId() throws {
+        let expectedModel = try XCTUnwrap(DownloadableModel.embedded.first)
+        let model = DownloadableModel.embeddedModel(modelId: expectedModel.modelId)
 
-        XCTAssertEqual(musicModels.count, 1)
-        XCTAssertEqual(musicModels.first?.id, "ACE-Step/acestep-v15-turbo-continuous")
-        XCTAssertEqual(musicModels.first?.name, "ACE-Step 1.5 Turbo")
-    }
-
-    func testEmbeddedImageModel() {
-        let embedded = DownloadableModel.embedded
-        let imageModels = embedded.filter { $0.modality == .image }
-        let imageModelIds = Set(imageModels.map(\.id))
-
-        XCTAssertEqual(imageModels.count, 2)
-        XCTAssertTrue(imageModelIds.contains("black-forest-labs/FLUX.2-klein-4B"))
-        XCTAssertTrue(imageModelIds.contains("Tongyi-MAI/Z-Image-Turbo"))
-    }
-
-    func testEmbeddedModelLookupByModelId() {
-        let model = DownloadableModel.embeddedModel(modelId: "black-forest-labs/FLUX.2-klein-4B")
-
-        XCTAssertEqual(model?.name, "FLUX.2-klein-4B")
-        XCTAssertEqual(model?.modality, .image)
+        XCTAssertEqual(model, expectedModel)
     }
 
     func testEmbeddedModelLookupReturnsNilForUnknownModel() {
         XCTAssertNil(DownloadableModel.embeddedModel(modelId: "unknown/model"))
     }
 
-    func testEmbeddedAudioModel() {
-        let embedded = DownloadableModel.embedded
-        let audioModels = embedded.filter { $0.modality == .audio }
-        let audioModelIds = Set(audioModels.map(\.id))
+    func testRuntimeSetupRequirementUsesModelRuntimeVersion() {
+        let model = DownloadableModel(
+            id: "future-model",
+            name: "Future Model",
+            subtitle: "Requires a newer runtime",
+            modelId: "org/future-model",
+            modality: .vision,
+            backend: .vlm,
+            downloadSizeGB: 1.0,
+            runtime: ModelRuntimeRequirement(minVersion: "0.1.6", compatibilityApi: 1)
+        )
+        let oldRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.5",
+            compatibilityApi: 1,
+            supportedBackends: [.vlm]
+        )
+        let newRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.6",
+            compatibilityApi: 1,
+            supportedBackends: [.vlm]
+        )
 
-        XCTAssertEqual(audioModels.count, 2)
-        XCTAssertTrue(audioModelIds.contains("kugelaudio/kugelaudio-0-open"))
-        XCTAssertTrue(audioModelIds.contains("mlx-community/Kokoro-82M-4bit"))
+        XCTAssertTrue(model.requiresRuntimeSetupBeforeDownload(manifest: oldRuntime))
+        XCTAssertFalse(model.requiresRuntimeSetupBeforeDownload(manifest: newRuntime))
     }
 
+    func testRuntimeSetupRequirementUsesCompatibilityApiAndBackend() {
+        let model = DownloadableModel(
+            id: "vlm-model",
+            name: "VLM Model",
+            subtitle: "Requires VLM backend",
+            modelId: "org/vlm-model",
+            modality: .vision,
+            backend: .vlm,
+            downloadSizeGB: 1.0,
+            runtime: ModelRuntimeRequirement(minVersion: "0.1.6", compatibilityApi: 1)
+        )
+        let wrongAPIRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.6",
+            compatibilityApi: 2,
+            supportedBackends: [.vlm]
+        )
+        let wrongBackendRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.6",
+            compatibilityApi: 1,
+            supportedBackends: [.image]
+        )
+
+        XCTAssertTrue(model.requiresRuntimeSetupBeforeDownload(manifest: wrongAPIRuntime))
+        XCTAssertTrue(model.requiresRuntimeSetupBeforeDownload(manifest: wrongBackendRuntime))
+    }
 
     func testDownloadableModelIdentifiable() {
         let model = DownloadableModel(

@@ -2,31 +2,31 @@
   "schemaVersion": 1,
   "channel": "stable",
   "catalog": {
-    "version": "2026.06.01.1",
-    "url": "https://github.com/mlxtra/mlxtra/releases/download/catalog-2026.06.01.1/model-catalog.json",
-    "sha256": "26b3ca0589d07a1901fef0a0ff0506e5b7d21c39596c3b5b85424b50ccb997b2",
-    "sizeBytes": 32788
+    "version": "2026.06.03.1",
+    "url": "https://github.com/mlxtra/mlxtra/releases/download/catalog-2026.06.03.1/model-catalog.json",
+    "sha256": "1b9955d3b9065d1506ef61930e56555d5aca91b0149944c7b54ecd05e4b12ed8",
+    "sizeBytes": 35238
   },
   "runtimes": [
     {
-      "version": "0.1.5",
+      "version": "0.1.6",
       "platform": "macos",
       "arch": "arm64",
       "component": "base",
-      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.5/runtime-macos-arm64-0.1.5.zip",
-      "sha256": "5796dd7c4abfa328d81feb42777c308d7aa876f556b67285e40c2c37334bdb05",
-      "sizeBytes": 367105383,
+      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.6/runtime-macos-arm64-0.1.6.zip",
+      "sha256": "f9619361efb7a4d2e2046e23cec514c6ed3f397a67c0ac8410e506a3dc4b0dd5",
+      "sizeBytes": 393653577,
       "compatibilityApi": 1,
       "minAppVersion": "1.0.10"
     },
     {
-      "version": "0.1.5",
+      "version": "0.1.6",
       "platform": "macos",
       "arch": "arm64",
       "component": "music",
-      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.5/runtime-music-macos-arm64-0.1.5.zip",
-      "sha256": "d21e878a623dfecfc12088db5e71597cc7d22e431973875109f946f190eb02de",
-      "sizeBytes": 219973568,
+      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.6/runtime-music-macos-arm64-0.1.6.zip",
+      "sha256": "86d9bb63e7f6b9ce946efbd494979c2b9a40b42374963096e89e0f145d1023d8",
+      "sizeBytes": 219958892,
       "compatibilityApi": 1,
       "minAppVersion": "1.0.10"
     }

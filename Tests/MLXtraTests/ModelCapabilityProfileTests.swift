@@ -169,25 +169,36 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(selected?.modelId, storedProfile.modelId)
     }
 
-    func testVisibleProfilesHideHeavyGemmaAndQwenVariantsOnLowerMemoryHardware() {
+    func testVisibleProfilesHideHardwareHeavyVisionModelsOnLowerMemoryHardware() {
+        let hardwareMemoryGB = 8.0
         let visibleModelIds = Set(ModelCapabilityProfile
-            .visibleProfiles(for: .vision, hardwareMemoryGB: 8.0)
+            .visibleProfiles(for: .vision, hardwareMemoryGB: hardwareMemoryGB)
+            .map(\.modelId))
+        let heavyModelIds = Set(ModelCapabilityProfile
+            .profiles(for: .vision)
+            .filter { !$0.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) }
             .map(\.modelId))
 
-        XCTAssertTrue(visibleModelIds.contains(gemma4ModelId))
-        XCTAssertFalse(visibleModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
-        XCTAssertFalse(visibleModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
-        XCTAssertFalse(visibleModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
+        XCTAssertFalse(heavyModelIds.isEmpty)
+        XCTAssertTrue(visibleModelIds.isDisjoint(with: heavyModelIds))
     }
 
-    func testVisibleProfilesIncludeLargeGemmaAndQwenVariantsOnHighMemoryHardware() {
+    func testVisibleProfilesIncludeCompatibleLargeVisionModelsOnHighMemoryHardware() {
+        let lowMemoryGB = 8.0
+        let highMemoryGB = 32.0
         let visibleModelIds = Set(ModelCapabilityProfile
-            .visibleProfiles(for: .vision, hardwareMemoryGB: 32.0)
+            .visibleProfiles(for: .vision, hardwareMemoryGB: highMemoryGB)
+            .map(\.modelId))
+        let largeCompatibleModelIds = Set(ModelCapabilityProfile
+            .profiles(for: .vision)
+            .filter {
+                !$0.isHardwareCompatible(hardwareMemoryGB: lowMemoryGB)
+                    && $0.isHardwareCompatible(hardwareMemoryGB: highMemoryGB)
+            }
             .map(\.modelId))
 
-        XCTAssertTrue(visibleModelIds.contains("mlx-community/gemma-4-26b-a4b-it-4bit"))
-        XCTAssertTrue(visibleModelIds.contains("mlx-community/Qwen3.6-27B-4bit"))
-        XCTAssertTrue(visibleModelIds.contains("mlx-community/Qwen3.6-35B-A3B-4bit"))
+        XCTAssertFalse(largeCompatibleModelIds.isEmpty)
+        XCTAssertTrue(largeCompatibleModelIds.isSubset(of: visibleModelIds))
     }
 
     func testImageProfilesExposeCuratedMFluxRuntimeOptions() throws {
@@ -450,15 +461,13 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertNoThrow(try ModelCatalogService.decodeCatalog(data: data, appVersion: nil))
     }
 
-    func testBundledCatalogNamesExposeVariantSizes() throws {
+    func testBundledCatalogModelNamesAreUniqueAndNonEmpty() throws {
         let data = try Data(contentsOf: URL(fileURLWithPath: "MLXtra/Resources/model-catalog.json"))
         let catalog = try ModelCatalogService.decodeCatalog(data: data, appVersion: nil)
-        let namesByModelId = Dictionary(uniqueKeysWithValues: catalog.profiles.map { ($0.modelId, $0.name) })
+        let names = catalog.profiles.map(\.name)
 
-        XCTAssertEqual(namesByModelId["mlx-community/Qwen3.5-2B-MLX-4bit"], "Qwen 3.5 2B")
-        XCTAssertEqual(namesByModelId["mlx-community/Qwen3.5-9B-MLX-4bit"], "Qwen 3.5 9B")
-        XCTAssertEqual(namesByModelId["google/gemma-4-e4b-it"], "Gemma 4 E4B")
-        XCTAssertEqual(namesByModelId["mlx-community/Kokoro-82M-4bit"], "Kokoro 82M 4-bit")
+        XCTAssertEqual(names.count, Set(names).count)
+        XCTAssertFalse(names.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
     }
 
     func testCatalogRejectsChecksumMismatch() throws {

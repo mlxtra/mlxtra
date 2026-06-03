@@ -130,6 +130,12 @@ struct ModelManagerRow: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
 
+                Text(runtimeRequirementDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+
                 runtimeAction
             }
             .accessibilityIdentifier("settings.modelState.runtimeRequired")
@@ -162,6 +168,10 @@ struct ModelManagerRow: View {
             return "app.badge"
         }
         return "arrow.triangle.2.circlepath"
+    }
+
+    private var runtimeRequirementDetail: String {
+        "Requires Runtime \(model.runtime.minVersion)+ before download."
     }
 
     @ViewBuilder
@@ -211,7 +221,7 @@ struct ModelManagerRow: View {
             Button {
                 onDownload()
             } label: {
-                Label("Queue Download", systemImage: "arrow.down.circle")
+                Label("Setup Runtime", systemImage: "arrow.triangle.2.circlepath")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
