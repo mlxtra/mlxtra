@@ -571,9 +571,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
     func testDirectIdeogramPromptPreparationCannotBeDisabled() async throws {
         resetPromptConfigurationDefaults()
-        let userDefaults = isolatedUserDefaults()
         let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
-        let improvePrompt = try XCTUnwrap(imageProfile.parameterDefinition(key: "improve_prompt"))
         let executor = MockChatModelExecutor(events: [
             .complete(
                 """
@@ -582,24 +580,28 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 usage: TokenUsage(promptTokens: 10, completionTokens: 30)
             )
         ])
-        let runtimeManager = MockChatRuntimeManager(
-            downloadedModelIds: [Self.defaultChatModelId, imageProfile.modelId]
-        )
         let toolExecutor = MockChatToolExecutionService()
-        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
-            chatPersistence: persistence,
             vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: toolExecutor,
-            userDefaults: userDefaults
+            toolExecutor: toolExecutor
         )
-        viewModel.selectModelProfile(imageProfile)
-        viewModel.setParameterValue("false", for: improvePrompt, profile: imageProfile)
-        viewModel.selectTool(.image)
-        viewModel.inputText = "Create a precise poster"
+        let prompt = "Create a precise poster"
+        let toolCall = imageToolCall(prompt: prompt)
+        let generation = generationRequest(
+            prompt: prompt,
+            tool: .image,
+            imageProfile: imageProfile,
+            imageParameters: ["improve_prompt": false]
+        )
+        var messages: [ExecutionMessage] = []
 
-        viewModel.sendMessage()
+        await viewModel.executeImageGenerationToolCall(
+            toolCall,
+            messages: &messages,
+            images: [],
+            prompt: prompt,
+            generation: generation
+        )
         await waitUntil { toolExecutor.mediaPlans.count == 1 }
 
         XCTAssertEqual(executor.receivedRequests.first?.backend, .vlm)
@@ -611,9 +613,8 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             toolExecutor.mediaPlans[0].request.imageCaption?["high_level_description"] as? String,
             "A precise poster"
         )
-        XCTAssertEqual(viewModel.chats.first?.messages.last?.toolCalls.count, 1)
         XCTAssertEqual(
-            viewModel.chats.first?.messages.last?.toolCalls.first?.details.first?.label,
+            toolExecutor.mediaPlans[0].details.first?.label,
             "Structured caption"
         )
     }
@@ -839,17 +840,10 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
     func testAutoModeUsesGenericImageToolThenPreparesIdeogramCaption() async throws {
         resetPromptConfigurationDefaults()
-        let userDefaults = isolatedUserDefaults()
         let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
-        let toolCall = ExecutionToolCall(
-            id: "ideogram-image",
-            function: ExecutionToolCallFunction(
-                name: "generate_image",
-                arguments: #"{"prompt":"Create a precise poster"}"#
-            )
-        )
+        let prompt = "Create a precise poster"
+        let toolCall = imageToolCall(prompt: prompt, id: "ideogram-image")
         let executor = MockChatModelExecutor(eventBatches: [
-            [.toolCalls([toolCall])],
             [
                 .complete(
                     """
@@ -859,27 +853,28 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 )
             ]
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [
-            Self.defaultChatModelId,
-            imageProfile.modelId,
-        ])
         let toolExecutor = MockChatToolExecutionService()
-        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
-            chatPersistence: persistence,
             vlmExecutor: executor,
-            runtimeManager: runtimeManager,
-            toolExecutor: toolExecutor,
-            userDefaults: userDefaults
+            toolExecutor: toolExecutor
         )
-        viewModel.selectModelProfile(imageProfile)
-        viewModel.selectTool(.auto)
-        viewModel.inputText = "Create a precise poster"
+        let generation = generationRequest(
+            prompt: prompt,
+            tool: .auto,
+            imageProfile: imageProfile
+        )
+        var messages: [ExecutionMessage] = []
 
-        viewModel.sendMessage()
-        await waitUntil { executor.receivedRequests.count == 2 && toolExecutor.mediaPlans.count == 1 }
+        await viewModel.executeImageGenerationToolCall(
+            toolCall,
+            messages: &messages,
+            images: [],
+            prompt: prompt,
+            generation: generation
+        )
+        await waitUntil { executor.receivedRequests.count == 1 && toolExecutor.mediaPlans.count == 1 }
 
-        let requestTools = try XCTUnwrap(executor.receivedRequests.first?.tools)
+        let requestTools = try XCTUnwrap(viewModel.availableTools(toolDepth: 0, for: .auto))
         let imageTool = try XCTUnwrap(requestTools.first { tool in
             (tool["function"] as? [String: Any])?["name"] as? String == "generate_image"
         })
@@ -887,7 +882,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let parameters = try XCTUnwrap(function["parameters"] as? [String: Any])
         XCTAssertEqual(parameters["required"] as? [String], ["prompt"])
         XCTAssertNil((parameters["properties"] as? [String: Any])?["caption"])
-        let promptPreparationRequest = try XCTUnwrap(executor.receivedRequests.dropFirst().first)
+        let promptPreparationRequest = try XCTUnwrap(executor.receivedRequests.first)
         XCTAssertNil(promptPreparationRequest.tools)
         let responseFormat = try XCTUnwrap(promptPreparationRequest.responseFormat)
         let jsonSchema = try XCTUnwrap(responseFormat["json_schema"] as? [String: Any])
@@ -2124,6 +2119,42 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 ? "The generated image is already displayed in the app UI."
                 : "The generated audio is already displayed in the app UI.",
             attachmentKind: attachmentKind
+        )
+    }
+
+    private func imageToolCall(prompt: String, id: String = "image-tool") -> ExecutionToolCall {
+        ExecutionToolCall(
+            id: id,
+            function: ExecutionToolCallFunction(
+                name: "generate_image",
+                arguments: #"{"prompt":"\#(prompt)"}"#
+            )
+        )
+    }
+
+    private func generationRequest(
+        prompt: String,
+        tool: Tool,
+        imageProfile: ModelCapabilityProfile,
+        imageParameters: [String: Any] = [:]
+    ) -> ChatGenerationRequest {
+        let chatProfile = ModelCapabilityProfile.embeddedProfile(modelId: Self.defaultChatModelId)
+            ?? ModelCapabilityProfile.fallbackProfile(for: .vision)
+        return ChatGenerationRequest(
+            chatId: UUID(),
+            prompt: prompt,
+            images: [],
+            tool: tool,
+            profilesByModality: [
+                .vision: chatProfile,
+                .image: imageProfile,
+            ],
+            parametersByModelId: [
+                chatProfile.modelId: chatProfile.executionParameters(merging: [:]),
+                imageProfile.modelId: imageProfile.executionParameters(merging: imageParameters),
+            ],
+            selectionDownloadRequirement: nil,
+            selectionOperationName: "Image generation"
         )
     }
 

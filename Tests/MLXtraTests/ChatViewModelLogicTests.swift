@@ -2,6 +2,29 @@ import XCTest
 @testable import MLXtra
 
 final class ChatViewModelLogicTests: XCTestCase {
+    private static let aceStepMusicModelId = "ACE-Step/acestep-v15-turbo-continuous"
+    private var standardDefaultsSnapshot: [String: Any?] = [:]
+
+    override func setUp() {
+        super.setUp()
+        standardDefaultsSnapshot = [
+            ModelSelectionStore.musicKey: UserDefaults.standard.object(forKey: ModelSelectionStore.musicKey),
+        ]
+        UserDefaults.standard.set(Self.aceStepMusicModelId, forKey: ModelSelectionStore.musicKey)
+    }
+
+    override func tearDown() {
+        for (key, value) in standardDefaultsSnapshot {
+            if let value {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        standardDefaultsSnapshot = [:]
+        super.tearDown()
+    }
+
     @MainActor
     func testRenameChatNormalizesPersistsAndKeepsConversationOrderTimestamp() {
         let chatId = UUID()
@@ -523,7 +546,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let profile = try visionProfile("mlx-community/Qwen3.5-2B-MLX-4bit")
-        let alternateProfile = try visionProfile("mlx-community/Qwen3.6-35B-A3B-4bit")
+        let alternateProfile = try XCTUnwrap(testVisionProfiles.first { $0.modelId != profile.modelId })
         ModelSelectionStore(userDefaults: defaults).setSelectedModelId(profile.modelId, for: .vision)
         let executor = LaunchPreloadTestExecutor()
         let runtimeManager = LaunchPreloadRuntimeManager(downloadedModelIds: [
