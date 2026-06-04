@@ -7,7 +7,7 @@ vision, image, speech, and music models on your Mac with
 [MLX](https://github.com/ml-explore/mlx), without turning setup into a model
 server project.
 
-[Download MLXtra 1.0.12 DMG](https://github.com/mlxtra/mlxtra/releases/download/app-1.0.12/MLXtra-1.0.12.dmg)
+[Download MLXtra 1.0.13 DMG](https://github.com/mlxtra/mlxtra/releases/download/app-1.0.13/MLXtra-1.0.13.dmg)
 | [Watch demo](https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4)
 | [View releases](https://github.com/mlxtra/mlxtra/releases)
 | [Build from source](#build-from-source)
@@ -39,7 +39,7 @@ server project.
 ## What You Can Do
 
 - Chat with local vision-language models and attach images
-- Generate images with FLUX.2 Klein or Z-Image Turbo
+- Generate images with FLUX.2 Klein, Ideogram 4, or Z-Image Turbo
 - Generate speech with KugelAudio or Kokoro
 - Generate music with ACE-Step or Magenta RealTime 2
 - Manage runtime and model downloads from Settings
@@ -57,16 +57,59 @@ larger.
 
 ## Models
 
-MLXtra ships with a curated model catalog:
+MLXtra ships with a curated model catalog. The current bundled catalog is
+`2026.06.04.2` and requires MLXtra `1.0.12` or newer. Download sizes below are
+main model downloads; acceleration entries list the extra draft-model download
+size when one is included.
 
-- **Chat and vision:** Qwen 3.5, Qwen 3.6, and Gemma 4 variants
-- **Image:** FLUX.2-klein-4B and Z-Image Turbo
-- **Speech:** KugelAudio 0 Open and Kokoro 82M 4-bit
-- **Music:** ACE-Step 1.5 Turbo and Magenta RealTime 2 Small/Base
+### Chat and Vision
 
-Magenta RealTime 2 is instrumental-only. MLXtra recommends the Base model on
-the Macs listed as real-time capable by Magenta's README (M5 Max, M3 Max,
-M2 Max, and M4 Pro), and Small on other Apple Silicon Macs.
+| Model | Download | Est. memory | Runtime | Acceleration |
+| --- | ---: | ---: | --- | --- |
+| Qwen 3.5 2B | 1.75 GB | 3.0 GB | 0.1.0+ | - |
+| Qwen 3.5 9B | 5.98 GB | 6.0 GB | 0.1.6+ | Qwen 3.5 9B MTP, +0.16 GB |
+| Gemma 4 E2B | 3.61 GB | 4.0 GB | 0.1.6+ | Gemma 4 E2B assistant draft, +0.19 GB |
+| Gemma 4 E4B | 16.02 GB | 3.0 GB | 0.1.6+ | Gemma 4 E4B assistant draft, +0.19 GB |
+| Gemma 4 12B | 11.02 GB | 12.0 GB | 0.1.6+ | Gemma 4 12B assistant draft, +0.88 GB |
+| Gemma 4 26B A4B | 15.64 GB | 17.5 GB | 0.1.6+ | Gemma 4 26B A4B assistant draft, +0.87 GB |
+| Qwen 3.6 27B | 16.08 GB | 18.0 GB | 0.1.6+ | Qwen 3.6 27B MTP, +0.26 GB |
+| Qwen 3.6 35B A3B | 20.43 GB | 23.0 GB | 0.1.6+ | Qwen 3.6 35B A3B MTP, +0.49 GB |
+
+Chat acceleration uses a smaller draft model for speculative generation when the
+catalog entry includes one and the acceleration snapshot is present. If the
+draft model cannot be loaded, MLXtra falls back to the main model and marks the
+generation as fallback/unavailable in the message metrics.
+
+### Image
+
+| Model | Download | Est. memory | Runtime | Capabilities |
+| --- | ---: | ---: | --- | --- |
+| FLUX.2-klein-4B | 23.74 GB | 13.0 GB | 0.1.0+ | Text-to-image and image editing |
+| Ideogram 4 FP8 | 27.55 GB | 36.0 GB | 0.1.7+ | Text-to-image |
+| Z-Image Turbo | 32.90 GB | 14.0 GB | 0.1.0+ | Text-to-image |
+
+Image generation runs through the bundled `mflux` runtime. The current runtime
+supports `flux2-klein-4b`, `ideogram-4-fp8`, and `z-image-turbo`.
+
+### Speech
+
+| Model | Download | Est. memory | Runtime | Notes |
+| --- | ---: | ---: | --- | --- |
+| Kokoro 82M 4-bit | 0.67 GB | 1.0 GB | 0.1.2+ | Fast lightweight speech generation |
+| KugelAudio 0 Open | 18.69 GB | 19.0 GB | 0.1.0+ | Higher-capability speech generation |
+
+### Music
+
+| Model | Download | Est. memory | Runtime | Notes |
+| --- | ---: | ---: | --- | --- |
+| Magenta RealTime 2 Small | 1.42 GB | 3.0 GB | Music 0.1.7+ | Instrumental-only, real-time focused |
+| Magenta RealTime 2 Base | 3.75 GB | 8.0 GB | Music 0.1.7+ | Instrumental-only, recommended on M5 Max, M3 Max, M2 Max, and M4 Pro |
+| ACE-Step 1.5 Turbo | 10.09 GB | 4.0 GB | Music 0.1.0+ | Music generation with vocal/lyrics workflows |
+
+Magenta RealTime 2 does not accept or generate lyrics. For vocal music with
+lyrics, use ACE-Step instead. MLXtra recommends Magenta Base on the Macs listed
+as real-time capable by Magenta's README (M5 Max, M3 Max, M2 Max, and M4 Pro),
+and Small on other Apple Silicon Macs.
 
 Large models are shown only on Macs where they are expected to fit comfortably.
 Some model providers may require accepting model terms or signing in to Hugging
