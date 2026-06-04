@@ -111,6 +111,8 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
                     onUpdate(.progress(message))
                 case .modelLoadProgress(let progress):
                     onUpdate(.modelLoadProgress(progress))
+                case .generationProgress(let progress):
+                    onUpdate(.generationProgress(progress))
                 case .image(let imageURL) where plan.attachmentKind == .image:
                     firstOutputAt = firstOutputAt ?? Date()
                     generatedAssetURL = imageURL

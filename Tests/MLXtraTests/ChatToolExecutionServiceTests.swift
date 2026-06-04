@@ -114,6 +114,87 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests[0].modelId, "image-model")
     }
 
+    func testExecuteMediaToolPublishesGenerationProgress() async {
+        let progress = GenerationProgress(
+            modelId: "image-model",
+            backend: .image,
+            phase: "denoising",
+            message: "Denoising image",
+            fractionCompleted: 0.5,
+            isEstimated: false
+        )
+        let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
+        let executor = MockChatModelExecutor(events: [
+            .generationProgress(progress),
+            .image(assetURL),
+            .complete("Generated image.", usage: TokenUsage(promptTokens: 1, completionTokens: 0))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+        var updates: [ChatToolExecutionUpdate] = []
+
+        _ = await service.executeMediaTool(plan: makePlan()) { update in
+            updates.append(update)
+        }
+
+        XCTAssertTrue(updates.contains(.generationProgress(progress)))
+        XCTAssertTrue(updates.contains(.generatedAsset(assetURL, kind: .image)))
+    }
+
+    func testExecuteMediaToolCallUpdatesActiveToolCallGenerationProgress() async {
+        let executor = MockChatModelExecutor()
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: ["image-model"])
+        let toolExecutor = SuspendedMediaToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor
+        )
+        let aiMessage = Message(content: "", isUser: false, timestamp: Date(), isStreaming: true)
+        let chat = Chat(title: "Image", messages: [aiMessage], timestamp: Date(), icon: "photo")
+        viewModel.chats = [chat]
+        viewModel.selectedChatId = chat.id
+        viewModel.streamingMessageId = aiMessage.id
+        viewModel.isGenerating = true
+        let toolCall = ExecutionToolCall(
+            id: "call-image",
+            function: ExecutionToolCallFunction(name: "generate_image", arguments: "{}")
+        )
+        let progress = GenerationProgress(
+            modelId: "image-model",
+            backend: .image,
+            phase: "denoising",
+            message: "Denoising image",
+            fractionCompleted: 0.5,
+            isEstimated: false
+        )
+        var messages: [ExecutionMessage] = []
+
+        let task = Task { @MainActor in
+            await viewModel.executeMediaToolCall(
+                toolCall,
+                messages: &messages,
+                plan: self.makePlan()
+            )
+        }
+        await waitUntil { toolExecutor.hasPendingMediaTool }
+
+        toolExecutor.emit(.generationProgress(progress))
+
+        XCTAssertEqual(viewModel.generationProgress, progress)
+        XCTAssertEqual(message(in: viewModel, id: aiMessage.id)?.toolCalls.last?.generationProgress, progress)
+
+        toolExecutor.finish(.toolMessage("Image generation completed."))
+        await task.value
+    }
+
     func testExecuteMediaToolRetriesWhenBridgeStopsAfterStreamStarts() async {
         let assetURL = URL(fileURLWithPath: "/tmp/generated.wav")
         let executor = MockChatModelExecutor(eventBatches: [

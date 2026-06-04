@@ -30,6 +30,7 @@ final class VLMResponseEventParser: @unchecked Sendable {
              "audio.generated",
              "model.loading",
              "model.loaded",
+             "generation.progress",
              "error":
             return true
         default:
@@ -91,6 +92,17 @@ final class VLMResponseEventParser: @unchecked Sendable {
 
         case "model.loaded":
             return VLMParsedResponseEvents(events: [], finishesStream: false)
+
+        case "generation.progress":
+            let progress = GenerationProgress.bridgeEvent(
+                json,
+                fallbackModelId: modelId,
+                fallbackBackend: backend
+            )
+            return VLMParsedResponseEvents(
+                events: [.generationProgress(progress)],
+                finishesStream: false
+            )
 
         case "error":
             let errorMessage = json["message"] as? String ?? "Unknown Python error"

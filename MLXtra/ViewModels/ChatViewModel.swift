@@ -67,6 +67,7 @@ class ChatViewModel: ObservableObject {
     @Published var isDraftingMusicLyrics: Bool = false
     @Published var loadingMessage: String = ""
     @Published var modelLoadProgress: ModelLoadProgress?
+    @Published var generationProgress: GenerationProgress?
     @Published var streamingMessageId: UUID?
     @Published var modelDownloadRequest: DownloadableModel?
     @Published var pendingEngineDownloadModel: DownloadableModel?

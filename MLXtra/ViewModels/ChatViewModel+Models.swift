@@ -11,6 +11,7 @@ extension ChatViewModel {
             isGenerating: isGenerating,
             loadingMessage: loadingMessage,
             loadProgress: modelLoadProgress,
+            generationProgress: generationProgress,
             isExecutorReady: vlmExecutor.isReady,
             isModelLoaded: vlmExecutor.isModelLoaded,
             selectedModelName: activeModelProfile.name,
@@ -45,6 +46,7 @@ extension ChatViewModel {
         isGenerating = false
         loadingMessage = ""
         modelLoadProgress = nil
+        generationProgress = nil
         localEngineErrorMessage = nil
 
         if engineTerminationTask == nil {
@@ -62,6 +64,7 @@ extension ChatViewModel {
         isPythonLoading = true
         loadingMessage = "Preparing local engine..."
         modelLoadProgress = nil
+        generationProgress = nil
         activeEngineModelName = nil
         activeEngineModelRole = .chat
         freedEngineModelName = nil
@@ -76,10 +79,12 @@ extension ChatViewModel {
                 isPythonLoading = false
                 loadingMessage = ""
                 modelLoadProgress = nil
+                generationProgress = nil
             } catch {
                 isPythonLoading = false
                 loadingMessage = ""
                 modelLoadProgress = nil
+                generationProgress = nil
                 localEngineErrorMessage = "The local engine stopped. Restart to continue."
             }
         }
@@ -258,6 +263,7 @@ extension ChatViewModel {
         if !isGenerating && !isModelLoading && !isPythonLoading && !isDraftingMusicLyrics {
             loadingMessage = ""
             modelLoadProgress = nil
+            generationProgress = nil
         }
     }
 
@@ -423,6 +429,7 @@ extension ChatViewModel {
         startPendingDownloadMonitor(for: model)
         loadingMessage = ""
         modelLoadProgress = nil
+        generationProgress = nil
     }
 
     func clearModelDownloadRequest() {
@@ -495,6 +502,7 @@ extension ChatViewModel {
             guard ownsActiveGeneration(generationID) else { return false }
             isPythonLoading = false
             modelLoadProgress = nil
+            generationProgress = nil
         }
 
         if !vlmExecutor.isReady {
@@ -515,6 +523,7 @@ extension ChatViewModel {
         guard ownsActiveGeneration(generationID) else { return }
         isPythonLoading = false
         modelLoadProgress = nil
+        generationProgress = nil
     }
 
     func localEngineModelRole(for plan: ChatMediaToolExecutionPlan) -> LocalEngineModelRole {

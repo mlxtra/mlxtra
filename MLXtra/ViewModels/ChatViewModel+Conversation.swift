@@ -225,6 +225,7 @@ extension ChatViewModel {
         isPythonLoading = false
         isModelLoading = false
         modelLoadProgress = nil
+        generationProgress = nil
         cancelLaunchModelPreload()
         loadingMessage = ""
 
@@ -297,6 +298,7 @@ extension ChatViewModel {
 #endif
         let generationID = UUID()
         activeGenerationID = generationID
+        generationProgress = nil
         generationTask = Task {
             await awaitPendingEngineTermination()
             guard ownsActiveGeneration(generationID) else { return }

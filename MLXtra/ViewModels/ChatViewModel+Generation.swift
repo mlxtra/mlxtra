@@ -49,6 +49,7 @@ extension ChatViewModel {
 
             isGenerating = true
             loadingMessage = "Generating music..."
+            generationProgress = nil
 
             let aiMessage = Message(
                 content: "",
@@ -105,6 +106,7 @@ extension ChatViewModel {
             isGenerating = false
             generationTask = nil
             loadingMessage = ""
+            generationProgress = nil
             if Task.isCancelled {
                 finishCancelledGeneration(isMusicGeneration: true, generationID: generationID)
                 return
@@ -151,6 +153,7 @@ extension ChatViewModel {
             ) else { return }
 
             isGenerating = true
+            generationProgress = nil
 
             let aiMessage: Message
             let isFollowUp = toolMessages != nil
@@ -556,6 +559,7 @@ extension ChatViewModel {
             if ownsActiveGeneration(generationID) {
                 isModelLoading = false
                 modelLoadProgress = nil
+                generationProgress = nil
             }
             throw error
         }

@@ -24,6 +24,7 @@ extension ChatViewModel {
         activeGenerationID = nil
         loadingMessage = ""
         modelLoadProgress = nil
+        generationProgress = nil
     }
 
     func finishCancelledGeneration(isMusicGeneration: Bool, generationID: UUID? = nil) {
@@ -462,6 +463,11 @@ extension ChatViewModel {
             case .modelLoadProgress(let progress):
                 modelLoadProgress = progress
                 loadingMessage = progress.detail ?? progress.phase.displayTitle
+
+            case .generationProgress(let progress):
+                generationProgress = progress
+                loadingMessage = progress.displayDetail
+                updateMessageToolCall(messageId, progress: progress)
             }
         }
 

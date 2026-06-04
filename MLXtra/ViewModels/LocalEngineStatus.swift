@@ -198,6 +198,168 @@ struct ModelLoadProgress: Equatable {
     }
 }
 
+struct GenerationProgress: Codable, Equatable {
+    let modelId: String
+    let backend: RuntimeBackend
+    let phase: String
+    let message: String?
+    let fractionCompleted: Double?
+    let isEstimated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case modelId
+        case backend
+        case phase
+        case message
+        case fractionCompleted
+        case isEstimated
+    }
+
+    init(
+        modelId: String,
+        backend: RuntimeBackend,
+        phase: String,
+        message: String? = nil,
+        fractionCompleted: Double? = nil,
+        isEstimated: Bool = false
+    ) {
+        self.modelId = modelId
+        self.backend = backend
+        self.phase = phase.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "generating"
+        self.message = message?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.fractionCompleted = fractionCompleted.map { min(max($0, 0), 1) }
+        self.isEstimated = isEstimated
+    }
+
+    static func bridgeEvent(
+        _ json: [String: Any],
+        fallbackModelId: String,
+        fallbackBackend: RuntimeBackend
+    ) -> GenerationProgress {
+        let modelId = (json["model"] as? String)?.nilIfEmpty ?? fallbackModelId
+        let backend = (json["backend"] as? String)
+            .flatMap(RuntimeBackend.init(rawValue:))
+            ?? fallbackBackend
+        let phase = (json["phase"] as? String)
+            ?? (json["status"] as? String)
+            ?? "generating"
+        let message = (json["message"] as? String)
+            ?? (json["detail"] as? String)
+
+        return GenerationProgress(
+            modelId: modelId,
+            backend: backend,
+            phase: phase,
+            message: message,
+            fractionCompleted: bridgeFraction(from: json),
+            isEstimated: boolValue(json["estimated"]) ?? false
+        )
+    }
+
+    var percent: Int? {
+        fractionCompleted.map { min(max(Int(($0 * 100).rounded()), 0), 100) }
+    }
+
+    var percentText: String? {
+        guard let percent else { return nil }
+        return "\(isEstimated ? "~" : "")\(percent)%"
+    }
+
+    var displayMessage: String {
+        message ?? phaseDisplayTitle
+    }
+
+    var displayDetail: String {
+        guard let percentText else { return displayMessage }
+        return "\(displayMessage) (\(percentText))"
+    }
+
+    func compactTitle(modelName: String) -> String {
+        guard let percentText else {
+            return phaseDisplayTitle
+        }
+
+        return "\(phaseDisplayTitle) \(percentText)"
+    }
+
+    private var phaseDisplayTitle: String {
+        let normalized = phase
+            .replacingOccurrences(of: "-", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        switch normalized {
+        case "preparing", "starting":
+            return "Preparing"
+        case "denoising", "diffusing":
+            return "Generating"
+        case "synthesizing", "generating_speech":
+            return "Creating speech"
+        case "rendering", "decoding", "writing", "saving", "finalizing":
+            return "Finalizing"
+        case "complete", "completed", "ready":
+            return "Complete"
+        default:
+            let title = normalized
+                .replacingOccurrences(of: "_", with: " ")
+                .capitalized
+            return title.nilIfEmpty ?? "Generating"
+        }
+    }
+
+    private static func bridgeFraction(from json: [String: Any]) -> Double? {
+        if let fraction = doubleValue(json["fraction"]) ?? doubleValue(json["fraction_completed"]) {
+            return min(max(fraction, 0), 1)
+        }
+
+        if let percent = doubleValue(json["percent"]) ?? doubleValue(json["percentage"]) {
+            return min(max(percent / 100, 0), 1)
+        }
+
+        return nil
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        switch value {
+        case let number as Double:
+            return number.isFinite ? number : nil
+        case let number as Float:
+            let double = Double(number)
+            return double.isFinite ? double : nil
+        case let number as Int:
+            return Double(number)
+        case let number as NSNumber:
+            let double = number.doubleValue
+            return double.isFinite ? double : nil
+        case let string as String:
+            let double = Double(string.trimmingCharacters(in: .whitespacesAndNewlines))
+            return double?.isFinite == true ? double : nil
+        default:
+            return nil
+        }
+    }
+
+    private static func boolValue(_ value: Any?) -> Bool? {
+        switch value {
+        case let bool as Bool:
+            return bool
+        case let number as NSNumber:
+            return number.boolValue
+        case let string as String:
+            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "1", "yes", "y":
+                return true
+            case "false", "0", "no", "n":
+                return false
+            default:
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+}
+
 struct LocalEngineStatus: Equatable {
     enum State: Equatable {
         case idle
@@ -234,6 +396,23 @@ struct LocalEngineStatus: Equatable {
     let canFreeMemory: Bool
     let isVisibleInComposer: Bool
     let loadProgress: ModelLoadProgress?
+    let generationProgress: GenerationProgress?
+
+    var progressFractionCompleted: Double? {
+        loadProgress?.fractionCompleted ?? generationProgress?.fractionCompleted
+    }
+
+    var accessibilityProgressLabel: String {
+        if state == .preloading {
+            return "Model preparing in background"
+        }
+
+        if generationProgress != nil {
+            return "Generation progress"
+        }
+
+        return "Model loading"
+    }
 
     static func resolve(
         runtimeState: RuntimeManager.RuntimeState,
@@ -243,6 +422,7 @@ struct LocalEngineStatus: Equatable {
         isGenerating: Bool,
         loadingMessage: String,
         loadProgress: ModelLoadProgress? = nil,
+        generationProgress: GenerationProgress? = nil,
         isExecutorReady: Bool,
         isModelLoaded: Bool,
         selectedModelName: String,
@@ -267,7 +447,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true,
-                loadProgress: nil
+                loadProgress: nil,
+                generationProgress: nil
             )
         }
 
@@ -282,7 +463,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true,
-                loadProgress: loadProgress
+                loadProgress: loadProgress,
+                generationProgress: nil
             )
         }
 
@@ -297,7 +479,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true,
-                loadProgress: loadProgress
+                loadProgress: loadProgress,
+                generationProgress: nil
             )
         }
 
@@ -312,7 +495,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true,
-                loadProgress: loadProgress
+                loadProgress: loadProgress,
+                generationProgress: nil
             )
         }
 
@@ -320,14 +504,15 @@ struct LocalEngineStatus: Equatable {
             return LocalEngineStatus(
                 state: .generating,
                 title: "Generating...",
-                detail: trimmedLoadingMessage.isEmpty ? activeModelRole.generatingDetail : trimmedLoadingMessage,
+                detail: generationProgress?.displayDetail ?? (trimmedLoadingMessage.isEmpty ? activeModelRole.generatingDetail : trimmedLoadingMessage),
                 systemImage: "sparkles",
                 tone: .accent,
                 primaryAction: nil,
                 primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true,
-                loadProgress: nil
+                loadProgress: nil,
+                generationProgress: generationProgress
             )
         }
 
@@ -342,7 +527,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: pendingDownloadModelId,
                 canFreeMemory: false,
                 isVisibleInComposer: true,
-                loadProgress: nil
+                loadProgress: nil,
+                generationProgress: nil
             )
         }
 
@@ -357,7 +543,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: true,
-                loadProgress: nil
+                loadProgress: nil,
+                generationProgress: nil
             )
         }
 
@@ -372,7 +559,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: nil,
                 canFreeMemory: true,
                 isVisibleInComposer: true,
-                loadProgress: nil
+                loadProgress: nil,
+                generationProgress: nil
             )
         }
 
@@ -387,7 +575,8 @@ struct LocalEngineStatus: Equatable {
                 primaryActionModelId: nil,
                 canFreeMemory: false,
                 isVisibleInComposer: false,
-                loadProgress: nil
+                loadProgress: nil,
+                generationProgress: nil
             )
         }
 
@@ -401,7 +590,8 @@ struct LocalEngineStatus: Equatable {
             primaryActionModelId: nil,
             canFreeMemory: false,
             isVisibleInComposer: false,
-            loadProgress: nil
+            loadProgress: nil,
+            generationProgress: nil
         )
     }
 

@@ -10,6 +10,7 @@ final class VLMResponseEventParserTests: XCTestCase {
         XCTAssertTrue(VLMResponseEventParser.handles(["type": "audio.generated"]))
         XCTAssertTrue(VLMResponseEventParser.handles(["type": "model.loading"]))
         XCTAssertTrue(VLMResponseEventParser.handles(["type": "model.loaded"]))
+        XCTAssertTrue(VLMResponseEventParser.handles(["type": "generation.progress"]))
         XCTAssertTrue(VLMResponseEventParser.handles(["type": "error"]))
 
         XCTAssertFalse(VLMResponseEventParser.handles(["type": "model.initialized"]))
@@ -218,6 +219,55 @@ final class VLMResponseEventParserTests: XCTestCase {
         XCTAssertEqual(progress.phase, .loadingWeights)
         XCTAssertEqual(try XCTUnwrap(progress.fractionCompleted), 0.42, accuracy: 0.0001)
         XCTAssertEqual(progress.detail, "Loading tensors")
+    }
+
+    func testGenerationProgressYieldsStructuredProgress() throws {
+        let parser = VLMResponseEventParser(modelId: "fallback-model", backend: .image)
+
+        let parsed = try XCTUnwrap(parser.parse([
+            "type": "generation.progress",
+            "model": "image-model",
+            "backend": "image",
+            "phase": "denoising",
+            "message": "Denoising image",
+            "percent": 42,
+            "estimated": false
+        ]))
+
+        XCTAssertFalse(parsed.finishesStream)
+        XCTAssertEqual(parsed.events.count, 1)
+        guard case .generationProgress(let progress) = parsed.events[0] else {
+            return XCTFail("Expected generationProgress event")
+        }
+        XCTAssertEqual(progress.modelId, "image-model")
+        XCTAssertEqual(progress.backend, .image)
+        XCTAssertEqual(progress.phase, "denoising")
+        XCTAssertEqual(progress.message, "Denoising image")
+        XCTAssertEqual(try XCTUnwrap(progress.fractionCompleted), 0.42, accuracy: 0.0001)
+        XCTAssertFalse(progress.isEstimated)
+        XCTAssertEqual(progress.percentText, "42%")
+    }
+
+    func testGenerationProgressParsesFallbacksClampsAndEstimatedStrings() throws {
+        let parser = VLMResponseEventParser(modelId: "fallback-model", backend: .music)
+
+        let parsed = try XCTUnwrap(parser.parse([
+            "type": "generation.progress",
+            "phase": "generating",
+            "message": "  Generating music  ",
+            "fraction": 1.4,
+            "estimated": "true"
+        ]))
+
+        guard case .generationProgress(let progress) = try XCTUnwrap(parsed.events.first) else {
+            return XCTFail("Expected generationProgress event")
+        }
+        XCTAssertEqual(progress.modelId, "fallback-model")
+        XCTAssertEqual(progress.backend, .music)
+        XCTAssertEqual(progress.fractionCompleted, 1.0)
+        XCTAssertTrue(progress.isEstimated)
+        XCTAssertEqual(progress.percentText, "~100%")
+        XCTAssertEqual(progress.displayDetail, "Generating music (~100%)")
     }
 
     func testErrorEventFinishesStream() throws {

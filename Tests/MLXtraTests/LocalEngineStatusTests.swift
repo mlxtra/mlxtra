@@ -356,6 +356,41 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertFalse(status.canFreeMemory)
     }
 
+    func testGeneratingCarriesGenerationProgress() {
+        let progress = GenerationProgress(
+            modelId: "ACE-Step/acestep-v15-turbo-continuous",
+            backend: .music,
+            phase: "generating",
+            message: "Generating music",
+            fractionCompleted: 0.42,
+            isEstimated: true
+        )
+
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .ready,
+            isPythonLoading: false,
+            isModelLoading: false,
+            isGenerating: true,
+            loadingMessage: "Generating music...",
+            generationProgress: progress,
+            isExecutorReady: true,
+            isModelLoaded: true,
+            selectedModelName: "ACE-Step",
+            activeModelName: "ACE-Step",
+            activeModelRole: .music,
+            pendingDownloadModelId: nil,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: nil
+        )
+
+        XCTAssertEqual(status.state, .generating)
+        XCTAssertEqual(status.detail, "Generating music (~42%)")
+        XCTAssertEqual(status.generationProgress, progress)
+        XCTAssertEqual(status.progressFractionCompleted, 0.42)
+        XCTAssertEqual(status.accessibilityProgressLabel, "Generation progress")
+    }
+
     func testExecutorReadyButModelUnloadedStaysIdleUntilNeeded() {
         let status = LocalEngineStatus.resolve(
             runtimeState: .ready,

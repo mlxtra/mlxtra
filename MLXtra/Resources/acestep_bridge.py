@@ -4,6 +4,7 @@
 import contextlib
 import importlib.util
 import json
+import math
 import os
 import sys
 import time
@@ -34,12 +35,14 @@ def send_json(
     *,
     request: Optional[dict] = None,
     request_id: Optional[str] = None,
+    stream=None,
 ) -> None:
     payload = dict(obj)
     inherited_request_id = request_id if request_id is not None else get_request_id(request)
     if inherited_request_id:
         payload.setdefault("request_id", inherited_request_id)
-    print(json.dumps(payload), flush=True)
+    output_stream = stream if stream is not None else sys.stdout
+    print(json.dumps(payload), file=output_stream, flush=True)
 
 
 def send_model_loading(
@@ -59,6 +62,48 @@ def send_model_loading(
     if detail:
         payload["detail"] = detail
     send_json(payload, request=request)
+
+
+def _progress_fraction(fraction=None, percent=None) -> Optional[float]:
+    value = fraction
+    divisor = 1.0
+    if value is None and percent is not None:
+        value = percent
+        divisor = 100.0
+    try:
+        number = float(value) / divisor
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return min(max(number, 0.0), 1.0)
+
+
+def send_generation_progress(
+    model_id: str,
+    phase: str,
+    *,
+    request: Optional[dict] = None,
+    message: Optional[str] = None,
+    fraction=None,
+    percent=None,
+    estimated: bool = True,
+    stream=None,
+) -> None:
+    progress_fraction = _progress_fraction(fraction=fraction, percent=percent)
+    payload = {
+        "type": "generation.progress",
+        "model": model_id,
+        "backend": "music",
+        "phase": phase,
+        "estimated": bool(estimated),
+    }
+    if message:
+        payload["message"] = message
+    if progress_fraction is not None:
+        payload["fraction"] = progress_fraction
+        payload["percent"] = int(round(progress_fraction * 100))
+    send_json(payload, request=request, stream=stream)
 
 
 def last_user_prompt(messages: list[dict]) -> str:
@@ -143,11 +188,28 @@ def generate_music_once(request: dict) -> bool:
         seed_default=time.time_ns() % 2_147_483_647,
     )
     config = GenerationConfig(**config_kwargs)
+    json_stdout = sys.stdout
 
-    send_json(
-        {"type": "model.loading", "model": model_id, "status": "generating"},
+    send_generation_progress(
+        model_id,
+        "preparing",
         request=request,
+        message="Preparing music generation",
+        fraction=0.0,
+        estimated=True,
     )
+
+    def bridge_progress(value=None, desc=None, **_kwargs):
+        send_generation_progress(
+            model_id,
+            "generating",
+            request=request,
+            message=coerce_string(desc, "Generating music"),
+            fraction=value,
+            estimated=True,
+            stream=json_stdout,
+        )
+
     with contextlib.redirect_stdout(sys.stderr):
         result = generate_music(
             dit_handler,
@@ -155,6 +217,7 @@ def generate_music_once(request: dict) -> bool:
             GenerationParams(**params_kwargs),
             config,
             save_dir=str(output_dir),
+            progress=bridge_progress,
         )
 
     if not result.success:
@@ -165,6 +228,14 @@ def generate_music_once(request: dict) -> bool:
     for audio in result.audios:
         path = audio.get("path")
         if path:
+            send_generation_progress(
+                model_id,
+                "finalizing",
+                request=request,
+                message="Preparing audio file",
+                fraction=0.98,
+                estimated=True,
+            )
             send_json(
                 {
                     "type": "audio.generated",
@@ -174,6 +245,15 @@ def generate_music_once(request: dict) -> bool:
                 },
                 request=request,
             )
+
+    send_generation_progress(
+        model_id,
+        "complete",
+        request=request,
+        message="Music complete",
+        fraction=1.0,
+        estimated=False,
+    )
 
     send_json(
         {

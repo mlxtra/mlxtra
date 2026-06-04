@@ -26,17 +26,19 @@ struct ComposerModelControl: View {
         status.state == .preparing
             || status.state == .preloading
             || status.state == .loadingModel
+            || (status.generationProgress != nil && viewModel.isGenerating)
             || (status.loadProgress != nil && (viewModel.isGenerating || viewModel.isModelLoading || viewModel.isPythonLoading))
     }
 
     private var isForegroundLoading: Bool {
         status.state == .preparing
             || status.state == .loadingModel
+            || (status.generationProgress != nil && viewModel.isGenerating)
             || (status.loadProgress != nil && (viewModel.isGenerating || viewModel.isModelLoading || viewModel.isPythonLoading))
     }
 
     private var showsLoadingLine: Bool {
-        isLoading || status.loadProgress != nil
+        isLoading || status.loadProgress != nil || status.generationProgress != nil
     }
 
     var body: some View {
@@ -146,12 +148,12 @@ struct ComposerModelControl: View {
         .overlay(alignment: .bottom) {
             if showsLoadingLine {
                 ZStack {
-                    ComposerModelLoadProgressLine(progress: status.loadProgress)
-                    Text(status.state == .preloading ? "Model preparing in background" : "Model loading")
+                    ComposerModelProgressLine(fractionCompleted: status.progressFractionCompleted)
+                    Text(status.accessibilityProgressLabel)
                         .font(.system(size: 1))
                         .foregroundStyle(.clear)
                         .frame(height: 2)
-                        .accessibilityLabel(status.state == .preloading ? "Model preparing in background" : "Model loading")
+                        .accessibilityLabel(status.accessibilityProgressLabel)
                         .accessibilityIdentifier("composer.modelLoadingIndicator")
                 }
                 .padding(.horizontal, 8)
@@ -173,6 +175,10 @@ struct ComposerModelControl: View {
         }
 
         if let progress = status.loadProgress {
+            return progress.compactTitle(modelName: profile.name)
+        }
+
+        if let progress = status.generationProgress {
             return progress.compactTitle(modelName: profile.name)
         }
 
@@ -203,8 +209,8 @@ struct ComposerModelControl: View {
     }
 }
 
-private struct ComposerModelLoadProgressLine: View {
-    let progress: ModelLoadProgress?
+private struct ComposerModelProgressLine: View {
+    let fractionCompleted: Double?
     @State private var indeterminateOffset: CGFloat = -0.35
 
     var body: some View {
@@ -214,7 +220,7 @@ private struct ComposerModelLoadProgressLine: View {
                 Capsule()
                     .fill(Color.accentColor.opacity(0.14))
 
-                if let fraction = progress?.fractionCompleted {
+                if let fraction = fractionCompleted {
                     Capsule()
                         .fill(Color.accentColor.opacity(0.82))
                         .frame(width: max(2, width * fraction))
@@ -229,7 +235,7 @@ private struct ComposerModelLoadProgressLine: View {
         .frame(height: 2)
         .clipped()
         .onAppear {
-            guard progress?.fractionCompleted == nil else { return }
+            guard fractionCompleted == nil else { return }
             indeterminateOffset = -0.35
             withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: false)) {
                 indeterminateOffset = 1.05

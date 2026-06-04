@@ -122,6 +122,7 @@ enum ExecutionEvent {
     case error(Error)
     case progress(String)
     case modelLoadProgress(ModelLoadProgress)
+    case generationProgress(GenerationProgress)
 }
 
 enum GenerationAccelerationState: String, Codable, Equatable {

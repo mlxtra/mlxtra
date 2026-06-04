@@ -15,6 +15,7 @@ import signal
 import selectors
 import subprocess
 import time
+import threading
 import uuid
 import contextlib
 from typing import List, Dict, Optional, Any, Tuple
@@ -35,6 +36,7 @@ MUSIC_MODEL_REGISTRY: Dict[str, Any] = {}
 BRIDGE_PROCESS_STARTED = time.perf_counter()
 RUNTIME_MANIFEST_CACHE: Optional[Dict[str, Any]] = None
 ESPEAK_RUNTIME_CONFIGURED_FOR: Optional[str] = None
+JSON_OUTPUT_LOCK = threading.Lock()
 
 
 def bridge_debug_enabled() -> bool:
@@ -117,13 +119,16 @@ def send_json(
     *,
     request: Optional[dict] = None,
     request_id: Optional[str] = None,
+    stream: Optional[Any] = None,
 ):
     """Send JSON object to stdout (only valid JSON goes to stdout)"""
     payload = dict(obj)
     inherited_request_id = request_id if request_id is not None else get_request_id(request)
     if inherited_request_id:
         payload.setdefault("request_id", inherited_request_id)
-    print(json.dumps(payload), flush=True)
+    output_stream = stream if stream is not None else sys.stdout
+    with JSON_OUTPUT_LOCK:
+        print(json.dumps(payload), file=output_stream, flush=True)
 
 
 def send_model_loading(
@@ -144,6 +149,52 @@ def send_model_loading(
     if detail:
         payload["detail"] = detail
     send_json(payload, request=request)
+
+
+def _progress_fraction(
+    fraction: Optional[Any] = None,
+    percent: Optional[Any] = None,
+) -> Optional[float]:
+    value = fraction
+    divisor = 1.0
+    if value is None and percent is not None:
+        value = percent
+        divisor = 100.0
+    try:
+        number = float(value) / divisor
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return min(max(number, 0.0), 1.0)
+
+
+def send_generation_progress(
+    model_id: str,
+    phase: str,
+    *,
+    backend: str,
+    request: Optional[dict] = None,
+    message: Optional[str] = None,
+    fraction: Optional[Any] = None,
+    percent: Optional[Any] = None,
+    estimated: bool = False,
+    stream: Optional[Any] = None,
+):
+    progress_fraction = _progress_fraction(fraction=fraction, percent=percent)
+    payload: Dict[str, Any] = {
+        "type": "generation.progress",
+        "model": model_id,
+        "backend": backend,
+        "phase": phase,
+        "estimated": bool(estimated),
+    }
+    if message:
+        payload["message"] = message
+    if progress_fraction is not None:
+        payload["fraction"] = progress_fraction
+        payload["percent"] = int(round(progress_fraction * 100))
+    send_json(payload, request=request, stream=stream)
 
 
 def send_timing(
@@ -1355,6 +1406,149 @@ def _generate_speech_segments(
         raise last_type_error
 
 
+def _safe_len(value: Any) -> Optional[int]:
+    try:
+        length = len(value)
+    except Exception:
+        return None
+    return length if length > 0 else None
+
+
+class _MFluxGenerationProgressCallback:
+    def __init__(self, model_id: str, request: dict, total_steps: int):
+        self.model_id = model_id
+        self.request = request
+        self.total_steps = max(int(total_steps), 1)
+        self.step_count = 0
+        self.last_percent = -1
+
+    def reset(self) -> None:
+        self.step_count = 0
+        self.last_percent = -1
+
+    def call_in_loop(self, t, seed, prompt, latents, config, time_steps) -> None:
+        total_steps = (
+            _positive_int(getattr(config, "num_inference_steps", None))
+            or _positive_int(getattr(config, "steps", None))
+            or _safe_len(time_steps)
+            or self.total_steps
+        )
+        self.step_count += 1
+        denoising_fraction = min(max(self.step_count / max(total_steps, 1), 0.0), 1.0)
+        overall_fraction = min(0.90, denoising_fraction * 0.90)
+        percent = int(round(overall_fraction * 100))
+        if percent == self.last_percent:
+            return
+        self.last_percent = percent
+        send_generation_progress(
+            self.model_id,
+            "denoising",
+            backend="image",
+            request=self.request,
+            message=f"Denoising image ({self.step_count}/{total_steps})",
+            fraction=overall_fraction,
+            estimated=False,
+        )
+
+
+def _register_mflux_progress_callback(model: Any, callback: Any):
+    registry = getattr(model, "callbacks", None)
+    register = getattr(registry, "register", None)
+    if not callable(register):
+        return lambda: None
+
+    register(callback)
+
+    def unregister() -> None:
+        for attribute in ("in_loop", "before_loop", "after_loop", "interrupt"):
+            callbacks = getattr(registry, attribute, None)
+            if not isinstance(callbacks, list):
+                continue
+            while callback in callbacks:
+                callbacks.remove(callback)
+
+    return unregister
+
+
+def _estimated_speech_segment_count(adapter: str, text: str) -> int:
+    if adapter == "kokoro":
+        segments = [segment for segment in re.split(r"\n+", text.strip()) if segment.strip()]
+        return max(1, len(segments))
+
+    return 1
+
+
+def _speech_segment_fraction(segment_count: int, estimated_total: int) -> float:
+    total = max(estimated_total, segment_count, 1)
+    return min(0.88, 0.10 + 0.75 * (segment_count / total))
+
+
+def _estimated_speech_duration_seconds(text: str, ddpm_steps: int) -> float:
+    text_seconds = max(len(text.strip()), 1) / 18.0
+    diffusion_seconds = max(ddpm_steps, 1) * 0.65
+    return min(max(text_seconds + diffusion_seconds, 8.0), 120.0)
+
+
+class _EstimatedGenerationProgressEmitter:
+    def __init__(
+        self,
+        model_id: str,
+        backend: str,
+        request: dict,
+        *,
+        phase: str,
+        message: str,
+        duration_seconds: float,
+        start_fraction: float = 0.12,
+        end_fraction: float = 0.86,
+        stream: Optional[Any] = None,
+    ):
+        self.model_id = model_id
+        self.backend = backend
+        self.request = request
+        self.phase = phase
+        self.message = message
+        self.duration_seconds = max(duration_seconds, 1.0)
+        self.start_fraction = start_fraction
+        self.end_fraction = end_fraction
+        self.stop_event = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+        self.started_at = 0.0
+        self.last_percent = -1
+        self.stream = stream
+
+    def start(self) -> None:
+        self.started_at = time.perf_counter()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=0.2)
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(0.5):
+            elapsed = time.perf_counter() - self.started_at
+            raw_fraction = min(max(elapsed / self.duration_seconds, 0.0), 1.0)
+            eased_fraction = 1.0 - ((1.0 - raw_fraction) ** 2)
+            fraction = self.start_fraction + (self.end_fraction - self.start_fraction) * eased_fraction
+            percent = int(round(fraction * 100))
+            if percent <= self.last_percent:
+                continue
+            self.last_percent = percent
+            send_generation_progress(
+                self.model_id,
+                self.phase,
+                backend=self.backend,
+                request=self.request,
+                message=self.message,
+                fraction=fraction,
+                estimated=True,
+                stream=self.stream,
+            )
+
+
 def handle_image_generation(request: dict) -> None:
     """Handle image.generate request via mflux"""
     model_id = request.get("model")
@@ -1407,9 +1601,14 @@ def handle_image_generation(request: dict) -> None:
             model_id, edit=bool(image_paths), request=request
         )
 
-        send_json(
-            {"type": "model.loading", "model": model_id, "status": "generating"},
+        send_generation_progress(
+            model_id,
+            "preparing",
+            backend="image",
             request=request,
+            message="Preparing image generation",
+            fraction=0.0,
+            estimated=False,
         )
 
         generation_kwargs = {
@@ -1424,20 +1623,50 @@ def handle_image_generation(request: dict) -> None:
         if image_paths and hasattr(model, "generate_image"):
             generation_kwargs["image_paths"] = image_paths
 
+        progress_callback = _MFluxGenerationProgressCallback(model_id, request, steps)
+        unregister_progress_callback = _register_mflux_progress_callback(
+            model, progress_callback
+        )
         try:
-            image = model.generate_image(**generation_kwargs)
-        except TypeError:
-            generation_kwargs.pop("image_paths", None)
-            if image_paths:
-                generation_kwargs["image_path"] = image_paths[0]
             try:
+                progress_callback.reset()
                 image = model.generate_image(**generation_kwargs)
             except TypeError:
-                generation_kwargs.pop("guidance", None)
-                image = model.generate_image(**generation_kwargs)
+                generation_kwargs.pop("image_paths", None)
+                if image_paths:
+                    generation_kwargs["image_path"] = image_paths[0]
+                try:
+                    progress_callback.reset()
+                    image = model.generate_image(**generation_kwargs)
+                except TypeError:
+                    generation_kwargs.pop("guidance", None)
+                    progress_callback.reset()
+                    image = model.generate_image(**generation_kwargs)
+        finally:
+            unregister_progress_callback()
+
+        send_generation_progress(
+            model_id,
+            "saving",
+            backend="image",
+            request=request,
+            message="Saving image",
+            fraction=0.96,
+            estimated=False,
+        )
 
         output_path = output_dir / f"{_safe_filename_component(model_id)}-{uuid.uuid4().hex}.png"
         image.save(str(output_path), overwrite=True)
+
+        send_generation_progress(
+            model_id,
+            "complete",
+            backend="image",
+            request=request,
+            message="Image complete",
+            fraction=1.0,
+            estimated=False,
+        )
 
         send_json(
             {
@@ -1521,32 +1750,68 @@ def handle_audio_speech(request: dict) -> None:
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         model = load_audio_model_if_needed(model_id, request=request)
+        adapter = _audio_adapter(request)
+        progress_is_estimated = True
+        json_stdout = sys.stdout
 
-        send_json(
-            {"type": "model.loading", "model": model_id, "status": "generating"},
+        send_generation_progress(
+            model_id,
+            "preparing",
+            backend="audio",
             request=request,
+            message="Preparing speech generation",
+            fraction=0.0,
+            estimated=progress_is_estimated,
         )
 
         output_path = output_dir / f"{_safe_filename_component(model_id)}-{uuid.uuid4().hex}.wav"
         audio_segments = []
         total_samples = 0
         sample_rate = 24000
+        segment_count = 0
+        estimated_segments = _estimated_speech_segment_count(adapter, text)
+        progress_emitter = None
+        if adapter == "kugelaudio":
+            progress_emitter = _EstimatedGenerationProgressEmitter(
+                model_id,
+                "audio",
+                request,
+                phase="synthesizing",
+                message="Synthesizing speech",
+                duration_seconds=_estimated_speech_duration_seconds(text, ddpm_steps),
+                stream=json_stdout,
+            )
+            progress_emitter.start()
 
-        with contextlib.redirect_stdout(sys.stderr):
-            adapter = _audio_adapter(request)
-            _configure_espeak_runtime()
-            for result in _generate_speech_segments(
-                model, adapter, text, cfg_scale, ddpm_steps, voice, speed, lang_code
-            ):
-                audio = result.audio
-                sample_rate = int(
-                    getattr(result, "sample_rate", sample_rate) or sample_rate
-                )
-                audio_segments.append(audio)
-                try:
-                    total_samples += int(audio.shape[0])
-                except Exception:
-                    pass
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                _configure_espeak_runtime()
+                for result in _generate_speech_segments(
+                    model, adapter, text, cfg_scale, ddpm_steps, voice, speed, lang_code
+                ):
+                    segment_count += 1
+                    audio = result.audio
+                    sample_rate = int(
+                        getattr(result, "sample_rate", sample_rate) or sample_rate
+                    )
+                    audio_segments.append(audio)
+                    send_generation_progress(
+                        model_id,
+                        "synthesizing",
+                        backend="audio",
+                        request=request,
+                        message=f"Generated speech segment {segment_count}",
+                        fraction=_speech_segment_fraction(segment_count, estimated_segments),
+                        estimated=progress_is_estimated or segment_count > estimated_segments,
+                        stream=json_stdout,
+                    )
+                    try:
+                        total_samples += int(audio.shape[0])
+                    except Exception:
+                        pass
+        finally:
+            if progress_emitter is not None:
+                progress_emitter.stop()
 
         if not audio_segments:
             send_json(
@@ -1561,7 +1826,26 @@ def handle_audio_speech(request: dict) -> None:
             import mlx.core as mx
             audio = mx.concatenate(audio_segments, axis=0)
 
+        send_generation_progress(
+            model_id,
+            "writing",
+            backend="audio",
+            request=request,
+            message="Writing speech audio",
+            fraction=0.95,
+            estimated=progress_is_estimated,
+        )
         _write_wav(output_path, audio, sample_rate=sample_rate)
+
+        send_generation_progress(
+            model_id,
+            "complete",
+            backend="audio",
+            request=request,
+            message="Speech complete",
+            fraction=1.0,
+            estimated=False,
+        )
 
         send_json(
             {
@@ -1875,9 +2159,14 @@ def handle_music_generation(request: dict) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         dit_handler, llm_handler = load_music_model_if_needed(model_id, request=request)
 
-        send_json(
-            {"type": "model.loading", "model": model_id, "status": "generating"},
+        send_generation_progress(
+            model_id,
+            "preparing",
+            backend="music",
             request=request,
+            message="Preparing music generation",
+            fraction=0.0,
+            estimated=True,
         )
 
         seed, params_kwargs, config_kwargs = build_acestep_generation_inputs(
@@ -1887,6 +2176,19 @@ def handle_music_generation(request: dict) -> None:
             seed_default=time.time_ns() % 2_147_483_647,
         )
         config = GenerationConfig(**config_kwargs)
+        json_stdout = sys.stdout
+
+        def bridge_progress(value=None, desc=None, **_kwargs):
+            send_generation_progress(
+                model_id,
+                "generating",
+                backend="music",
+                request=request,
+                message=coerce_string(desc, "Generating music"),
+                fraction=value,
+                estimated=True,
+                stream=json_stdout,
+            )
 
         with contextlib.redirect_stdout(sys.stderr):
             result = generate_music(
@@ -1895,6 +2197,7 @@ def handle_music_generation(request: dict) -> None:
                 GenerationParams(**params_kwargs),
                 config,
                 save_dir=str(output_dir),
+                progress=bridge_progress,
             )
 
         if not result.success:
@@ -1905,6 +2208,15 @@ def handle_music_generation(request: dict) -> None:
         for audio in result.audios:
             path = audio.get("path")
             if path:
+                send_generation_progress(
+                    model_id,
+                    "finalizing",
+                    backend="music",
+                    request=request,
+                    message="Preparing audio file",
+                    fraction=0.98,
+                    estimated=True,
+                )
                 send_json(
                     {
                         "type": "audio.generated",
@@ -1914,6 +2226,16 @@ def handle_music_generation(request: dict) -> None:
                     },
                     request=request,
                 )
+
+        send_generation_progress(
+            model_id,
+            "complete",
+            backend="music",
+            request=request,
+            message="Music complete",
+            fraction=1.0,
+            estimated=False,
+        )
 
         send_json(
             {

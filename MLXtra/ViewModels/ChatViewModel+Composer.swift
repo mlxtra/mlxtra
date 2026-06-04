@@ -403,6 +403,8 @@ extension ChatViewModel {
                     loadingMessage = message
                 case .modelLoadProgress(let progress):
                     loadingMessage = progress.detail ?? progress.phase.displayTitle
+                case .generationProgress(let progress):
+                    loadingMessage = progress.displayDetail
                 case .error(let error):
                     throw error
                 case .started, .image, .audio, .toolCalls:

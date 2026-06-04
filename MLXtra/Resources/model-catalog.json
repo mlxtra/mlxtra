@@ -14,7 +14,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 32768,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 5.6,
+      "downloadSizeGB": 5.98,
       "estimatedMemoryGB": 6.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -24,7 +24,7 @@
       },
       "acceleration": {
         "modelId": "mlx-community/Qwen3.5-9B-MTP-4bit",
-        "downloadSizeGB": 0.15,
+        "downloadSizeGB": 0.16,
         "source": {
           "type": "hugging_face_snapshot",
           "repo": "mlx-community/Qwen3.5-9B-MTP-4bit",
@@ -149,7 +149,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 8192,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 2.5,
+      "downloadSizeGB": 16.02,
       "estimatedMemoryGB": 3.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -277,7 +277,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 32768,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 1.5,
+      "downloadSizeGB": 1.75,
       "estimatedMemoryGB": 3.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -402,7 +402,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 32768,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 3.6,
+      "downloadSizeGB": 3.61,
       "estimatedMemoryGB": 4.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -453,7 +453,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 32768,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 11.1,
+      "downloadSizeGB": 11.02,
       "estimatedMemoryGB": 12.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -463,7 +463,7 @@
       },
       "acceleration": {
         "modelId": "mlx-community/gemma-4-12B-it-assistant-bf16",
-        "downloadSizeGB": 1.76,
+        "downloadSizeGB": 0.88,
         "source": {
           "type": "hugging_face_snapshot",
           "repo": "mlx-community/gemma-4-12B-it-assistant-bf16",
@@ -511,7 +511,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 32768,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 15.6,
+      "downloadSizeGB": 15.64,
       "estimatedMemoryGB": 17.5,
       "source": {
         "type": "hugging_face_snapshot",
@@ -562,7 +562,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 32768,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 16.1,
+      "downloadSizeGB": 16.08,
       "estimatedMemoryGB": 18.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -572,7 +572,7 @@
       },
       "acceleration": {
         "modelId": "mlx-community/Qwen3.6-27B-MTP-4bit",
-        "downloadSizeGB": 0.25,
+        "downloadSizeGB": 0.26,
         "source": {
           "type": "hugging_face_snapshot",
           "repo": "mlx-community/Qwen3.6-27B-MTP-4bit",
@@ -620,7 +620,7 @@
       "capabilities": ["chat", "vision"],
       "maxContextWindow": 32768,
       "defaultMaxTokens": 4096,
-      "downloadSizeGB": 20.4,
+      "downloadSizeGB": 20.43,
       "estimatedMemoryGB": 23.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -678,7 +678,7 @@
       "capabilities": ["image-generation", "image-editing"],
       "maxContextWindow": 0,
       "defaultMaxTokens": 0,
-      "downloadSizeGB": 15.0,
+      "downloadSizeGB": 23.74,
       "estimatedMemoryGB": 13.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -777,7 +777,7 @@
       "capabilities": ["image-generation"],
       "maxContextWindow": 0,
       "defaultMaxTokens": 0,
-      "downloadSizeGB": 32.9,
+      "downloadSizeGB": 32.90,
       "estimatedMemoryGB": 14.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -867,7 +867,7 @@
       "capabilities": ["speech-generation"],
       "maxContextWindow": 0,
       "defaultMaxTokens": 0,
-      "downloadSizeGB": 15.0,
+      "downloadSizeGB": 18.69,
       "estimatedMemoryGB": 19.0,
       "source": {
         "type": "hugging_face_snapshot",
@@ -1047,7 +1047,7 @@
       "capabilities": ["music-generation"],
       "maxContextWindow": 0,
       "defaultMaxTokens": 0,
-      "downloadSizeGB": 4.8,
+      "downloadSizeGB": 10.09,
       "estimatedMemoryGB": 4.0,
       "source": {
         "type": "component_bundle",

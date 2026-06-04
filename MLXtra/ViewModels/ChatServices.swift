@@ -76,6 +76,7 @@ struct ChatMediaToolExecutionPlan {
 enum ChatToolExecutionUpdate: Equatable {
     case progress(String)
     case modelLoadProgress(ModelLoadProgress)
+    case generationProgress(GenerationProgress)
     case generatedAsset(URL, kind: ChatGeneratedAssetKind)
 }
 

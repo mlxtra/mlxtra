@@ -200,6 +200,7 @@ struct ToolCall: Identifiable, Codable {
     var status: String
     var icon: String
     var details: [ToolCallDetail]
+    var generationProgress: GenerationProgress?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -207,6 +208,7 @@ struct ToolCall: Identifiable, Codable {
         case status
         case icon
         case details
+        case generationProgress
     }
 
     init(
@@ -214,13 +216,15 @@ struct ToolCall: Identifiable, Codable {
         toolName: String,
         status: String,
         icon: String,
-        details: [ToolCallDetail] = []
+        details: [ToolCallDetail] = [],
+        generationProgress: GenerationProgress? = nil
     ) {
         self.id = id
         self.toolName = toolName
         self.status = status
         self.icon = icon
         self.details = details
+        self.generationProgress = generationProgress
     }
 
     init(from decoder: Decoder) throws {
@@ -230,6 +234,7 @@ struct ToolCall: Identifiable, Codable {
         status = try container.decode(String.self, forKey: .status)
         icon = try container.decode(String.self, forKey: .icon)
         details = try container.decodeIfPresent([ToolCallDetail].self, forKey: .details) ?? []
+        generationProgress = try container.decodeIfPresent(GenerationProgress.self, forKey: .generationProgress)
     }
 
     var displayTitle: String {

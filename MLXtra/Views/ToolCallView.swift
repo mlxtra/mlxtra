@@ -37,6 +37,24 @@ struct ToolCallView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if shouldShowProgress, let progress = toolCall.generationProgress {
+                HStack(spacing: 8) {
+                    ToolCallProgressBar(
+                        fractionCompleted: progress.fractionCompleted,
+                        tint: statusColor
+                    )
+                    .frame(height: 4)
+
+                    Text(progress.percentText ?? "")
+                        .font(MLXtraDesignSystem.Typography.microMedium)
+                        .foregroundStyle(statusColor)
+                        .monospacedDigit()
+                        .frame(minWidth: 34, alignment: .trailing)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(progressAccessibilityLabel(progress))
+            }
+
             if isExpanded, shouldShowDetails {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(detailTitle)
@@ -101,6 +119,10 @@ struct ToolCallView: View {
 
     private var shouldShowDetails: Bool {
         !toolCall.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !toolCall.displayDetails.isEmpty
+    }
+
+    private var shouldShowProgress: Bool {
+        isStreaming && toolCall.generationProgress != nil
     }
 
     private var isComplete: Bool {
@@ -177,5 +199,52 @@ struct ToolCallView: View {
 
     private var statusBadgeFill: Color {
         isComplete ? Color.primary.opacity(0.045) : statusColor.opacity(0.10)
+    }
+
+    private func progressAccessibilityLabel(_ progress: GenerationProgress) -> String {
+        if let percent = progress.percent {
+            return progress.isEstimated
+                ? "Estimated generation progress \(percent) percent"
+                : "Generation progress \(percent) percent"
+        }
+
+        return progress.isEstimated
+            ? "Estimated generation progress"
+            : "Generation progress"
+    }
+}
+
+private struct ToolCallProgressBar: View {
+    let fractionCompleted: Double?
+    let tint: Color
+    @State private var indeterminateOffset: CGFloat = -0.35
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(tint.opacity(0.14))
+
+                if let fractionCompleted {
+                    Capsule()
+                        .fill(tint.opacity(0.80))
+                        .frame(width: max(3, width * fractionCompleted))
+                } else {
+                    Capsule()
+                        .fill(tint.opacity(0.80))
+                        .frame(width: max(28, width * 0.32))
+                        .offset(x: width * indeterminateOffset)
+                }
+            }
+        }
+        .clipped()
+        .onAppear {
+            guard fractionCompleted == nil else { return }
+            indeterminateOffset = -0.35
+            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: false)) {
+                indeterminateOffset = 1.05
+            }
+        }
     }
 }

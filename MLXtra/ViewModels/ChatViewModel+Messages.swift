@@ -77,6 +77,12 @@ extension ChatViewModel {
             case .modelLoadProgress(let progress):
                 self.modelLoadProgress = progress
                 self.loadingMessage = progress.detail ?? progress.phase.displayTitle
+            case .generationProgress(let progress):
+                self.generationProgress = progress
+                self.loadingMessage = progress.displayDetail
+                if let messageId = targetMessageId {
+                    self.updateMessageToolCall(messageId, progress: progress)
+                }
             case .generatedAsset(let url, let kind):
                 if let messageId = targetMessageId {
                     self.attachGeneratedAsset(url, kind: kind, toMessage: messageId)
@@ -277,6 +283,16 @@ extension ChatViewModel {
         }
     }
 
+    func updateMessageToolCall(_ messageId: UUID, progress: GenerationProgress) {
+        if let location = messageLocation(for: messageId),
+           var toolCall = chats[location.chatIndex].messages[location.messageIndex].toolCalls.last {
+            let chatIndex = location.chatIndex
+            let messageIndex = location.messageIndex
+            toolCall.generationProgress = progress
+            chats[chatIndex].messages[messageIndex].toolCalls[chats[chatIndex].messages[messageIndex].toolCalls.count - 1] = toolCall
+        }
+    }
+
     func handleGenerationError(
         _ error: Error,
         replacingMessageId messageId: UUID? = nil,
@@ -333,6 +349,7 @@ extension ChatViewModel {
         activeGenerationID = nil
         loadingMessage = ""
         modelLoadProgress = nil
+        generationProgress = nil
     }
 
     private func userFacingErrorMessage(for error: Error) -> String {
@@ -433,6 +450,7 @@ extension ChatViewModel: VLMExecutionDelegate {
         isModelLoading = false
         loadingMessage = ""
         modelLoadProgress = nil
+        generationProgress = nil
     }
 
     func modelLoadingFailed(modelId: String, error: Error) {
@@ -440,6 +458,7 @@ extension ChatViewModel: VLMExecutionDelegate {
         isModelLoading = false
         loadingMessage = ""
         modelLoadProgress = nil
+        generationProgress = nil
     }
 
     private func acceptsModelLoadProgress(_ progress: ModelLoadProgress) -> Bool {

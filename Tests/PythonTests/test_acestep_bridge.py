@@ -121,6 +121,7 @@ class TestGenerateMusicOnce(unittest.TestCase):
         def fake_generate_music(*args, **kwargs):
             print("generate noise")
             captured["generate_kwargs"] = kwargs
+            kwargs["progress"](0.62, desc="Diffusing music")
             return types.SimpleNamespace(
                 success=True,
                 audios=[{"path": "/tmp/acestep-test.wav", "sample_rate": 48000}],
@@ -175,6 +176,14 @@ class TestGenerateMusicOnce(unittest.TestCase):
         self.assertEqual(messages[0]["type"], "model.loading")
         self.assertEqual(messages[-1]["type"], "chat.completion.complete")
         self.assertTrue(all(message["request_id"] == "req-music" for message in messages))
+        progress_messages = [
+            message for message in messages if message["type"] == "generation.progress"
+        ]
+        self.assertTrue(progress_messages)
+        self.assertTrue(any(message.get("message") == "Diffusing music" for message in progress_messages))
+        self.assertTrue(any(message.get("estimated") is True for message in progress_messages))
+        self.assertEqual(progress_messages[-1]["phase"], "complete")
+        self.assertFalse(progress_messages[-1]["estimated"])
 
         params = captured["params_kwargs"]
         self.assertEqual(params["duration"], 12.5)

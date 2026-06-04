@@ -196,6 +196,18 @@ final class ExecutionTypesTests: XCTestCase {
         } else {
             XCTFail("Expected .progress case")
         }
+
+        let progress = GenerationProgress(
+            modelId: "image-model",
+            backend: .image,
+            phase: "denoising",
+            fractionCompleted: 0.5
+        )
+        if case .generationProgress(let parsedProgress) = ExecutionEvent.generationProgress(progress) {
+            XCTAssertEqual(parsedProgress, progress)
+        } else {
+            XCTFail("Expected .generationProgress case")
+        }
     }
 
 

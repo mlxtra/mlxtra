@@ -341,6 +341,7 @@ final class ChatAndMessageTests: XCTestCase {
         XCTAssertEqual(toolCall.details, [
             ToolCallDetail(label: "Lyrics", value: "[verse]\nTest lyric")
         ])
+        XCTAssertNil(toolCall.generationProgress)
     }
 
     func testToolCallDisplayMovesLegacyModelNameIntoDetails() {

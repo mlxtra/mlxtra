@@ -807,6 +807,75 @@ class TestMediaGenerationBridge(unittest.TestCase):
         self.assertEqual(messages[-2]["seed"], 0)
         fake_mx.clear_cache.assert_called_once()
 
+    def test_image_generation_emits_mflux_callback_progress(self):
+        class FakeImage:
+            def save(self, path, overwrite=False):
+                Path(path).write_bytes(b"png")
+
+        class FakeCallbacks:
+            def __init__(self):
+                self.in_loop = []
+                self.before_loop = []
+                self.after_loop = []
+                self.interrupt = []
+
+            def register(self, callback):
+                if hasattr(callback, "call_in_loop"):
+                    self.in_loop.append(callback)
+
+        class FakeConfig:
+            num_inference_steps = 2
+
+        class FakeImageModel:
+            def __init__(self):
+                self.callbacks = FakeCallbacks()
+
+            def generate_image(self, **kwargs):
+                for callback in list(self.callbacks.in_loop):
+                    callback.call_in_loop(0, kwargs["seed"], kwargs["prompt"], None, FakeConfig(), range(2))
+                    callback.call_in_loop(1, kwargs["seed"], kwargs["prompt"], None, FakeConfig(), range(2))
+                return FakeImage()
+
+        fake_model = FakeImageModel()
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_image_model_if_needed", return_value=fake_model
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_image_generation(
+                {
+                    "type": "image.generate",
+                    "model": "image-model",
+                    "prompt": "draw",
+                    "parameters": {"steps": 2, "seed": 7},
+                    "output_dir": output_dir,
+                    "request_id": "req-image-progress",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        progress_messages = [
+            message for message in messages if message["type"] == "generation.progress"
+        ]
+
+        self.assertEqual(fake_model.callbacks.in_loop, [])
+        self.assertTrue(any(message["phase"] == "denoising" for message in progress_messages))
+        self.assertTrue(any(message["percent"] == 90 for message in progress_messages))
+        self.assertEqual(progress_messages[-1]["phase"], "complete")
+        self.assertEqual(progress_messages[-1]["percent"], 100)
+        self.assertFalse(progress_messages[-1]["estimated"])
+        fake_mx.clear_cache.assert_called_once()
+
     def test_image_generation_coerces_invalid_parameters_to_defaults(self):
         class FakeImage:
             def save(self, path, overwrite=False):
@@ -927,6 +996,108 @@ class TestMediaGenerationBridge(unittest.TestCase):
         self.assertIn("without audio", messages[-1]["message"])
         fake_mx.clear_cache.assert_called_once()
 
+    def test_kokoro_audio_generation_emits_segment_progress(self):
+        class FakeAudio:
+            shape = (120,)
+
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+        result = types.SimpleNamespace(audio=FakeAudio(), sample_rate=24000)
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_audio_model_if_needed", return_value=object()
+        ), patch.object(
+            python_bridge, "_generate_speech_segments", return_value=[result]
+        ), patch.object(
+            python_bridge, "_write_wav"
+        ) as write_wav, patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "model": "kokoro-model",
+                    "input": "speak",
+                    "parameters": {
+                        "runtimeOptions": {
+                            "audio": {"adapter": "kokoro", "defaultVoice": "af_heart"}
+                        }
+                    },
+                    "output_dir": output_dir,
+                    "request_id": "req-kokoro-progress",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        progress_messages = [
+            message for message in messages if message["type"] == "generation.progress"
+        ]
+
+        self.assertTrue(any(message["phase"] == "synthesizing" for message in progress_messages))
+        self.assertTrue(any(message.get("estimated") is True for message in progress_messages))
+        self.assertEqual(progress_messages[-1]["phase"], "complete")
+        self.assertEqual(progress_messages[-1]["percent"], 100)
+        self.assertFalse(progress_messages[-1]["estimated"])
+        write_wav.assert_called_once()
+        fake_mx.clear_cache.assert_called_once()
+
+    def test_kugelaudio_audio_generation_marks_progress_estimated(self):
+        class FakeAudio:
+            shape = (120,)
+
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+        result = types.SimpleNamespace(audio=FakeAudio(), sample_rate=24000)
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_audio_model_if_needed", return_value=object()
+        ), patch.object(
+            python_bridge, "_generate_speech_segments", return_value=[result]
+        ), patch.object(
+            python_bridge, "_write_wav"
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "model": "kugelaudio-model",
+                    "input": "speak",
+                    "parameters": {
+                        "runtimeOptions": {
+                            "audio": {"adapter": "kugelaudio", "defaultVoice": "default"}
+                        }
+                    },
+                    "output_dir": output_dir,
+                    "request_id": "req-kugel-progress",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        progress_messages = [
+            message for message in messages if message["type"] == "generation.progress"
+        ]
+
+        self.assertTrue(progress_messages)
+        self.assertTrue(any(message.get("estimated") is True for message in progress_messages))
+        self.assertEqual(progress_messages[-1]["phase"], "complete")
+        self.assertFalse(progress_messages[-1]["estimated"])
+        fake_mx.clear_cache.assert_called_once()
+
 
 class TestSendJson(unittest.TestCase):
     def test_outputs_valid_json(self):
@@ -952,6 +1123,33 @@ class TestSendJson(unittest.TestCase):
             )
         parsed = json.loads(captured.getvalue().strip())
         assert parsed["request_id"] == "req-123"
+
+    def test_send_generation_progress_outputs_clamped_percentage(self):
+        import io
+        from contextlib import redirect_stdout
+
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            python_bridge.send_generation_progress(
+                "image-model",
+                "denoising",
+                backend="image",
+                request={"request_id": "req-progress"},
+                message="Denoising image",
+                fraction=1.4,
+                estimated=False,
+            )
+
+        parsed = json.loads(captured.getvalue().strip())
+        self.assertEqual(parsed["type"], "generation.progress")
+        self.assertEqual(parsed["request_id"], "req-progress")
+        self.assertEqual(parsed["model"], "image-model")
+        self.assertEqual(parsed["backend"], "image")
+        self.assertEqual(parsed["phase"], "denoising")
+        self.assertEqual(parsed["message"], "Denoising image")
+        self.assertEqual(parsed["fraction"], 1.0)
+        self.assertEqual(parsed["percent"], 100)
+        self.assertFalse(parsed["estimated"])
 
 
 class TestRequestIDPropagation(unittest.TestCase):
