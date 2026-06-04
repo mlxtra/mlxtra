@@ -363,10 +363,10 @@ extension ChatViewModel {
     }
 
     func selectModelProfile(_ profile: ModelCapabilityProfile) {
-        guard !isInputDisabled else { return }
         if profile.modality == .vision {
             cancelLaunchModelPreload()
         }
+        guard !isInputDisabled else { return }
         modelSelectionStore.setSelectedModelId(profile.modelId, for: profile.modality)
         modelSelectionRevision += 1
         isModelMenuOpen = false

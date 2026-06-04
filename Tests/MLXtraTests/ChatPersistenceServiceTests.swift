@@ -135,8 +135,7 @@ final class ChatPersistenceServiceTests: XCTestCase {
 
         service.scheduleSave([pendingChat], selectedChatId: pendingChat.id)
         service.saveSelectedChatId(newerSelectedChatId)
-
-        try await Task.sleep(nanoseconds: 100_000_000)
+        service.flushPendingSave()
 
         let reloadedService = LocalChatPersistenceService(
             userDefaults: defaults,
