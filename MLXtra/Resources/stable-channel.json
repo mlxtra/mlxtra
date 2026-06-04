@@ -14,8 +14,8 @@
       "arch": "arm64",
       "component": "base",
       "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.7/runtime-macos-arm64-0.1.7.zip",
-      "sha256": "0356c0a5e2d0ee67e77952511c2131503d81fd698768bbf8e5846d12b8d01a82",
-      "sizeBytes": 367520542,
+      "sha256": "3d89c0c46b515126ef676af737a666b69211ab39c616d21cb51c134d983e46e0",
+      "sizeBytes": 370782243,
       "compatibilityApi": 1,
       "minAppVersion": "1.0.12"
     },
@@ -25,8 +25,8 @@
       "arch": "arm64",
       "component": "music",
       "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.7/runtime-music-macos-arm64-0.1.7.zip",
-      "sha256": "c7d7370aa87216c4c7cabf5fdb0128dbacb9bde9ea9e6ef4381d0d13ff03cefa",
-      "sizeBytes": 446339379,
+      "sha256": "a6d27b77ee76ae7c20be5db101f98c1ef832eb9ead31fb1666aa37bf4495cedd",
+      "sizeBytes": 463433951,
       "compatibilityApi": 1,
       "minAppVersion": "1.0.12"
     }
