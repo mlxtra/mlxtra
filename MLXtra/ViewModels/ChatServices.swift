@@ -1,18 +1,31 @@
 @preconcurrency import Foundation
 
+struct ChatPersistenceSnapshot: @unchecked Sendable {
+    let chats: [Chat]
+    let selectedChatId: UUID?
+}
+
 @MainActor
 protocol ChatPersistenceServicing: AnyObject {
+    var loadsConversationHistoryAsynchronously: Bool { get }
     func loadChats() -> [Chat]
+    func loadConversationSnapshot() async -> ChatPersistenceSnapshot
     func saveChats(_ chats: [Chat])
     func scheduleSave(_ chats: [Chat], selectedChatId: UUID?)
     func flushPendingSave()
     func loadSelectedChatId() -> UUID?
     func saveSelectedChatId(_ selectedChatId: UUID?)
-    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL]
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) async -> [URL]
     func deleteAttachments(for chatId: UUID)
 }
 
 extension ChatPersistenceServicing {
+    var loadsConversationHistoryAsynchronously: Bool { false }
+
+    func loadConversationSnapshot() async -> ChatPersistenceSnapshot {
+        ChatPersistenceSnapshot(chats: loadChats(), selectedChatId: loadSelectedChatId())
+    }
+
     func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
         saveChats(chats)
         saveSelectedChatId(selectedChatId)

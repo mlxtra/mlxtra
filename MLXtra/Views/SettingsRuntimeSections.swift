@@ -163,10 +163,20 @@ struct RuntimeUpdateSettingsSection: View {
             Button {
                 manager.bootstrapStableRuntimeInBackground(reportFailures: true)
             } label: {
-                Label("Check", systemImage: "arrow.clockwise")
+                Label(runtimeActionTitle, systemImage: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
         }
+    }
+
+    private var runtimeActionTitle: String {
+        if case .installed = manager.state {
+            return "Check Again"
+        }
+        if RuntimeManager.activeRuntimeManifest() != nil {
+            return "Check Again"
+        }
+        return "Check"
     }
 
     private var detailText: String {

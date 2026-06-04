@@ -162,7 +162,7 @@ struct ContentView: View {
             pendingDownloadModelId = ""
         case .notDownloaded, .failed:
             guard !model.requiresRuntimeSetupBeforeDownload() else {
-                RuntimeUpdateManager.shared.bootstrapStableRuntimeInBackground(
+                runtimeUpdateManager.bootstrapStableRuntimeInBackground(
                     reportFailures: true,
                     component: model.runtime.component
                 )

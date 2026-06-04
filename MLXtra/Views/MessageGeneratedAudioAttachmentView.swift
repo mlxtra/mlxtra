@@ -3,22 +3,24 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-private func copyGeneratedMediaFile(from sourceURL: URL, to destinationURL: URL) throws {
-    let fileManager = FileManager.default
-    let temporaryURL = destinationURL
-        .deletingLastPathComponent()
-        .appendingPathComponent(".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
+private func copyGeneratedMediaFile(from sourceURL: URL, to destinationURL: URL) async throws {
+    try await Task.detached(priority: .utility) {
+        let fileManager = FileManager.default
+        let temporaryURL = destinationURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
 
-    defer {
-        try? fileManager.removeItem(at: temporaryURL)
-    }
+        defer {
+            try? fileManager.removeItem(at: temporaryURL)
+        }
 
-    try fileManager.copyItem(at: sourceURL, to: temporaryURL)
-    if fileManager.fileExists(atPath: destinationURL.path) {
-        _ = try fileManager.replaceItemAt(destinationURL, withItemAt: temporaryURL)
-    } else {
-        try fileManager.moveItem(at: temporaryURL, to: destinationURL)
-    }
+        try fileManager.copyItem(at: sourceURL, to: temporaryURL)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            _ = try fileManager.replaceItemAt(destinationURL, withItemAt: temporaryURL)
+        } else {
+            try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+        }
+    }.value
 }
 
 struct GeneratedAudioAttachmentView: View {
@@ -284,10 +286,14 @@ struct GeneratedAudioAttachmentView: View {
         panel.begin { response in
             guard response == .OK, let destinationURL = panel.url else { return }
 
-            do {
-                try copyGeneratedMediaFile(from: audioURL, to: destinationURL)
-            } catch {
-                downloadError = error.localizedDescription
+            Task {
+                do {
+                    try await copyGeneratedMediaFile(from: audioURL, to: destinationURL)
+                } catch {
+                    await MainActor.run {
+                        downloadError = error.localizedDescription
+                    }
+                }
             }
         }
     }

@@ -280,6 +280,12 @@ struct ModelDownloadRow: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.orange)
 
+                Text("Requires \(model.runtime.component.displayName) \(model.runtime.minVersion)+ before download.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+
                 if isPendingDownload {
                     VStack(alignment: .trailing, spacing: 6) {
                         Label("Queued", systemImage: "clock")
@@ -422,11 +428,13 @@ struct ModelDownloadRow: View {
                         .font(.callout.weight(.medium))
                         .foregroundStyle(failedState.failureTint)
 
-                    Text(message)
+                    Text(failedState.failureSummaryTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
-                        .lineLimit(3)
+                        .lineLimit(1)
+                        .help(message)
+                        .accessibilityLabel(message)
 
                     Button {
                         requestDownload()

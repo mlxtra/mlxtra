@@ -11,11 +11,21 @@ struct ImageThumbnailView: View {
     var body: some View {
         Button(action: {}) {
             ZStack(alignment: .topTrailing) {
-                Image(nsImage: ImageCache.shared.image(for: imageURL) ?? NSImage())
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 80, height: 60)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                AsyncCachedImage(url: imageURL) { image in
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 80, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.primary.opacity(0.06))
+                        .frame(width: 80, height: 60)
+                        .overlay {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                }
 
                 if isHovered {
                     Button(action: onRemove) {
@@ -234,9 +244,28 @@ func isSupportedImageURL(_ url: URL) -> Bool {
     return type.conforms(to: .image)
 }
 
-func saveTemporaryImage(_ image: NSImage) -> URL? {
-    guard let data = image.pngData else { return nil }
+func saveTemporaryImage(_ image: NSImage) async -> URL? {
+    await Task.detached(priority: .utility) {
+        guard let data = image.pngData else { return nil }
+        return writeTemporaryPNGData(data)
+    }.value
+}
 
+func saveTemporaryImageData(_ imageData: Data?) async -> URL? {
+    await Task.detached(priority: .utility) {
+        guard
+            let imageData,
+            let image = NSImage(data: imageData),
+            let data = image.pngData
+        else {
+            return nil
+        }
+
+        return writeTemporaryPNGData(data)
+    }.value
+}
+
+private func writeTemporaryPNGData(_ data: Data) -> URL? {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("MLXtra", isDirectory: true)
         .appendingPathComponent("PastedImages", isDirectory: true)

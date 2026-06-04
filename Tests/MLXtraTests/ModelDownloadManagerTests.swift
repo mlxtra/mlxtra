@@ -1288,6 +1288,27 @@ final class ModelDownloadManagerTests: XCTestCase {
         )
     }
 
+    func testDownloadStateFailureSummaryUsesCompactUserFacingText() {
+        XCTAssertEqual(
+            ModelDownloadManager.DownloadState
+                .failed("Local Hugging Face cache is incomplete. Repair will verify the snapshot and redownload missing files.")
+                .failureSummaryTitle,
+            "Local cache incomplete"
+        )
+        XCTAssertEqual(
+            ModelDownloadManager.DownloadState
+                .failed("Network connection lost.")
+                .failureSummaryTitle,
+            "Network unavailable"
+        )
+        XCTAssertEqual(
+            ModelDownloadManager.DownloadState
+                .failed("Download failed for an unknown reason.")
+                .failureSummaryTitle,
+            "Download failed"
+        )
+    }
+
     func testRemoveLocalFilesDeletesHuggingFaceCacheDirectory() throws {
         let cacheRoot = try makeTemporaryDirectory()
         let checkpointsPath = try makeTemporaryDirectory()

@@ -2,22 +2,24 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-private func copyGeneratedImageFile(from sourceURL: URL, to destinationURL: URL) throws {
-    let fileManager = FileManager.default
-    let temporaryURL = destinationURL
-        .deletingLastPathComponent()
-        .appendingPathComponent(".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
+private func copyGeneratedImageFile(from sourceURL: URL, to destinationURL: URL) async throws {
+    try await Task.detached(priority: .utility) {
+        let fileManager = FileManager.default
+        let temporaryURL = destinationURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp")
 
-    defer {
-        try? fileManager.removeItem(at: temporaryURL)
-    }
+        defer {
+            try? fileManager.removeItem(at: temporaryURL)
+        }
 
-    try fileManager.copyItem(at: sourceURL, to: temporaryURL)
-    if fileManager.fileExists(atPath: destinationURL.path) {
-        _ = try fileManager.replaceItemAt(destinationURL, withItemAt: temporaryURL)
-    } else {
-        try fileManager.moveItem(at: temporaryURL, to: destinationURL)
-    }
+        try fileManager.copyItem(at: sourceURL, to: temporaryURL)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            _ = try fileManager.replaceItemAt(destinationURL, withItemAt: temporaryURL)
+        } else {
+            try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+        }
+    }.value
 }
 
 struct UserMessageContent: View {
@@ -69,15 +71,25 @@ struct SentImageAttachmentView: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            Image(nsImage: ImageCache.shared.image(for: imageURL) ?? NSImage())
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: 112, height: 84)
-                .clipShape(RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous)
-                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                )
+            AsyncCachedImage(url: imageURL) { image in
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 112, height: 84)
+                    .clipShape(RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous)
+                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                    )
+            } placeholder: {
+                RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous)
+                    .fill(Color.white.opacity(0.14))
+                    .frame(width: 112, height: 84)
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+            }
 
             Text(imageURL.lastPathComponent)
                 .font(MLXtraDesignSystem.Typography.micro)
@@ -97,11 +109,9 @@ struct GeneratedImageAttachmentView: View {
     let imageURL: URL
     @State private var downloadError: String?
     @State private var showLightbox = false
+    @State private var imageIsAvailable = false
+    @State private var imageLoadCompleted = false
     private let controlButtonSize: CGFloat = MLXtraDesignSystem.Icon.mediaActionButton
-
-    private var loadedImage: NSImage? {
-        ImageCache.shared.image(for: imageURL)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -109,18 +119,24 @@ struct GeneratedImageAttachmentView: View {
                 RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.media, style: .continuous)
                     .fill(Color.primary.opacity(0.035))
 
-                if let loadedImage {
-                    Image(nsImage: loadedImage)
+                AsyncCachedImage(
+                    url: imageURL,
+                    onLoad: {
+                        imageIsAvailable = $0 != nil
+                        imageLoadCompleted = true
+                    }
+                ) { image in
+                    Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: 320)
                         .padding(12)
-                } else {
+                } placeholder: {
                     VStack(spacing: 8) {
                         Image(systemName: "photo")
                             .font(.system(size: 24))
                             .foregroundStyle(.secondary)
-                        Text("Image not available")
+                        Text(imageLoadCompleted ? "Image not available" : "Loading image...")
                             .font(MLXtraDesignSystem.Typography.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -130,7 +146,7 @@ struct GeneratedImageAttachmentView: View {
             .frame(maxWidth: .infinity, minHeight: 240, maxHeight: 320)
             .contentShape(Rectangle())
             .onTapGesture {
-                if loadedImage != nil {
+                if imageIsAvailable {
                     showLightbox = true
                 }
             }
@@ -211,10 +227,14 @@ struct GeneratedImageAttachmentView: View {
         panel.begin { response in
             guard response == .OK, let destinationURL = panel.url else { return }
 
-            do {
-                try copyGeneratedImageFile(from: imageURL, to: destinationURL)
-            } catch {
-                downloadError = error.localizedDescription
+            Task {
+                do {
+                    try await copyGeneratedImageFile(from: imageURL, to: destinationURL)
+                } catch {
+                    await MainActor.run {
+                        downloadError = error.localizedDescription
+                    }
+                }
             }
         }
     }
@@ -232,18 +252,22 @@ struct ImageLightboxView: View {
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
     @State private var downloadError: String?
-
-    private var loadedImage: NSImage? {
-        ImageCache.shared.image(for: imageURL)
-    }
+    @State private var loadedImageSize: CGSize?
+    @State private var imageLoadCompleted = false
 
     var body: some View {
         ZStack {
             Color.black
                 .ignoresSafeArea()
 
-            if let loadedImage {
-                Image(nsImage: loadedImage)
+            AsyncCachedImage(
+                url: imageURL,
+                onLoad: {
+                    loadedImageSize = $0?.size
+                    imageLoadCompleted = true
+                }
+            ) { image in
+                Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .scaleEffect(scale)
@@ -291,12 +315,12 @@ struct ImageLightboxView: View {
                             }
                         }
                     }
-            } else {
+            } placeholder: {
                 VStack(spacing: 12) {
                     Image(systemName: "photo")
                         .font(.system(size: 48))
                         .foregroundStyle(.secondary)
-                    Text("Image not available")
+                    Text(imageLoadCompleted ? "Image not available" : "Loading image...")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
@@ -341,8 +365,8 @@ struct ImageLightboxView: View {
                     Text(imageURL.lastPathComponent)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.7))
-                    if let loadedImage {
-                        Text("\(Int(loadedImage.size.width))×\(Int(loadedImage.size.height))")
+                    if let loadedImageSize {
+                        Text("\(Int(loadedImageSize.width))×\(Int(loadedImageSize.height))")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.5))
                     }
@@ -383,10 +407,14 @@ struct ImageLightboxView: View {
         panel.begin { response in
             guard response == .OK, let destinationURL = panel.url else { return }
 
-            do {
-                try copyGeneratedImageFile(from: imageURL, to: destinationURL)
-            } catch {
-                downloadError = error.localizedDescription
+            Task {
+                do {
+                    try await copyGeneratedImageFile(from: imageURL, to: destinationURL)
+                } catch {
+                    await MainActor.run {
+                        downloadError = error.localizedDescription
+                    }
+                }
             }
         }
     }

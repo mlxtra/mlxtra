@@ -218,6 +218,30 @@ sha256_file() {
     shasum -a 256 "$1" | awk '{print $1}'
 }
 
+remove_appcast_release_notes_links() {
+    local appcast_path="$1"
+
+    /usr/bin/python3 - "${appcast_path}" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+appcast_path = sys.argv[1]
+sparkle_namespace = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+
+ET.register_namespace("sparkle", sparkle_namespace)
+tree = ET.parse(appcast_path)
+root = tree.getroot()
+
+release_notes_tag = f"{{{sparkle_namespace}}}releaseNotesLink"
+for parent in root.iter():
+    for child in list(parent):
+        if child.tag == release_notes_tag:
+            parent.remove(child)
+
+tree.write(appcast_path, encoding="utf-8", xml_declaration=True)
+PY
+}
+
 notary_json_value() {
     local key="$1"
     local path="$2"
@@ -770,6 +794,7 @@ if [ ! -f "${APPCAST_PATH}" ]; then
     echo "Sparkle did not generate appcast.xml." >&2
     exit 1
 fi
+remove_appcast_release_notes_links "${APPCAST_PATH}"
 
 DMG_SHA="$(sha256_file "${DMG_PATH}")"
 DMG_SIZE="$(file_size "${DMG_PATH}")"
@@ -801,7 +826,6 @@ ensure_release \
     "Moving Sparkle appcast pointer for MLXtra stable app updates." \
     "0"
 upload_moving_asset "${APPCAST_TAG}" "${APPCAST_PATH}"
-upload_moving_asset "${APPCAST_TAG}" "${RELEASE_NOTES_TARGET}"
 
 echo ""
 if [ "${SKIP_PUBLISH}" = "1" ]; then

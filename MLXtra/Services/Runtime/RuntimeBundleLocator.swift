@@ -1,5 +1,43 @@
 import Foundation
 
+private final class RuntimeManifestCache: @unchecked Sendable {
+    static let shared = RuntimeManifestCache()
+
+    private let lock = NSLock()
+    private var manifests: [String: RuntimeManifest] = [:]
+
+    func manifest(at runtimeURL: URL, component: RuntimeComponent) -> RuntimeManifest? {
+        let key = cacheKey(runtimeURL: runtimeURL, component: component)
+        lock.lock()
+        if let cached = manifests[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let manifestURL = runtimeURL.appendingPathComponent(component.manifestFilename)
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(RuntimeManifest.self, from: data) else {
+            return nil
+        }
+
+        lock.lock()
+        manifests[key] = manifest
+        lock.unlock()
+        return manifest
+    }
+
+    func invalidateAll() {
+        lock.lock()
+        manifests.removeAll()
+        lock.unlock()
+    }
+
+    private func cacheKey(runtimeURL: URL, component: RuntimeComponent) -> String {
+        "\(runtimeURL.standardizedFileURL.path)#\(component.rawValue)"
+    }
+}
+
 extension RuntimeManager {
     nonisolated static func appSupportURL(fileManager: FileManager = .default) -> URL {
         let baseURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -79,9 +117,11 @@ extension RuntimeManager {
     }
 
     nonisolated static func runtimeManifest(at runtimeURL: URL, component: RuntimeComponent) -> RuntimeManifest? {
-        let manifestURL = runtimeURL.appendingPathComponent(component.manifestFilename)
-        guard let data = try? Data(contentsOf: manifestURL) else { return nil }
-        return try? JSONDecoder().decode(RuntimeManifest.self, from: data)
+        RuntimeManifestCache.shared.manifest(at: runtimeURL, component: component)
+    }
+
+    nonisolated static func invalidateRuntimeManifestCache() {
+        RuntimeManifestCache.shared.invalidateAll()
     }
 
     nonisolated static func effectiveRuntimeManifest() -> RuntimeManifest? {

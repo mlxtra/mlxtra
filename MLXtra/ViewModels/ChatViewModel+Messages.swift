@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 extension ChatViewModel {
-    private func messageLocation(for messageId: UUID) -> (chatIndex: Int, messageIndex: Int)? {
+    func messageLocation(for messageId: UUID) -> (chatIndex: Int, messageIndex: Int)? {
         for chatIndex in chats.indices {
             if let messageIndex = chats[chatIndex].messages.firstIndex(where: { $0.id == messageId }) {
                 return (chatIndex, messageIndex)
@@ -237,13 +237,6 @@ extension ChatViewModel {
             chats[chatIndex].timestamp = Date()
             streamingContentStore.end(messageId: messageId)
 
-            if !AIContentRenderingPolicy.shouldUseFastPlainText(for: content) {
-                _ = MarkdownAttributedRenderer.finalRender(
-                    markdown: content,
-                    style: .default
-                )
-            }
-
             scheduleConversationPersistence()
         }
     }
@@ -271,6 +264,120 @@ extension ChatViewModel {
             streamingContentStore.end(messageId: messageId)
             scheduleConversationPersistence()
         }
+    }
+
+    func canRetryPrompt(for messageId: UUID) -> Bool {
+        !isInputDisabled && retryPromptContext(for: messageId) != nil
+    }
+
+    func retryPrompt(for messageId: UUID) {
+        guard !isInputDisabled,
+              let context = retryPromptContext(for: messageId) else {
+            return
+        }
+
+        let chatId = chats[context.chatIndex].id
+        selectedChatId = chatId
+
+        if !context.responseRange.isEmpty {
+            chats[context.chatIndex].messages.removeSubrange(context.responseRange)
+            chats[context.chatIndex].timestamp = Date()
+            scheduleConversationPersistence()
+        }
+
+        let request = makeGenerationRequest(
+            chatId: chatId,
+            prompt: context.prompt,
+            images: context.images,
+            retryTool: context.tool
+        )
+        startGeneration(request)
+    }
+
+    private struct RetryPromptContext {
+        let chatIndex: Int
+        let responseRange: Range<Int>
+        let prompt: String
+        let images: [URL]
+        let tool: Tool
+    }
+
+    private func retryPromptContext(for messageId: UUID) -> RetryPromptContext? {
+        guard let location = messageLocation(for: messageId) else { return nil }
+
+        let messages = chats[location.chatIndex].messages
+        let message = messages[location.messageIndex]
+        let userMessageIndex: Int
+
+        if message.isUser {
+            userMessageIndex = location.messageIndex
+        } else {
+            guard isRetryableAssistantMessage(message) else { return nil }
+            guard let previousUserIndex = messages[..<location.messageIndex].lastIndex(where: { $0.isUser }) else {
+                return nil
+            }
+            userMessageIndex = previousUserIndex
+        }
+
+        let nextUserIndex = messages[(userMessageIndex + 1)...].firstIndex(where: { $0.isUser }) ?? messages.endIndex
+        let responseRange = (userMessageIndex + 1)..<nextUserIndex
+        let responseMessages = Array(messages[responseRange])
+        guard responseMessages.isEmpty || responseMessages.allSatisfy(isRetryableAssistantMessage) else {
+            return nil
+        }
+
+        let userMessage = messages[userMessageIndex]
+        return RetryPromptContext(
+            chatIndex: location.chatIndex,
+            responseRange: responseRange,
+            prompt: userMessage.content,
+            images: userMessage.imageURLs,
+            tool: retryTool(from: responseMessages) ?? selectedTool
+        )
+    }
+
+    private func isRetryableAssistantMessage(_ message: Message) -> Bool {
+        guard !message.isUser, !message.isStreaming else { return false }
+        guard message.imageURLs.isEmpty, message.audioURLs.isEmpty else { return false }
+
+        let visibleContent = ReasoningContentFilter.visibleText(from: message.content) ?? message.content
+        let normalizedContent = ChatDisplayText.singleLine(visibleContent).lowercased()
+        guard !normalizedContent.isEmpty else { return true }
+
+        return normalizedContent.hasPrefix("the local engine reported an error")
+            || normalizedContent.hasPrefix("the local engine stopped before it could finish")
+            || normalizedContent.hasPrefix("the selected model could not be loaded")
+            || normalizedContent.hasPrefix("this took longer than expected")
+            || normalizedContent.hasPrefix("please send your message again")
+            || normalizedContent.hasPrefix("the request could not be completed")
+            || normalizedContent.contains(" generation unavailable:")
+            || normalizedContent.contains(" generation finished without returning")
+    }
+
+    private func retryTool(from messages: [Message]) -> Tool? {
+        for message in messages.reversed() {
+            for toolCall in message.toolCalls.reversed() {
+                let haystack = [
+                    toolCall.displayTitle,
+                    toolCall.toolName,
+                    toolCall.icon
+                ]
+                .joined(separator: " ")
+                .lowercased()
+
+                if haystack.contains("image") || haystack.contains("photo") {
+                    return .image
+                }
+                if haystack.contains("music") {
+                    return .music
+                }
+                if haystack.contains("speech") || haystack.contains("voice") || haystack.contains("waveform") {
+                    return .tts
+                }
+            }
+        }
+
+        return nil
     }
 
     func updateMessageToolCall(_ messageId: UUID, status: String) {

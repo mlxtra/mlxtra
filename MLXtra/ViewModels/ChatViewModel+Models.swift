@@ -9,6 +9,7 @@ extension ChatViewModel {
             isModelLoading: isModelLoading,
             isPreloadingLocalModel: isPreloadingLocalModel,
             isGenerating: isGenerating,
+            isTerminatingLocalEngine: isTerminatingLocalEngine,
             loadingMessage: loadingMessage,
             loadProgress: modelLoadProgress,
             generationProgress: generationProgress,

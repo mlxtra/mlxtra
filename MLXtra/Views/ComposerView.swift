@@ -10,7 +10,7 @@ struct ComposerView: View {
     @State private var isDropTargeted = false
 
     private var borderIsActive: Bool {
-        viewModel.isGenerating || isTextInputFocused || isDropTargeted
+        viewModel.isPreparingMessage || viewModel.isGenerating || viewModel.isTerminatingLocalEngine || isTextInputFocused || isDropTargeted
     }
 
     private var canSend: Bool {
@@ -164,7 +164,22 @@ struct ComposerView: View {
 
     @ViewBuilder
     private var primaryControl: some View {
-        if viewModel.isGenerating {
+        if viewModel.isPreparingMessage || viewModel.isTerminatingLocalEngine {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: MLXtraDesignSystem.Icon.composerButton, height: MLXtraDesignSystem.Icon.composerButton)
+                .background(
+                    Circle()
+                        .fill(MLXtraDesignSystem.Surface.controlFill(colorScheme: colorScheme))
+                )
+                .overlay {
+                    Circle()
+                        .stroke(MLXtraDesignSystem.Surface.quietHairline, lineWidth: MLXtraDesignSystem.Spacing.hairline)
+                }
+                .help(viewModel.isTerminatingLocalEngine ? "Stopping local engine" : "Preparing attachments")
+                .accessibilityIdentifier("composer.primaryAction")
+                .accessibilityLabel(viewModel.isTerminatingLocalEngine ? "Stopping local engine" : "Preparing attachments")
+        } else if viewModel.isGenerating {
             Button(action: {
                 viewModel.cancelGeneration()
             }) {
@@ -294,16 +309,12 @@ struct ComposerView: View {
             } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                 didAcceptProvider = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-                    guard
-                        let data,
-                        let image = NSImage(data: data),
-                        let url = saveTemporaryImage(image)
-                    else {
-                        return
-                    }
-
-                    DispatchQueue.main.async {
-                        appendImageAttachments([url])
+                    guard let data else { return }
+                    Task {
+                        guard let url = await saveTemporaryImageData(data) else { return }
+                        await MainActor.run {
+                            appendImageAttachments([url])
+                        }
                     }
                 }
             }
@@ -323,14 +334,28 @@ struct ComposerView: View {
         }
 
         if imageURLs.isEmpty,
-           let image = NSImage(pasteboard: pasteboard),
-           let url = saveTemporaryImage(image) {
-            imageURLs.append(url)
+           let imageData = imageData(from: pasteboard) {
+            Task {
+                guard let url = await saveTemporaryImageData(imageData) else { return }
+                await MainActor.run {
+                    appendImageAttachments([url])
+                }
+            }
+            return true
         }
 
         guard !imageURLs.isEmpty else { return false }
 
         appendImageAttachments(imageURLs)
         return true
+    }
+
+    private func imageData(from pasteboard: NSPasteboard) -> Data? {
+        for type in [NSPasteboard.PasteboardType.png, .tiff] {
+            if let data = pasteboard.data(forType: type) {
+                return data
+            }
+        }
+        return nil
     }
 }

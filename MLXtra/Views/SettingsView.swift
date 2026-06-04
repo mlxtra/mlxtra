@@ -83,7 +83,7 @@ struct SettingsView: View {
         }
         .task {
             await catalogService.refreshFromStableChannel()
-            runtimeUpdateManager.bootstrapStableRuntimeInBackground(reportFailures: false)
+            bootstrapRuntimeForPendingDownloadOrBase(reportFailures: false)
             downloadManager.refreshStatuses()
             startPendingDownloadIfReady()
         }
@@ -443,6 +443,13 @@ struct SettingsView: View {
             return nil
         }
         return model
+    }
+
+    private func bootstrapRuntimeForPendingDownloadOrBase(reportFailures: Bool) {
+        runtimeUpdateManager.bootstrapStableRuntimeInBackground(
+            reportFailures: reportFailures,
+            component: pendingModel?.runtime.component ?? .base
+        )
     }
 
     private func requestModelDownload(_ model: DownloadableModel) {

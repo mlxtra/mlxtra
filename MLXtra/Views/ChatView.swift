@@ -83,13 +83,15 @@ struct ChatView: View {
         let scrollView = ScrollView {
             LazyVStack(spacing: MLXtraDesignSystem.Spacing.xl) {
                 ForEach(chat?.messages ?? []) { message in
-                    MessageBubble(
-                        message: message,
-                        isStreaming: message.isStreaming,
-                        streamingContent: viewModel.streamingContent(for: message.id),
-                        onOpenModels: { openSettings() },
-                        onRestartLocalEngine: viewModel.restartLocalEngine
-                    )
+                        MessageBubble(
+                            message: message,
+                            isStreaming: message.isStreaming,
+                            streamingContent: viewModel.streamingContent(for: message.id),
+                            canRetry: viewModel.canRetryPrompt(for: message.id),
+                            onRetry: { viewModel.retryPrompt(for: message.id) },
+                            onOpenModels: { openSettings() },
+                            onRestartLocalEngine: viewModel.restartLocalEngine
+                        )
                     .id(message.id)
                 }
 

@@ -4,7 +4,7 @@ enum Tool: String, CaseIterable, Identifiable {
     case auto = "Auto"
     case chat = "Chat"
     case image = "Image"
-    case tts = "Speech"
+    case tts = "Voice"
     case music = "Music"
     case research = "Research"
     

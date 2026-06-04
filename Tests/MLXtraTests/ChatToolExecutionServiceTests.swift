@@ -727,6 +727,15 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.selectTool(.chat)
         viewModel.inputText = "Give me a fresh text answer"
         viewModel.sendMessage()
+        XCTAssertTrue(viewModel.isTerminatingLocalEngine)
+        XCTAssertTrue(viewModel.isInputDisabled)
+        XCTAssertNil(viewModel.streamingMessageId)
+
+        await viewModel.engineTerminationTask?.value
+        XCTAssertFalse(viewModel.isTerminatingLocalEngine)
+        XCTAssertFalse(viewModel.isInputDisabled)
+
+        viewModel.sendMessage()
         await waitUntil {
             viewModel.streamingMessageId != nil && viewModel.streamingMessageId != staleMessageId
         }
@@ -2361,7 +2370,7 @@ private final class MockChatPersistenceService: ChatPersistenceServicing {
         savedSelectedChatId = selectedChatId
     }
 
-    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL] {
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) async -> [URL] {
         urls
     }
 

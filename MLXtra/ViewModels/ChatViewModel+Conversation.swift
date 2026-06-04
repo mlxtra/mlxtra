@@ -40,11 +40,38 @@ extension ChatViewModel {
     }
 
     var isInputDisabled: Bool {
-        isPythonLoading || isModelLoading || isGenerating || isDraftingMusicLyrics || generationTask != nil
+        isLoadingConversationHistory
+            || isPreparingMessage
+            || isPythonLoading
+            || isModelLoading
+            || isGenerating
+            || isTerminatingLocalEngine
+            || isDraftingMusicLyrics
+            || generationTask != nil
     }
 
     func loadConversationHistory() {
-        chats = chatPersistence.loadChats().map { chat in
+        applyConversationSnapshot(
+            ChatPersistenceSnapshot(
+                chats: chatPersistence.loadChats(),
+                selectedChatId: chatPersistence.loadSelectedChatId()
+            )
+        )
+    }
+
+    func loadConversationHistoryAsync() async {
+        isLoadingConversationHistory = true
+        defer {
+            isLoadingConversationHistory = false
+            conversationHistoryLoadTask = nil
+        }
+        let snapshot = await chatPersistence.loadConversationSnapshot()
+        guard !Task.isCancelled else { return }
+        applyConversationSnapshot(snapshot)
+    }
+
+    private func applyConversationSnapshot(_ snapshot: ChatPersistenceSnapshot) {
+        chats = snapshot.chats.map { chat in
             var restoredChat = chat
             restoredChat.messages = chat.messages.map { message in
                 var restoredMessage = message
@@ -54,7 +81,7 @@ extension ChatViewModel {
             return restoredChat
         }
 
-        selectedChatId = chatPersistence.loadSelectedChatId()
+        selectedChatId = snapshot.selectedChatId
 
         if selectedChatId == nil || !chats.contains(where: { $0.id == selectedChatId }) {
             selectedChatId = recentChats.first?.id
@@ -162,32 +189,105 @@ extension ChatViewModel {
         guard let chatId = selectedChatId else { return }
 
         let userMessageId = UUID()
-        let images = chatPersistence.persistAttachments(
-            selectedImagePaths,
-            chatId: chatId,
-            messageId: userMessageId
-        )
+        let selectedImages = selectedImagePaths
 
         let messageContent = trimmedInput
-        if images.isEmpty && trimmedInput.isEmpty {
+        if selectedImages.isEmpty && trimmedInput.isEmpty {
             return
         }
 
-        let userMessage = Message(
-            id: userMessageId,
+        isCommittingComposerInput = true
+        inputText = ""
+        isCommittingComposerInput = false
+        selectedImagePaths = []
+
+        if selectedImages.isEmpty {
+            appendPreparedUserMessage(
+                chatId: chatId,
+                messageId: userMessageId,
+                content: messageContent,
+                images: []
+            )
+            startGeneration(makeGenerationRequest(chatId: chatId, prompt: messageContent, images: []))
+            return
+        }
+
+        startMessagePreparation(
+            chatId: chatId,
+            messageId: userMessageId,
             content: messageContent,
+            selectedImages: selectedImages
+        )
+    }
+
+    private func startMessagePreparation(
+        chatId: UUID,
+        messageId: UUID,
+        content: String,
+        selectedImages: [URL]
+    ) {
+        guard messagePreparationTask == nil else { return }
+
+        let preparationID = UUID()
+        activeMessagePreparationID = preparationID
+        isPreparingMessage = true
+        loadingMessage = "Preparing attachments..."
+
+        messagePreparationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let images = await self.chatPersistence.persistAttachments(
+                selectedImages,
+                chatId: chatId,
+                messageId: messageId
+            )
+            guard self.activeMessagePreparationID == preparationID, !Task.isCancelled else {
+                self.finishMessagePreparation(preparationID)
+                return
+            }
+
+            self.finishMessagePreparation(preparationID)
+            guard !images.isEmpty || !content.isEmpty else { return }
+            self.appendPreparedUserMessage(
+                chatId: chatId,
+                messageId: messageId,
+                content: content,
+                images: images
+            )
+            self.startGeneration(self.makeGenerationRequest(chatId: chatId, prompt: content, images: images))
+        }
+    }
+
+    private func finishMessagePreparation(_ preparationID: UUID) {
+        guard activeMessagePreparationID == preparationID else { return }
+        isPreparingMessage = false
+        activeMessagePreparationID = nil
+        messagePreparationTask = nil
+        if !isGenerating && !isPythonLoading && !isModelLoading {
+            loadingMessage = ""
+        }
+    }
+
+    private func appendPreparedUserMessage(
+        chatId: UUID,
+        messageId: UUID,
+        content: String,
+        images: [URL]
+    ) {
+        let userMessage = Message(
+            id: messageId,
+            content: content,
             isUser: true,
             timestamp: Date(),
             imageURLs: images
         )
 
-        if let index = chats.firstIndex(where: { $0.id == selectedChatId }) {
+        if let index = chats.firstIndex(where: { $0.id == chatId }) {
             chats[index].messages.append(userMessage)
             chats[index].timestamp = Date()
 
             if chats[index].messages.count == 1 {
                 chats[index].title = ChatDisplayText.singleLine(
-                    messageContent,
+                    content,
                     fallback: "Image attachment",
                     maxLength: MLXtraDesignSystem.TextLimit.generatedTitle
                 )
@@ -195,23 +295,28 @@ extension ChatViewModel {
 
             persistConversationHistory()
         }
-
-        let messageText = trimmedInput
-        isCommittingComposerInput = true
-        inputText = ""
-        isCommittingComposerInput = false
-        selectedImagePaths = []
-
-        let request = makeGenerationRequest(chatId: chatId, prompt: messageText, images: images)
-        startGeneration(request)
     }
 
     func cancelGeneration() {
+        guard generationTask != nil
+            || messagePreparationTask != nil
+            || isPreparingMessage
+            || isGenerating
+            || isPythonLoading
+            || isModelLoading
+            || isDraftingMusicLyrics
+            || streamingMessageId != nil else {
+            return
+        }
 #if DEBUG
         ChatStreamDiagnostics.log("generation.cancel")
 #endif
         generationTask?.cancel()
         generationTask = nil
+        messagePreparationTask?.cancel()
+        messagePreparationTask = nil
+        activeMessagePreparationID = nil
+        isPreparingMessage = false
         activeGenerationID = nil
         cancelMusicLyricsDraft()
         activeMusicGenerationDraft = nil
@@ -233,8 +338,6 @@ extension ChatViewModel {
             scheduleEngineTermination()
         }
 
-        chatPersistence.flushPendingSave()
-        persistConversationHistory()
     }
 
     private static func computeSidebarIcon(for chat: Chat) -> String {
@@ -268,7 +371,8 @@ extension ChatViewModel {
         return message.isUser ? "Message" : "Assistant response"
     }
 
-    private func makeGenerationRequest(chatId: UUID, prompt: String, images: [URL]) -> ChatGenerationRequest {
+    func makeGenerationRequest(chatId: UUID, prompt: String, images: [URL], retryTool: Tool? = nil) -> ChatGenerationRequest {
+        let requestTool = retryTool ?? selectedTool
         let modalities = ModelModality.allCases
         var profilesByModality: [ModelModality: ModelCapabilityProfile] = [:]
         var parametersByModelId: [String: [String: Any]] = [:]
@@ -283,15 +387,15 @@ extension ChatViewModel {
             chatId: chatId,
             prompt: prompt,
             images: images,
-            tool: selectedTool,
+            tool: requestTool,
             profilesByModality: profilesByModality,
             parametersByModelId: parametersByModelId,
-            selectionDownloadRequirement: downloadRequirementForCurrentSelection(),
-            selectionOperationName: operationNameForCurrentSelection()
+            selectionDownloadRequirement: downloadRequirement(for: requestTool),
+            selectionOperationName: operationName(for: requestTool)
         )
     }
 
-    private func startGeneration(_ request: ChatGenerationRequest) {
+    func startGeneration(_ request: ChatGenerationRequest) {
         guard generationTask == nil else { return }
 #if DEBUG
         ChatStreamDiagnostics.log("generation.start promptChars=\(request.prompt.count)")
@@ -299,6 +403,8 @@ extension ChatViewModel {
         let generationID = UUID()
         activeGenerationID = generationID
         generationProgress = nil
+        isGenerating = true
+        loadingMessage = "Starting..."
         generationTask = Task {
             await awaitPendingEngineTermination()
             guard ownsActiveGeneration(generationID) else { return }
@@ -314,14 +420,24 @@ extension ChatViewModel {
 
     @discardableResult
     func scheduleEngineTermination() -> Task<Void, Never> {
+        if let engineTerminationTask {
+            isTerminatingLocalEngine = true
+            return engineTerminationTask
+        }
+
         let token = UUID()
         engineTerminationToken = token
+        isTerminatingLocalEngine = true
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await vlmExecutor.terminate()
             if engineTerminationToken == token {
                 engineTerminationTask = nil
                 engineTerminationToken = nil
+                isTerminatingLocalEngine = false
+                if !isGenerating && !isPythonLoading && !isModelLoading && !isPreparingMessage && !isDraftingMusicLyrics {
+                    loadingMessage = ""
+                }
             }
         }
         engineTerminationTask = task

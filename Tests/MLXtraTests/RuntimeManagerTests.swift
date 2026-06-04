@@ -1257,6 +1257,57 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testRuntimeInstallThrottlesPublishedRemoteArchiveDownloadProgress() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot = directory.appendingPathComponent("installed-runtime")
+        try makeRuntimeBundle(at: runtimeRoot, version: "0.1.1")
+        let archiveData = Data((0..<4096).map { UInt8($0 % 255) })
+        let archiveURL = directory.appendingPathComponent("runtime.zip")
+        try archiveData.write(to: archiveURL)
+        let archiveSHA256 = try SHA256Checksum.hexDigest(for: archiveURL)
+
+        RuntimeArchiveURLProtocol.reset(data: archiveData)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RuntimeArchiveURLProtocol.self]
+
+        var publishedProgress: [RuntimeDownloadProgress] = []
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { archive, _ in
+                guard (try? Data(contentsOf: archive)) == archiveData else {
+                    throw RuntimeUpdateError.invalidRuntime
+                }
+                return runtimeRoot
+            },
+            runtimeArchiveDownloadConfiguration: configuration,
+            runtimeArchiveCacheDirectory: directory.appendingPathComponent("runtime-cache"),
+            runtimeDownloadProgressPublishInterval: 60
+        )
+        let progressCancellable = manager.$runtimeDownloadProgress.sink { progress in
+            guard let progress else { return }
+            publishedProgress.append(progress)
+        }
+        defer { progressCancellable.cancel() }
+
+        let asset = RuntimeReleaseAsset(
+            version: "0.1.1",
+            platform: "macos",
+            arch: "arm64",
+            url: URL(string: "https://runtime.test/runtime.zip")!,
+            sha256: archiveSHA256,
+            sizeBytes: Int64(archiveData.count),
+            compatibilityApi: 1
+        )
+
+        await manager.installRuntime(asset)
+
+        XCTAssertEqual(manager.state, .installed("0.1.1"))
+        XCTAssertEqual(publishedProgress.map(\.downloadedBytes), [0, Int64(archiveData.count)])
+    }
+
+    @MainActor
     func testRuntimeInstallReportsActivationProgressFromInstaller() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1542,6 +1593,77 @@ final class RuntimeManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testRuntimeBackgroundBootstrapQueuesRequestWhileInstallIsActive() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let runtimeRoot1 = directory.appendingPathComponent("runtime-macos-arm64-0.1.1")
+        try makeRuntimeBundle(at: runtimeRoot1, version: "0.1.1")
+        let archiveURL1 = directory.appendingPathComponent("runtime-macos-arm64-0.1.1.zip")
+        try makeZipArchive(from: runtimeRoot1, at: archiveURL1)
+
+        let runtimeRoot2 = directory.appendingPathComponent("runtime-macos-arm64-0.1.2")
+        try makeRuntimeBundle(at: runtimeRoot2, version: "0.1.2")
+        let archiveURL2 = directory.appendingPathComponent("runtime-macos-arm64-0.1.2.zip")
+        try makeZipArchive(from: runtimeRoot2, at: archiveURL2)
+
+        let channelURL1 = directory.appendingPathComponent("stable-channel-0.1.1.json")
+        try writeRuntimeChannel(
+            to: channelURL1,
+            runtimes: [
+                makeRuntimeAsset(
+                    version: "0.1.1",
+                    url: archiveURL1,
+                    sha256: try SHA256Checksum.hexDigest(for: archiveURL1),
+                    sizeBytes: try archiveSizeBytes(archiveURL1)
+                )
+            ]
+        )
+        let channelURL2 = directory.appendingPathComponent("stable-channel-0.1.2.json")
+        try writeRuntimeChannel(
+            to: channelURL2,
+            runtimes: [
+                makeRuntimeAsset(
+                    version: "0.1.2",
+                    url: archiveURL2,
+                    sha256: try SHA256Checksum.hexDigest(for: archiveURL2),
+                    sizeBytes: try archiveSizeBytes(archiveURL2)
+                )
+            ]
+        )
+
+        let recorder = RuntimeInstallVersionRecorder()
+        let installerStarted = expectation(description: "First runtime installer started")
+        let releaseInstaller = DispatchSemaphore(value: 0)
+        let manager = RuntimeUpdateManager(
+            currentManifestProvider: { nil },
+            runtimeArchiveInstaller: { archive, _ in
+                if archive == archiveURL1 {
+                    recorder.append("0.1.1")
+                    installerStarted.fulfill()
+                    releaseInstaller.wait()
+                    return runtimeRoot1
+                }
+                recorder.append("0.1.2")
+                return runtimeRoot2
+            }
+        )
+
+        manager.bootstrapStableRuntimeInBackground(channelURL: channelURL1)
+        await fulfillment(of: [installerStarted], timeout: 2)
+
+        manager.bootstrapStableRuntimeInBackground(channelURL: channelURL2, reportFailures: true)
+        releaseInstaller.signal()
+
+        let didInstallQueuedRuntime = await waitForRuntimeUpdateState(manager, timeout: 3) { state in
+            state == .installed("0.1.2")
+        }
+
+        XCTAssertTrue(didInstallQueuedRuntime)
+        XCTAssertEqual(recorder.versions(), ["0.1.1", "0.1.2"])
+    }
+
+    @MainActor
     func testRuntimeBootstrapDoesNotReinstallCurrentRuntime() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1807,6 +1929,23 @@ final class RuntimeManagerTests: XCTestCase {
 
 private final class InstallerCallRecorder {
     var wasCalled = false
+}
+
+private final class RuntimeInstallVersionRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var installedVersions: [String] = []
+
+    func append(_ version: String) {
+        lock.lock()
+        installedVersions.append(version)
+        lock.unlock()
+    }
+
+    func versions() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return installedVersions
+    }
 }
 
 private final class RuntimeUpdateStateRecorder: @unchecked Sendable {

@@ -93,8 +93,7 @@ struct ModelManagerRow: View {
             actionView
                 .frame(width: 176, alignment: .trailing)
 
-            secondaryActionsMenu
-                .frame(width: 28, height: 28, alignment: .topTrailing)
+            secondaryActionsSlot
         }
         .frame(width: 212, alignment: .trailing)
         .padding(.top, 1)
@@ -108,7 +107,10 @@ struct ModelManagerRow: View {
                 ModelDetailLine(label: "Source", value: model.source.downloadRepository ?? model.modelId)
                 ModelDetailLine(label: "Model ID", value: model.modelId)
                 ModelDetailLine(label: "Backend", value: model.backend.displayName)
-                ModelDetailLine(label: "Runtime", value: "Runtime \(model.runtime.minVersion)+")
+                ModelDetailLine(
+                    label: "Runtime",
+                    value: "\(model.runtime.component.displayName) \(model.runtime.minVersion)+"
+                )
                 ModelDetailLine(label: "Memory", value: model.estimatedMemoryGB.map(formatSize) ?? "Unknown")
                 if let acceleration = model.acceleration {
                     ModelDetailLine(label: "Acceleration", value: "Included, +\(formatSize(acceleration.downloadSizeGB))")
@@ -175,7 +177,7 @@ struct ModelManagerRow: View {
     }
 
     private var runtimeRequirementDetail: String {
-        "Requires Runtime \(model.runtime.minVersion)+ before download."
+        "Requires \(model.runtime.component.displayName) \(model.runtime.minVersion)+ before download."
     }
 
     @ViewBuilder
@@ -362,11 +364,13 @@ struct ModelManagerRow: View {
         case .failed(let message):
             let failedState = ModelDownloadManager.DownloadState.failed(message)
             VStack(alignment: .trailing, spacing: 6) {
-                Text(message)
+                Text(failedState.failureSummaryTitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.trailing)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .help(message)
+                    .accessibilityLabel(message)
 
                 Button(action: onDownload) {
                     Label(failedState.recoveryActionTitle, systemImage: failedState.recoveryActionIcon)
@@ -382,7 +386,7 @@ struct ModelManagerRow: View {
     }
 
     @ViewBuilder
-    private var secondaryActionsMenu: some View {
+    private var secondaryActionsSlot: some View {
         if hasSecondaryActions {
             Menu {
                 if canSetDefaultFromMenu {
@@ -414,6 +418,10 @@ struct ModelManagerRow: View {
             .menuIndicator(.hidden)
             .help("More actions")
             .accessibilityIdentifier("settings.modelState.moreActions")
+            .frame(width: 28, height: 28, alignment: .topTrailing)
+        } else {
+            Color.clear
+                .frame(width: 28, height: 28)
         }
     }
 

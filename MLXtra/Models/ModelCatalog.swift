@@ -201,7 +201,7 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
                 lastRefreshError = nil
                 return
             }
-            try saveCachedCatalog(catalogData)
+            try await saveCachedCatalog(catalogData)
             setCatalog(refreshed)
             lastRefreshError = nil
         } catch {
@@ -245,7 +245,9 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
 
     private static func fetchValidatedData(from url: URL) async throws -> Data {
         if url.isFileURL {
-            return try Data(contentsOf: url)
+            return try await Task.detached(priority: .utility) {
+                try Data(contentsOf: url)
+            }.value
         }
 
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -438,10 +440,13 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
         return nil
     }
 
-    private func saveCachedCatalog(_ data: Data) throws {
+    private func saveCachedCatalog(_ data: Data) async throws {
         let url = Self.cachedCatalogURL(fileManager: fileManager, cacheDirectory: cacheDirectory)
-        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
+        try await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        }.value
     }
 
     private static func cachedCatalogURL(fileManager: FileManager, cacheDirectory: URL?) -> URL {

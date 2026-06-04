@@ -19,7 +19,7 @@ final class ToolTests: XCTestCase {
         XCTAssertEqual(Tool.auto.rawValue, "Auto")
         XCTAssertEqual(Tool.chat.rawValue, "Chat")
         XCTAssertEqual(Tool.image.rawValue, "Image")
-        XCTAssertEqual(Tool.tts.rawValue, "Speech")
+        XCTAssertEqual(Tool.tts.rawValue, "Voice")
         XCTAssertEqual(Tool.music.rawValue, "Music")
         XCTAssertEqual(Tool.research.rawValue, "Research")
     }
@@ -29,7 +29,7 @@ final class ToolTests: XCTestCase {
         XCTAssertEqual(Tool.auto.id, "Auto")
         XCTAssertEqual(Tool.chat.id, "Chat")
         XCTAssertEqual(Tool.image.id, "Image")
-        XCTAssertEqual(Tool.tts.id, "Speech")
+        XCTAssertEqual(Tool.tts.id, "Voice")
         XCTAssertEqual(Tool.music.id, "Music")
         XCTAssertEqual(Tool.research.id, "Research")
     }

@@ -8,6 +8,11 @@ private final class UserDefaultsWriter: @unchecked Sendable {
     }
 }
 
+private struct PendingChatSaveSnapshot: @unchecked Sendable {
+    let chats: [Chat]
+    let selectedChatId: UUID?
+}
+
 @MainActor
 final class LocalChatPersistenceService: ChatPersistenceServicing {
     private let fileManager: FileManager
@@ -17,7 +22,7 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     private let storageDirectory: URL
     private let writeQueue = DispatchQueue(label: "com.localstudio.mlxtra.chat-persistence", qos: .utility)
     private var pendingSaveWorkItem: DispatchWorkItem?
-    private var pendingSaveSnapshot: (chats: [Chat], selectedChatId: UUID?)?
+    private var pendingSaveSnapshot: PendingChatSaveSnapshot?
     private let saveDebounceInterval: TimeInterval
 
     init(
@@ -62,10 +67,50 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
         storageDirectory.appendingPathComponent("Attachments", isDirectory: true)
     }
 
+    var loadsConversationHistoryAsynchronously: Bool { true }
+
     func loadChats() -> [Chat] {
         flushPendingWrites()
 
-        guard fileManager.fileExists(atPath: conversationsURL.path) else {
+        return Self.readChats(conversationsURL: conversationsURL)
+    }
+
+    func loadConversationSnapshot() async -> ChatPersistenceSnapshot {
+        let snapshot = pendingSaveSnapshot
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
+        pendingSaveSnapshot = nil
+
+        let storageDirectory = storageDirectory
+        let conversationsURL = conversationsURL
+        let userDefaultsWriter = userDefaultsWriter
+        let selectedChatKey = selectedChatKey
+        let writeQueue = writeQueue
+
+        return await Task.detached(priority: .utility) {
+            if let snapshot {
+                Self.writeSnapshot(
+                    snapshot,
+                    storageDirectory: storageDirectory,
+                    conversationsURL: conversationsURL,
+                    userDefaultsWriter: userDefaultsWriter,
+                    selectedChatKey: selectedChatKey
+                )
+            }
+
+            writeQueue.sync {}
+            return ChatPersistenceSnapshot(
+                chats: Self.readChats(conversationsURL: conversationsURL),
+                selectedChatId: Self.readSelectedChatId(
+                    userDefaultsWriter: userDefaultsWriter,
+                    selectedChatKey: selectedChatKey
+                )
+            )
+        }.value
+    }
+
+    private nonisolated static func readChats(conversationsURL: URL) -> [Chat] {
+        guard FileManager.default.fileExists(atPath: conversationsURL.path) else {
             return []
         }
 
@@ -107,10 +152,10 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     }
 
     func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
-        schedulePendingSave((chats, selectedChatId))
+        schedulePendingSave(PendingChatSaveSnapshot(chats: chats, selectedChatId: selectedChatId))
     }
 
-    private func schedulePendingSave(_ snapshot: (chats: [Chat], selectedChatId: UUID?)) {
+    private func schedulePendingSave(_ snapshot: PendingChatSaveSnapshot) {
         pendingSaveWorkItem?.cancel()
         let storageDirectory = storageDirectory
         let conversationsURL = conversationsURL
@@ -142,7 +187,7 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
         writeSnapshot(snapshot)
     }
 
-    private func writeSnapshot(_ snapshot: (chats: [Chat], selectedChatId: UUID?)) {
+    private func writeSnapshot(_ snapshot: PendingChatSaveSnapshot) {
         Self.writeSnapshot(
             snapshot,
             storageDirectory: storageDirectory,
@@ -153,7 +198,7 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     }
 
     private nonisolated static func writeSnapshot(
-        _ snapshot: (chats: [Chat], selectedChatId: UUID?),
+        _ snapshot: PendingChatSaveSnapshot,
         storageDirectory: URL,
         conversationsURL: URL,
         userDefaultsWriter: UserDefaultsWriter,
@@ -189,6 +234,14 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
     }
 
     func loadSelectedChatId() -> UUID? {
+        Self.readSelectedChatId(userDefaultsWriter: userDefaultsWriter, selectedChatKey: selectedChatKey)
+    }
+
+    private nonisolated static func readSelectedChatId(
+        userDefaultsWriter: UserDefaultsWriter,
+        selectedChatKey: String
+    ) -> UUID? {
+        let userDefaults = userDefaultsWriter.userDefaults
         guard let storedValue = userDefaults.string(forKey: selectedChatKey) else {
             return nil
         }
@@ -198,7 +251,7 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
 
     func saveSelectedChatId(_ selectedChatId: UUID?) {
         if let snapshot = pendingSaveSnapshot {
-            schedulePendingSave((snapshot.chats, selectedChatId))
+            schedulePendingSave(PendingChatSaveSnapshot(chats: snapshot.chats, selectedChatId: selectedChatId))
         }
 
         if let selectedChatId {
@@ -208,12 +261,20 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
         }
     }
 
-    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL] {
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) async -> [URL] {
         guard !urls.isEmpty else { return [] }
 
         let messageAttachmentsDirectory = attachmentsDirectory
             .appendingPathComponent(chatId.uuidString, isDirectory: true)
             .appendingPathComponent(messageId.uuidString, isDirectory: true)
+
+        return await Task.detached(priority: .utility) {
+            Self.copyAttachments(urls, to: messageAttachmentsDirectory)
+        }.value
+    }
+
+    private nonisolated static func copyAttachments(_ urls: [URL], to messageAttachmentsDirectory: URL) -> [URL] {
+        let fileManager = FileManager.default
 
         do {
             try fileManager.createDirectory(
@@ -247,12 +308,15 @@ final class LocalChatPersistenceService: ChatPersistenceServicing {
         let chatAttachmentsDirectory = attachmentsDirectory
             .appendingPathComponent(chatId.uuidString, isDirectory: true)
 
-        guard fileManager.fileExists(atPath: chatAttachmentsDirectory.path) else { return }
+        Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            guard fileManager.fileExists(atPath: chatAttachmentsDirectory.path) else { return }
 
-        do {
-            try fileManager.removeItem(at: chatAttachmentsDirectory)
-        } catch {
-            print("Failed to delete attachments for chat \(chatId): \(error)")
+            do {
+                try fileManager.removeItem(at: chatAttachmentsDirectory)
+            } catch {
+                print("Failed to delete attachments for chat \(chatId): \(error)")
+            }
         }
     }
 }

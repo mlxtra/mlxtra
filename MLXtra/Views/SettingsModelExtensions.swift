@@ -87,6 +87,36 @@ extension ModelDownloadManager.DownloadState {
         return isRepairableFailure ? "Needs repair" : "Failed"
     }
 
+    var failureSummaryTitle: String {
+        guard case .failed(let message) = self else {
+            return failureStatusTitle
+        }
+
+        let normalized = message.lowercased()
+        if isUpdateRequiredFailure {
+            return "Model update required"
+        }
+        if normalized.contains("hugging face cache") && normalized.contains("incomplete") {
+            return "Local cache incomplete"
+        }
+        if normalized.contains("snapshot") && normalized.contains("incomplete") {
+            return "Snapshot incomplete"
+        }
+        if normalized.contains("components") && normalized.contains("incomplete") {
+            return "Components incomplete"
+        }
+        if normalized.contains("missing") || normalized.contains("not found in cache") {
+            return "Missing model files"
+        }
+        if normalized.contains("rate limit") {
+            return "Rate limit reached"
+        }
+        if normalized.contains("network") || normalized.contains("connection") {
+            return "Network unavailable"
+        }
+        return isRepairableFailure ? "Repair needed" : "Download failed"
+    }
+
     var failureStatusIcon: String {
         if isUpdateRequiredFailure {
             return "arrow.triangle.2.circlepath"

@@ -63,7 +63,10 @@ class ChatViewModel: ObservableObject {
     @Published var isPythonLoading: Bool = false
     @Published var isModelLoading: Bool = false
     @Published var isPreloadingLocalModel: Bool = false
+    @Published var isLoadingConversationHistory: Bool = false
+    @Published var isPreparingMessage: Bool = false
     @Published var isGenerating: Bool = false
+    @Published var isTerminatingLocalEngine: Bool = false
     @Published var isDraftingMusicLyrics: Bool = false
     @Published var loadingMessage: String = ""
     @Published var modelLoadProgress: ModelLoadProgress?
@@ -101,6 +104,9 @@ class ChatViewModel: ObservableObject {
     let launchModelPreloadRuntimeCompatibilityCheck: (ModelCapabilityProfile) -> Bool
     let streamingContentStore = StreamingMessageContentStore()
     var generationTask: Task<Void, Never>?
+    var messagePreparationTask: Task<Void, Never>?
+    var conversationHistoryLoadTask: Task<Void, Never>?
+    var activeMessagePreparationID: UUID?
     var activeGenerationID: UUID?
     var engineTerminationTask: Task<Void, Never>?
     var engineTerminationToken: UUID?
@@ -165,11 +171,20 @@ class ChatViewModel: ObservableObject {
             webSearchService: MCPWebSearchService()
         )
 
-        loadConversationHistory()
+        if resolvedChatPersistence.loadsConversationHistoryAsynchronously {
+            isLoadingConversationHistory = true
+            conversationHistoryLoadTask = Task { @MainActor [weak self] in
+                await self?.loadConversationHistoryAsync()
+            }
+        } else {
+            loadConversationHistory()
+        }
         self.vlmExecutor.delegate = self
     }
 
     deinit {
+        conversationHistoryLoadTask?.cancel()
+        messagePreparationTask?.cancel()
         engineTerminationTask?.cancel()
         launchModelPreloadTask?.cancel()
     }

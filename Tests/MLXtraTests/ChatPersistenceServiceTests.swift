@@ -216,7 +216,7 @@ final class ChatPersistenceServiceTests: XCTestCase {
         XCTAssertNil(service.loadSelectedChatId())
     }
 
-    func testPersistAttachmentsCopiesFilesAndDeleteRemovesChatDirectory() throws {
+    func testPersistAttachmentsCopiesFilesAndDeleteRemovesChatDirectory() async throws {
         let storageDirectory = try makeTemporaryDirectory()
         let (defaults, suiteName) = try makeUserDefaults()
         defer { cleanup(defaults: defaults, suiteName: suiteName, directory: storageDirectory) }
@@ -230,7 +230,7 @@ final class ChatPersistenceServiceTests: XCTestCase {
 
         let chatId = UUID()
         let messageId = UUID()
-        let persistedURLs = service.persistAttachments([sourceFile], chatId: chatId, messageId: messageId)
+        let persistedURLs = await service.persistAttachments([sourceFile], chatId: chatId, messageId: messageId)
 
         XCTAssertEqual(persistedURLs.count, 1)
         XCTAssertNotEqual(persistedURLs[0], sourceFile)
@@ -240,7 +240,10 @@ final class ChatPersistenceServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: persistedURLs[0]), "attachment")
 
         service.deleteAttachments(for: chatId)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: persistedURLs[0].deletingLastPathComponent().path))
+        let didRemoveAttachments = await waitUntil {
+            !FileManager.default.fileExists(atPath: persistedURLs[0].deletingLastPathComponent().path)
+        }
+        XCTAssertTrue(didRemoveAttachments)
     }
 
     func testGeneratedMediaURLsRoundTripEvenWhenFilesAreMissing() throws {
@@ -312,5 +315,22 @@ final class ChatPersistenceServiceTests: XCTestCase {
     private func cleanup(defaults: UserDefaults, suiteName: String, directory: URL) {
         defaults.removePersistentDomain(forName: suiteName)
         try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        _ condition: @escaping () -> Bool
+    ) async -> Bool {
+        let intervalNanoseconds: UInt64 = 10_000_000
+        let attempts = max(1, Int(timeoutNanoseconds / intervalNanoseconds))
+
+        for _ in 0..<attempts {
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: intervalNanoseconds)
+        }
+
+        return condition()
     }
 }

@@ -23,16 +23,20 @@ struct ComposerModelControl: View {
     }
 
     private var isLoading: Bool {
-        status.state == .preparing
+        viewModel.isGenerating
+            || status.state == .preparing
             || status.state == .preloading
             || status.state == .loadingModel
+            || status.state == .terminating
             || (status.generationProgress != nil && viewModel.isGenerating)
             || (status.loadProgress != nil && (viewModel.isGenerating || viewModel.isModelLoading || viewModel.isPythonLoading))
     }
 
     private var isForegroundLoading: Bool {
-        status.state == .preparing
+        viewModel.isGenerating
+            || status.state == .preparing
             || status.state == .loadingModel
+            || status.state == .terminating
             || (status.generationProgress != nil && viewModel.isGenerating)
             || (status.loadProgress != nil && (viewModel.isGenerating || viewModel.isModelLoading || viewModel.isPythonLoading))
     }
@@ -180,6 +184,14 @@ struct ComposerModelControl: View {
 
         if let progress = status.generationProgress {
             return progress.compactTitle(modelName: profile.name)
+        }
+
+        if viewModel.isGenerating {
+            return "Generating"
+        }
+
+        if status.state == .terminating {
+            return "Stopping"
         }
 
         if isLoading {
@@ -556,10 +568,11 @@ private struct ParameterControl: View {
     }
 }
 
-private struct TicklessParameterSlider: NSViewRepresentable {
+private struct TicklessParameterSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     let step: Double
+    @Environment(\.isEnabled) private var isEnabled
 
     init(value: Binding<Double>, in range: ClosedRange<Double>, step: Double) {
         self._value = value
@@ -567,72 +580,77 @@ private struct TicklessParameterSlider: NSViewRepresentable {
         self.step = step
     }
 
-    func makeNSView(context: Context) -> NSSlider {
-        let slider = NSSlider(
-            value: value,
-            minValue: range.lowerBound,
-            maxValue: range.upperBound,
-            target: context.coordinator,
-            action: #selector(Coordinator.valueChanged(_:))
-        )
-        slider.sliderType = .linear
-        slider.isContinuous = true
-        slider.numberOfTickMarks = 0
-        slider.allowsTickMarkValuesOnly = false
-        slider.controlSize = .small
-        slider.focusRingType = .none
-        return slider
-    }
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            let fraction = Self.fraction(for: value, in: range)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(isEnabled ? 0.18 : 0.10))
+                    .frame(height: 4)
 
-    func updateNSView(_ nsView: NSSlider, context: Context) {
-        nsView.minValue = range.lowerBound
-        nsView.maxValue = range.upperBound
-        nsView.numberOfTickMarks = 0
-        nsView.allowsTickMarkValuesOnly = false
-        nsView.isEnabled = context.environment.isEnabled
+                Capsule()
+                    .fill(Color.accentColor.opacity(isEnabled ? 0.95 : 0.35))
+                    .frame(width: max(0, width * fraction), height: 4)
 
-        let clampedValue = Self.clamped(value, in: range)
-        if abs(nsView.doubleValue - clampedValue) > 0.000_001 {
-            nsView.doubleValue = clampedValue
+                Circle()
+                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .frame(width: 14, height: 14)
+                    .overlay {
+                        Circle()
+                            .stroke(Color.primary.opacity(0.16), lineWidth: 0.5)
+                    }
+                    .shadow(color: Color.black.opacity(0.18), radius: 1.5, y: 0.5)
+                    .offset(x: max(0, min(width - 14, width * fraction - 7)))
+            }
+            .frame(height: proxy.size.height, alignment: .center)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        guard isEnabled else { return }
+                        value = Self.rounded(
+                            valueForLocation(gesture.location.x, width: width),
+                            range: range,
+                            step: step
+                        )
+                    }
+            )
         }
-        context.coordinator.value = $value
-        context.coordinator.range = range
-        context.coordinator.step = step
+        .accessibilityElement()
+        .accessibilityValue(Text("\(value)"))
+        .accessibilityAdjustableAction { direction in
+            guard isEnabled else { return }
+            let delta = step > 0 ? step : (range.upperBound - range.lowerBound) / 100
+            switch direction {
+            case .increment:
+                value = Self.rounded(value + delta, range: range, step: step)
+            case .decrement:
+                value = Self.rounded(value - delta, range: range, step: step)
+            @unknown default:
+                break
+            }
+        }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(value: $value, range: range, step: step)
+    private func valueForLocation(_ x: CGFloat, width: CGFloat) -> Double {
+        let fraction = min(max(Double(x / width), 0), 1)
+        return range.lowerBound + (range.upperBound - range.lowerBound) * fraction
     }
 
     private static func clamped(_ value: Double, in range: ClosedRange<Double>) -> Double {
         min(max(value, range.lowerBound), range.upperBound)
     }
 
-    @MainActor
-    final class Coordinator: NSObject {
-        var value: Binding<Double>
-        var range: ClosedRange<Double>
-        var step: Double
+    private static func fraction(for value: Double, in range: ClosedRange<Double>) -> Double {
+        guard range.upperBound > range.lowerBound else { return 0 }
+        return (clamped(value, in: range) - range.lowerBound) / (range.upperBound - range.lowerBound)
+    }
 
-        init(value: Binding<Double>, range: ClosedRange<Double>, step: Double) {
-            self.value = value
-            self.range = range
-            self.step = step
-        }
-
-        @objc func valueChanged(_ sender: NSSlider) {
-            let steppedValue = Self.rounded(sender.doubleValue, range: range, step: step)
-            if abs(sender.doubleValue - steppedValue) > 0.000_001 {
-                sender.doubleValue = steppedValue
-            }
-            value.wrappedValue = steppedValue
-        }
-
-        private static func rounded(_ value: Double, range: ClosedRange<Double>, step: Double) -> Double {
-            let clampedValue = TicklessParameterSlider.clamped(value, in: range)
-            guard step > 0 else { return clampedValue }
-            let steps = ((clampedValue - range.lowerBound) / step).rounded()
-            return TicklessParameterSlider.clamped(range.lowerBound + steps * step, in: range)
-        }
+    private static func rounded(_ value: Double, range: ClosedRange<Double>, step: Double) -> Double {
+        let clampedValue = TicklessParameterSlider.clamped(value, in: range)
+        guard step > 0 else { return clampedValue }
+        let steps = ((clampedValue - range.lowerBound) / step).rounded()
+        return TicklessParameterSlider.clamped(range.lowerBound + steps * step, in: range)
     }
 }

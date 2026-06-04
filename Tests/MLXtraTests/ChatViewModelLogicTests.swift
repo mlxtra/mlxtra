@@ -971,6 +971,49 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testImageSendPreparesAttachmentsAsynchronouslyAndBlocksDuplicateSubmit() async throws {
+        let persistence = SuspendedAttachmentPersistenceService()
+        let executor = QuickPromptTestExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        let selectedImageURL = URL(fileURLWithPath: "/tmp/reference-input.png")
+        let persistedImageURL = URL(fileURLWithPath: "/tmp/reference-persisted.png")
+
+        viewModel.inputText = "Describe this"
+        viewModel.selectedImagePaths = [selectedImageURL]
+        viewModel.sendMessage()
+
+        XCTAssertTrue(viewModel.isPreparingMessage)
+        XCTAssertTrue(viewModel.isInputDisabled)
+        XCTAssertEqual(viewModel.inputText, "")
+        XCTAssertEqual(viewModel.selectedImagePaths, [])
+
+        viewModel.sendMessage()
+
+        let didStartAttachmentPersistence = await waitUntil {
+            persistence.persistCallCount == 1
+        }
+        XCTAssertTrue(didStartAttachmentPersistence)
+        XCTAssertEqual(persistence.persistedInputs.first?.urls, [selectedImageURL])
+
+        let preparationTask = viewModel.messagePreparationTask
+        persistence.resume(returning: [persistedImageURL])
+        await preparationTask?.value
+        await viewModel.generationTask?.value
+
+        let messages = try XCTUnwrap(viewModel.selectedChat?.messages)
+        XCTAssertEqual(messages.filter(\.isUser).count, 1)
+        XCTAssertEqual(messages.first?.imageURLs, [persistedImageURL])
+        XCTAssertEqual(executor.receivedRequests.first?.images, [persistedImageURL])
+        XCTAssertFalse(viewModel.isPreparingMessage)
+        XCTAssertFalse(viewModel.isInputDisabled)
+    }
+
+    @MainActor
     func testDirectImageGenerationPreloadIncludesRuntimeOptions() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -1066,6 +1109,70 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testRetryPromptRemovesFailedAssistantAndResubmitsOriginalUserMessage() async throws {
+        let executor = QuickPromptTestExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        let userMessage = Message(
+            content: "Try again",
+            isUser: true,
+            timestamp: Date()
+        )
+        let failedAssistant = Message(
+            content: "The local engine stopped before it could finish.\n\nbridge failed",
+            isUser: false,
+            timestamp: Date()
+        )
+        let chatID = try XCTUnwrap(viewModel.selectedChatId)
+        let chatIndex = try XCTUnwrap(viewModel.chats.firstIndex(where: { $0.id == chatID }))
+        viewModel.chats[chatIndex].messages = [userMessage, failedAssistant]
+
+        XCTAssertTrue(viewModel.canRetryPrompt(for: failedAssistant.id))
+
+        viewModel.retryPrompt(for: failedAssistant.id)
+        await viewModel.generationTask?.value
+
+        let messages = try XCTUnwrap(viewModel.selectedChat?.messages)
+        XCTAssertEqual(messages.count, 2)
+        XCTAssertEqual(messages[0].id, userMessage.id)
+        XCTAssertEqual(messages[1].content, "Quick response")
+        XCTAssertEqual(executor.receivedRequests.first?.messages.last?.content, "Try again")
+    }
+
+    @MainActor
+    func testRetryPromptFromLastUnansweredUserMessageStartsGenerationWithoutDuplicateUserBubble() async throws {
+        let executor = QuickPromptTestExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        let userMessage = Message(
+            content: "No answer yet",
+            isUser: true,
+            timestamp: Date()
+        )
+        let chatID = try XCTUnwrap(viewModel.selectedChatId)
+        let chatIndex = try XCTUnwrap(viewModel.chats.firstIndex(where: { $0.id == chatID }))
+        viewModel.chats[chatIndex].messages = [userMessage]
+
+        XCTAssertTrue(viewModel.canRetryPrompt(for: userMessage.id))
+
+        viewModel.retryPrompt(for: userMessage.id)
+        await viewModel.generationTask?.value
+
+        let messages = try XCTUnwrap(viewModel.selectedChat?.messages)
+        XCTAssertEqual(messages.filter(\.isUser).count, 1)
+        XCTAssertEqual(messages.first?.id, userMessage.id)
+        XCTAssertEqual(messages.last?.content, "Quick response")
+    }
+
+    @MainActor
     func testDirectSpeechGenerationAttachesAudioOnlyAfterCompletion() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -1098,7 +1205,7 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
-    func testGenerationWaitsForPendingCancelTerminationBeforeStartingNextPrompt() async {
+    func testGenerationBlocksNextPromptUntilCancelTerminationCompletes() async {
         let executor = QuickPromptTestExecutor()
         executor.terminateDelayNanoseconds = 100_000_000
         let viewModel = ChatViewModel(
@@ -1112,8 +1219,18 @@ final class ChatViewModelLogicTests: XCTestCase {
         viewModel.generationTask = Task {}
         viewModel.isGenerating = true
         viewModel.cancelGeneration()
+        XCTAssertTrue(viewModel.isTerminatingLocalEngine)
+        XCTAssertTrue(viewModel.isInputDisabled)
 
         viewModel.inputText = "Second prompt"
+        viewModel.sendMessage()
+        XCTAssertNil(viewModel.generationTask)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+
+        await viewModel.engineTerminationTask?.value
+        XCTAssertFalse(viewModel.isTerminatingLocalEngine)
+        XCTAssertFalse(viewModel.isInputDisabled)
+
         viewModel.sendMessage()
         await viewModel.generationTask?.value
 
@@ -1145,8 +1262,18 @@ final class ChatViewModelLogicTests: XCTestCase {
 
         viewModel.freeLocalEngineMemory()
         XCTAssertNotNil(viewModel.engineTerminationTask)
+        XCTAssertTrue(viewModel.isTerminatingLocalEngine)
+        XCTAssertTrue(viewModel.isInputDisabled)
 
         viewModel.inputText = "Second prompt"
+        viewModel.sendMessage()
+        XCTAssertNil(viewModel.generationTask)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+
+        await viewModel.engineTerminationTask?.value
+        XCTAssertFalse(viewModel.isTerminatingLocalEngine)
+        XCTAssertFalse(viewModel.isInputDisabled)
+
         viewModel.sendMessage()
         await viewModel.generationTask?.value
 
@@ -1684,6 +1811,46 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelGenerationIsIdempotentAndDoesNotFlushPersistence() throws {
+        let persistence = RecordingChatPersistenceService(chats: [], selectedChatId: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        persistence.resetRecording()
+
+        let messageID = UUID()
+        let chatID = try XCTUnwrap(viewModel.selectedChatId)
+        let chatIndex = try XCTUnwrap(viewModel.chats.firstIndex(where: { $0.id == chatID }))
+
+        viewModel.chats[chatIndex].messages.append(Message(
+            id: messageID,
+            content: "",
+            isUser: false,
+            timestamp: Date(),
+            isStreaming: true
+        ))
+        _ = viewModel.streamingContentStore.begin(messageId: messageID, initialText: "Partial response")
+        viewModel.generationTask = Task {}
+        viewModel.isGenerating = true
+        viewModel.streamingMessageId = messageID
+
+        viewModel.cancelGeneration()
+        viewModel.cancelGeneration()
+
+        let stoppedMessage = try XCTUnwrap(viewModel.selectedChat?.messages.first(where: { $0.id == messageID }))
+        XCTAssertEqual(stoppedMessage.content, "Partial response")
+        XCTAssertFalse(stoppedMessage.isStreaming)
+        XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertNil(viewModel.generationTask)
+        XCTAssertNil(viewModel.streamingMessageId)
+        XCTAssertEqual(persistence.scheduledSaveCount, 1)
+        XCTAssertEqual(persistence.flushPendingSaveCount, 0)
+    }
+
+    @MainActor
     func testStaleDeepResearchSeedDoesNotMutateToolProgress() async {
         let viewModel = makeQuickPromptViewModel()
         let staleGenerationID = UUID()
@@ -1790,6 +1957,8 @@ private final class RecordingChatPersistenceService: ChatPersistenceServicing {
     private let initialSelectedChatId: UUID?
     private(set) var savedChats: [Chat] = []
     private(set) var savedSelectedChatId: UUID?
+    private(set) var scheduledSaveCount = 0
+    private(set) var flushPendingSaveCount = 0
 
     init(chats: [Chat], selectedChatId: UUID?) {
         self.initialChats = chats
@@ -1812,11 +1981,68 @@ private final class RecordingChatPersistenceService: ChatPersistenceServicing {
         savedSelectedChatId = selectedChatId
     }
 
-    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL] {
+    func scheduleSave(_ chats: [Chat], selectedChatId: UUID?) {
+        scheduledSaveCount += 1
+        savedChats = chats
+        savedSelectedChatId = selectedChatId
+    }
+
+    func flushPendingSave() {
+        flushPendingSaveCount += 1
+    }
+
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) async -> [URL] {
         urls
     }
 
     func deleteAttachments(for chatId: UUID) {}
+
+    func resetRecording() {
+        savedChats = []
+        savedSelectedChatId = nil
+        scheduledSaveCount = 0
+        flushPendingSaveCount = 0
+    }
+}
+
+@MainActor
+private final class SuspendedAttachmentPersistenceService: ChatPersistenceServicing {
+    private(set) var savedChats: [Chat] = []
+    private(set) var savedSelectedChatId: UUID?
+    private(set) var persistCallCount = 0
+    private(set) var persistedInputs: [(urls: [URL], chatId: UUID, messageId: UUID)] = []
+    private var continuation: CheckedContinuation<[URL], Never>?
+
+    func loadChats() -> [Chat] {
+        []
+    }
+
+    func saveChats(_ chats: [Chat]) {
+        savedChats = chats
+    }
+
+    func loadSelectedChatId() -> UUID? {
+        nil
+    }
+
+    func saveSelectedChatId(_ selectedChatId: UUID?) {
+        savedSelectedChatId = selectedChatId
+    }
+
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) async -> [URL] {
+        persistCallCount += 1
+        persistedInputs.append((urls, chatId, messageId))
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func deleteAttachments(for chatId: UUID) {}
+
+    func resume(returning urls: [URL]) {
+        continuation?.resume(returning: urls)
+        continuation = nil
+    }
 }
 
 @MainActor

@@ -64,7 +64,7 @@ private final class UITestChatPersistenceService: ChatPersistenceServicing {
         self.selectedChatId = selectedChatId
     }
 
-    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) -> [URL] {
+    func persistAttachments(_ urls: [URL], chatId: UUID, messageId: UUID) async -> [URL] {
         urls
     }
 

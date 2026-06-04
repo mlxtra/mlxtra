@@ -31,9 +31,12 @@ final class RuntimeUpdateManager: ObservableObject {
     private let runtimeArchiveDownloadConfiguration: URLSessionConfiguration
     private let runtimeArchiveCacheDirectory: URL
     private var backgroundTask: Task<Void, Never>?
+    private var queuedBootstrapRequests: [RuntimeComponent: RuntimeBootstrapRequest] = [:]
     private var activeRefreshID: UUID?
     private var activeInstallID: UUID?
     private var runtimeDownloadSpeedTracker = RuntimeDownloadSpeedTracker()
+    private var lastRuntimeDownloadProgressPublishDate: Date?
+    private let runtimeDownloadProgressPublishInterval: TimeInterval
 
     init(
         currentManifestProvider: @escaping () -> RuntimeManifest? = { RuntimeManager.activeRuntimeManifest() },
@@ -50,7 +53,8 @@ final class RuntimeUpdateManager: ObservableObject {
         runtimeArchiveDownloadConfiguration: URLSessionConfiguration = .default,
         runtimeArchiveCacheDirectory: URL = RuntimeManager.appSupportURL()
             .appendingPathComponent("downloads")
-            .appendingPathComponent("runtime")
+            .appendingPathComponent("runtime"),
+        runtimeDownloadProgressPublishInterval: TimeInterval = 0.5
     ) {
         self.currentManifestProvider = currentManifestProvider
         self.currentComponentManifestProvider = currentComponentManifestProvider
@@ -59,6 +63,7 @@ final class RuntimeUpdateManager: ObservableObject {
         self.runtimeArchiveInstaller = runtimeArchiveInstaller
         self.runtimeArchiveDownloadConfiguration = runtimeArchiveDownloadConfiguration
         self.runtimeArchiveCacheDirectory = runtimeArchiveCacheDirectory
+        self.runtimeDownloadProgressPublishInterval = runtimeDownloadProgressPublishInterval
     }
 
     var availableRuntime: RuntimeReleaseAsset? {
@@ -73,13 +78,16 @@ final class RuntimeUpdateManager: ObservableObject {
         reportFailures: Bool = false,
         component: RuntimeComponent = .base
     ) {
-        startBackgroundTask {
-            await $0.bootstrapStableRuntimeIfNeeded(
-                channelURL: channelURL,
-                reportFailures: reportFailures,
-                component: component
-            )
+        let request = RuntimeBootstrapRequest(
+            channelURL: channelURL,
+            reportFailures: reportFailures,
+            component: component
+        )
+        if isRuntimeUpdateBusy {
+            queueBootstrapRequest(request)
+            return
         }
+        startBootstrapBackgroundTask(request)
     }
 
     func installRuntimeInBackground(_ asset: RuntimeReleaseAsset) {
@@ -180,6 +188,9 @@ final class RuntimeUpdateManager: ObservableObject {
         runtimeDownloadProgress = asset.url.isFileURL
             ? nil
             : RuntimeDownloadProgress(downloadedBytes: 0, totalBytes: asset.sizeBytes)
+        if runtimeDownloadProgress != nil {
+            lastRuntimeDownloadProgressPublishDate = Date()
+        }
         state = asset.url.isFileURL || asset.sizeBytes == nil ? .installing(nil) : .installing(0)
         do {
             let archiveURL = try await fetchRuntimeArchive(asset, installID: installID)
@@ -209,6 +220,7 @@ final class RuntimeUpdateManager: ObservableObject {
                 installID: installID
             )
             guard isCurrentInstall(installID) else { return }
+            RuntimeManager.invalidateRuntimeManifestCache()
             guard let manifest = RuntimeManager.runtimeManifest(at: installedURL, component: asset.component) else {
                 throw RuntimeUpdateError.invalidRuntime
             }
@@ -239,6 +251,23 @@ final class RuntimeUpdateManager: ObservableObject {
         return activeInstallID != nil
     }
 
+    private var isBackgroundTaskActive: Bool {
+        guard let backgroundTask else {
+            return false
+        }
+        return !backgroundTask.isCancelled
+    }
+
+    private var isRuntimeUpdateBusy: Bool {
+        if isBackgroundTaskActive || isInstalling {
+            return true
+        }
+        if case .checking = state {
+            return true
+        }
+        return false
+    }
+
     private func isCurrentRefresh(_ refreshID: UUID) -> Bool {
         activeRefreshID == refreshID
     }
@@ -247,6 +276,7 @@ final class RuntimeUpdateManager: ObservableObject {
         if activeRefreshID == refreshID {
             activeRefreshID = nil
         }
+        drainQueuedBootstrapRequestIfNeeded()
     }
 
     private func isCurrentInstall(_ installID: UUID) -> Bool {
@@ -257,6 +287,7 @@ final class RuntimeUpdateManager: ObservableObject {
         if activeInstallID == installID {
             activeInstallID = nil
         }
+        drainQueuedBootstrapRequestIfNeeded()
     }
 
     private func clearInstallProgress() {
@@ -290,16 +321,42 @@ final class RuntimeUpdateManager: ObservableObject {
             totalBytes: progress.totalBytes,
             bytesPerSecond: bytesPerSecond
         )
+        guard shouldPublishRuntimeDownloadProgress(measuredProgress, at: now) else {
+            return
+        }
+        lastRuntimeDownloadProgressPublishDate = now
         runtimeDownloadProgress = measuredProgress
         state = .installing(measuredProgress.fractionCompleted)
     }
 
     private func resetRuntimeDownloadMetrics() {
         runtimeDownloadSpeedTracker.reset()
+        lastRuntimeDownloadProgressPublishDate = nil
+    }
+
+    private func shouldPublishRuntimeDownloadProgress(
+        _ progress: RuntimeDownloadProgress,
+        at date: Date
+    ) -> Bool {
+        if runtimeDownloadProgress?.downloadedBytes == progress.downloadedBytes,
+           runtimeDownloadProgress?.totalBytes == progress.totalBytes {
+            return false
+        }
+        if runtimeDownloadProgressPublishInterval <= 0 {
+            return true
+        }
+        if let totalBytes = progress.totalBytes,
+           progress.downloadedBytes >= totalBytes {
+            return true
+        }
+        guard let lastRuntimeDownloadProgressPublishDate else {
+            return true
+        }
+        return date.timeIntervalSince(lastRuntimeDownloadProgressPublishDate) >= runtimeDownloadProgressPublishInterval
     }
 
     private func startBackgroundTask(_ operation: @escaping @MainActor (RuntimeUpdateManager) async -> Void) {
-        if let backgroundTask, !backgroundTask.isCancelled {
+        if isBackgroundTaskActive {
             return
         }
 
@@ -314,7 +371,50 @@ final class RuntimeUpdateManager: ObservableObject {
             guard let self else { return }
             await operation(self)
             self.backgroundTask = nil
+            self.drainQueuedBootstrapRequestIfNeeded()
         }
+    }
+
+    private struct RuntimeBootstrapRequest {
+        let channelURL: URL
+        let reportFailures: Bool
+        let component: RuntimeComponent
+    }
+
+    private func startBootstrapBackgroundTask(_ request: RuntimeBootstrapRequest) {
+        startBackgroundTask {
+            await $0.bootstrapStableRuntimeIfNeeded(
+                channelURL: request.channelURL,
+                reportFailures: request.reportFailures,
+                component: request.component
+            )
+        }
+    }
+
+    private func queueBootstrapRequest(_ request: RuntimeBootstrapRequest) {
+        let existingRequest = queuedBootstrapRequests[request.component]
+        queuedBootstrapRequests[request.component] = RuntimeBootstrapRequest(
+            channelURL: request.channelURL,
+            reportFailures: (existingRequest?.reportFailures ?? false) || request.reportFailures,
+            component: request.component
+        )
+    }
+
+    private func drainQueuedBootstrapRequestIfNeeded() {
+        guard !isRuntimeUpdateBusy,
+              let request = nextQueuedBootstrapRequest() else {
+            return
+        }
+        startBootstrapBackgroundTask(request)
+    }
+
+    private func nextQueuedBootstrapRequest() -> RuntimeBootstrapRequest? {
+        for component in [RuntimeComponent.music, .base] {
+            if let request = queuedBootstrapRequests.removeValue(forKey: component) {
+                return request
+            }
+        }
+        return nil
     }
 
     private struct RuntimeUpdateSelection {

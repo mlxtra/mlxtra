@@ -82,7 +82,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .models:
             return "Choose what runs locally on this Mac."
         case .updates:
-            return "Keep MLXtra current."
+            return "Keep MLXtra updated."
         case .advanced:
             return "Tune prompts and tool behavior."
         }

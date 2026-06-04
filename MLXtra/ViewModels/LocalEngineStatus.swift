@@ -367,6 +367,7 @@ struct LocalEngineStatus: Equatable {
         case preloading
         case loadingModel
         case generating
+        case terminating
         case ready
         case needsDownload
         case needsAttention
@@ -420,6 +421,7 @@ struct LocalEngineStatus: Equatable {
         isModelLoading: Bool,
         isPreloadingLocalModel: Bool = false,
         isGenerating: Bool,
+        isTerminatingLocalEngine: Bool = false,
         loadingMessage: String,
         loadProgress: ModelLoadProgress? = nil,
         generationProgress: GenerationProgress? = nil,
@@ -513,6 +515,22 @@ struct LocalEngineStatus: Equatable {
                 isVisibleInComposer: true,
                 loadProgress: nil,
                 generationProgress: generationProgress
+            )
+        }
+
+        if isTerminatingLocalEngine {
+            return LocalEngineStatus(
+                state: .terminating,
+                title: "Stopping...",
+                detail: "Stopping the local engine and cleaning up the running process.",
+                systemImage: "stop.circle",
+                tone: .accent,
+                primaryAction: nil,
+                primaryActionModelId: nil,
+                canFreeMemory: false,
+                isVisibleInComposer: true,
+                loadProgress: nil,
+                generationProgress: nil
             )
         }
 

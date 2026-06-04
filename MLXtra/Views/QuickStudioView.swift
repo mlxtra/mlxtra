@@ -33,6 +33,15 @@ struct QuickStudioView: View {
             )
         }
 
+        if viewModel.isTerminatingLocalEngine {
+            return QuickStudioEngineStatus(
+                title: "Stopping",
+                detail: statusDetailFallback("Stopping local engine"),
+                systemImage: "stop.circle",
+                tint: MLXtraDesignSystem.Palette.accent
+            )
+        }
+
         if viewModel.isPythonLoading || viewModel.isModelLoading || viewModel.isDraftingMusicLyrics {
             return QuickStudioEngineStatus(
                 title: "Loading",

@@ -13,6 +13,8 @@ struct MessageBubble: View {
     @State private var showCopyFeedback = false
     @State private var cursorAnimationTask: Task<Void, Never>?
     @State private var copyFeedbackTask: Task<Void, Never>?
+    let canRetry: Bool
+    let onRetry: (() -> Void)?
     let onOpenModels: (() -> Void)?
     let onRestartLocalEngine: (() -> Void)?
     private let messageMaxWidth: CGFloat = MLXtraDesignSystem.Layout.messageMaxWidth
@@ -23,12 +25,16 @@ struct MessageBubble: View {
         message: Message,
         isStreaming: Bool = false,
         streamingContent: StreamingMessageContent? = nil,
+        canRetry: Bool = false,
+        onRetry: (() -> Void)? = nil,
         onOpenModels: (() -> Void)? = nil,
         onRestartLocalEngine: (() -> Void)? = nil
     ) {
         self.message = message
         self.isStreaming = isStreaming
         self.streamingContent = streamingContent
+        self.canRetry = canRetry
+        self.onRetry = onRetry
         self.onOpenModels = onOpenModels
         self.onRestartLocalEngine = onRestartLocalEngine
     }
@@ -75,12 +81,20 @@ struct MessageBubble: View {
                         .frame(maxWidth: generatedMediaColumnWidth, alignment: .leading)
                     }
 
-                    if !message.content.isEmpty || isStreaming {
+                    if shouldShowUnansweredAssistantNotice {
+                        unansweredAssistantNotice
+                            .frame(maxWidth: messageMaxWidth, alignment: .leading)
+                    } else if !message.content.isEmpty || isStreaming {
                         VStack(alignment: .leading, spacing: MLXtraDesignSystem.Spacing.xxs) {
                             assistantBodyContent
                                 .contextMenu {
                                     Button("Copy") {
                                         copyToClipboard()
+                                    }
+                                    if canRetry, let onRetry {
+                                        Button("Retry") {
+                                            onRetry()
+                                        }
                                     }
                                 }
                                 .frame(maxWidth: messageMaxWidth, alignment: .leading)
@@ -185,6 +199,15 @@ struct MessageBubble: View {
             && (!message.content.isEmpty || !message.imageURLs.isEmpty || !message.audioURLs.isEmpty)
     }
 
+    private var shouldShowUnansweredAssistantNotice: Bool {
+        !message.isUser
+            && !isStreaming
+            && canRetry
+            && message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && message.imageURLs.isEmpty
+            && message.audioURLs.isEmpty
+    }
+
     private var hasCopyableUserContent: Bool {
         message.isUser
             && (!message.content.isEmpty || !message.imageURLs.isEmpty || !message.audioURLs.isEmpty)
@@ -196,13 +219,14 @@ struct MessageBubble: View {
             && (
                 (isHovered && message.performanceMetrics != nil)
                     || (hasCopyableAssistantContent && (isHovered || showCopyFeedback))
+                    || (canRetry && isHovered)
             )
     }
 
     private var shouldReserveAssistantMetaRowSpace: Bool {
         !message.isUser
             && !isStreaming
-            && (hasCopyableAssistantContent || message.performanceMetrics != nil || showCopyFeedback)
+            && (hasCopyableAssistantContent || message.performanceMetrics != nil || showCopyFeedback || canRetry)
     }
 
     private var shouldShowUserMetaRow: Bool {
@@ -223,8 +247,10 @@ struct MessageBubble: View {
                 metrics: isHovered ? message.performanceMetrics : nil,
                 timestamp: message.timestamp,
                 showsTimestamp: isHovered,
+                showsRetryButton: canRetry && isHovered,
                 showsCopyButton: hasCopyableAssistantContent && isHovered,
                 showCopyFeedback: showCopyFeedback,
+                onRetry: onRetry,
                 onCopy: copyToClipboard
             )
             .frame(maxWidth: messageMaxWidth, alignment: .leading)
@@ -235,6 +261,32 @@ struct MessageBubble: View {
             }
 #endif
         }
+    }
+
+    private var unansweredAssistantNotice: some View {
+        HStack(spacing: MLXtraDesignSystem.Spacing.sm) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: MLXtraDesignSystem.Icon.small, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Text("No response received.")
+                .font(MLXtraDesignSystem.Typography.compactBodyMedium)
+                .foregroundStyle(.secondary)
+
+            if let onRetry {
+                Button(action: onRetry) {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(MLXtraDesignSystem.Typography.compactBodyMedium)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help("Retry this prompt")
+                .accessibilityIdentifier("message.retry")
+            }
+        }
+        .padding(.horizontal, MLXtraDesignSystem.Spacing.md)
+        .padding(.vertical, MLXtraDesignSystem.Spacing.sm)
+        .designPanelSurface(cornerRadius: MLXtraDesignSystem.Radius.control)
     }
 
     @ViewBuilder
@@ -260,8 +312,10 @@ struct MessageBubble: View {
             UserMessageMetaRow(
                 timestamp: message.timestamp,
                 showsTimestamp: isHovered,
+                showsRetryButton: canRetry && isHovered,
                 showsCopyButton: hasCopyableUserContent && isHovered,
                 showCopyFeedback: showCopyFeedback,
+                onRetry: onRetry,
                 onCopy: copyToClipboard
             )
             .frame(maxWidth: messageMaxWidth, alignment: .trailing)
@@ -370,12 +424,32 @@ private struct AssistantMessageMetaRow: View {
     let metrics: GenerationPerformanceMetrics?
     let timestamp: Date
     let showsTimestamp: Bool
+    let showsRetryButton: Bool
     let showsCopyButton: Bool
     let showCopyFeedback: Bool
+    let onRetry: (() -> Void)?
     let onCopy: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: MLXtraDesignSystem.Spacing.xs) {
+            if showsRetryButton, let onRetry {
+                Button(action: onRetry) {
+                    HStack(spacing: MLXtraDesignSystem.Spacing.xs) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: MLXtraDesignSystem.Icon.micro, weight: .medium))
+
+                        Text("Retry")
+                            .font(MLXtraDesignSystem.Typography.microMedium)
+                    }
+                    .foregroundStyle(.tertiary)
+                    .frame(minHeight: 18)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Retry this prompt")
+                .accessibilityIdentifier("message.retry")
+            }
+
             if showsCopyButton || showCopyFeedback {
                 Button(action: onCopy) {
                     HStack(spacing: MLXtraDesignSystem.Spacing.xs) {
@@ -413,12 +487,32 @@ private struct AssistantMessageMetaRow: View {
 private struct UserMessageMetaRow: View {
     let timestamp: Date
     let showsTimestamp: Bool
+    let showsRetryButton: Bool
     let showsCopyButton: Bool
     let showCopyFeedback: Bool
+    let onRetry: (() -> Void)?
     let onCopy: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: MLXtraDesignSystem.Spacing.xs) {
+            if showsRetryButton, let onRetry {
+                Button(action: onRetry) {
+                    HStack(spacing: MLXtraDesignSystem.Spacing.xs) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: MLXtraDesignSystem.Icon.micro, weight: .medium))
+
+                        Text("Retry")
+                            .font(MLXtraDesignSystem.Typography.microMedium)
+                    }
+                    .foregroundStyle(.tertiary)
+                    .frame(minHeight: 18)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Retry this prompt")
+                .accessibilityIdentifier("message.retry")
+            }
+
             if showsTimestamp {
                 Text(timestamp, style: .time)
                     .font(MLXtraDesignSystem.Typography.microMedium)

@@ -27,6 +27,31 @@ final class LocalEngineStatusTests: XCTestCase {
         XCTAssertTrue(status.isVisibleInComposer)
     }
 
+    func testTerminatingStateShowsStoppingStatus() {
+        let status = LocalEngineStatus.resolve(
+            runtimeState: .ready,
+            isPythonLoading: false,
+            isModelLoading: false,
+            isGenerating: false,
+            isTerminatingLocalEngine: true,
+            loadingMessage: "",
+            isExecutorReady: false,
+            isModelLoaded: false,
+            selectedModelName: "Qwen 3.5",
+            activeModelName: "Qwen 3.5",
+            activeModelRole: .chat,
+            pendingDownloadModelId: nil,
+            pendingDownloadModelName: nil,
+            freedModelName: nil,
+            lastErrorMessage: nil
+        )
+
+        XCTAssertEqual(status.state, .terminating)
+        XCTAssertEqual(status.title, "Stopping...")
+        XCTAssertFalse(status.canFreeMemory)
+        XCTAssertTrue(status.isVisibleInComposer)
+    }
+
     func testImageLoadingUsesPlainLanguage() {
         let status = LocalEngineStatus.resolve(
             runtimeState: .ready,

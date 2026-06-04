@@ -33,7 +33,6 @@ extension ChatViewModel {
             markMessageStopped(streamingMessageId)
         }
         finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
-        chatPersistence.flushPendingSave()
     }
 
     func finishTerminalMediaToolResult(
