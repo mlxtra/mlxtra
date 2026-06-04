@@ -7,7 +7,7 @@ vision, image, speech, and music models on your Mac with
 [MLX](https://github.com/ml-explore/mlx), without turning setup into a model
 server project.
 
-[Download MLXtra 1.0.10 DMG](https://github.com/mlxtra/mlxtra/releases/download/app-1.0.10/MLXtra-1.0.10.dmg)
+[Download MLXtra 1.0.12 DMG](https://github.com/mlxtra/mlxtra/releases/download/app-1.0.12/MLXtra-1.0.12.dmg)
 | [Watch demo](https://raw.githubusercontent.com/mlxtra/mlxtra/main/docs/assets/demo/MLXtra.mp4)
 | [View releases](https://github.com/mlxtra/mlxtra/releases)
 | [Build from source](#build-from-source)

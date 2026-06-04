@@ -8,6 +8,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         ModelCapabilityProfile.bestProfile(for: .vision)?.modelId
             ?? "mlx-community/Qwen3.5-2B-MLX-4bit"
     }
+    private static let aceStepMusicModelId = "ACE-Step/acestep-v15-turbo-continuous"
     private var standardDefaultsSnapshot: [String: Any?] = [:]
 
     override func setUp() {
@@ -22,6 +23,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             ModelSelectionStore.musicKey: UserDefaults.standard.object(forKey: ModelSelectionStore.musicKey),
             ModelParameterStore.storageKey: UserDefaults.standard.object(forKey: ModelParameterStore.storageKey),
         ]
+        UserDefaults.standard.set(Self.aceStepMusicModelId, forKey: ModelSelectionStore.musicKey)
     }
 
     override func tearDown() {
