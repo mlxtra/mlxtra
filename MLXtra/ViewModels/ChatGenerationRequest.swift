@@ -19,6 +19,10 @@ struct ChatGenerationRequest {
     var isSpeechGeneration: Bool { tool == .tts }
     var isMusicGeneration: Bool { tool == .music }
     var isDeepResearch: Bool { tool == .research }
+    var shouldPrepareDirectImagePrompt: Bool {
+        let imageProfile = profile(for: .image)
+        return isImageGeneration && shouldPrepareImagePrompt(for: imageProfile)
+    }
 
     func profile(for tool: Tool) -> ModelCapabilityProfile {
         let modality = Self.modelModality(for: tool)
@@ -27,6 +31,20 @@ struct ChatGenerationRequest {
 
     func executionParameters(for profile: ModelCapabilityProfile) -> [String: Any] {
         profile.executionParameters(merging: parametersByModelId[profile.modelId] ?? [:])
+    }
+
+    func shouldImproveImagePrompt(for profile: ModelCapabilityProfile) -> Bool {
+        (parametersByModelId[profile.modelId]?["improve_prompt"] as? Bool)
+            ?? profile.boolParameterDefault("improve_prompt", fallback: false)
+    }
+
+    func shouldPrepareImagePrompt(for profile: ModelCapabilityProfile) -> Bool {
+        profile.imagePromptAdapter != .plainText || shouldImproveImagePrompt(for: profile)
+    }
+
+    func imageDimension(_ key: String, for profile: ModelCapabilityProfile, fallback: Int = 1024) -> Int {
+        (parametersByModelId[profile.modelId]?[key] as? Int)
+            ?? profile.intParameterDefault(key, fallback: fallback)
     }
 
     func runtimeExecutionParameters(for profile: ModelCapabilityProfile) -> [String: Any]? {

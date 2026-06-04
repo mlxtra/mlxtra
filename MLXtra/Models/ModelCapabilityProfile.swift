@@ -1,8 +1,28 @@
 import Foundation
+import Darwin
 
 enum SystemHardware {
     static var currentMemoryGB: Double {
         Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+    }
+
+    static var currentChipName: String? {
+        sysctlString("machdep.cpu.brand_string")
+    }
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else {
+            return nil
+        }
+
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else {
+            return nil
+        }
+
+        let value = String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }
 
@@ -317,19 +337,22 @@ struct ModelSource: Codable, Equatable {
     let revision: String?
     let components: [String]
     let helper: ModelDownloadHelper?
+    let storageSubdirectory: String?
 
     init(
         type: ModelSourceType,
         repo: String? = nil,
         revision: String? = nil,
         components: [String] = [],
-        helper: ModelDownloadHelper? = nil
+        helper: ModelDownloadHelper? = nil,
+        storageSubdirectory: String? = nil
     ) {
         self.type = type
         self.repo = repo
         self.revision = revision
         self.components = components
         self.helper = helper
+        self.storageSubdirectory = storageSubdirectory
     }
 
     static func defaultSource(modelId: String) -> ModelSource {
@@ -342,6 +365,14 @@ struct ModelSource: Codable, Equatable {
 
     var usesComponentBundle: Bool {
         type == .componentBundle
+    }
+
+    func componentStorageRoot(checkpointsPath: URL) -> URL {
+        guard let storageSubdirectory,
+              !storageSubdirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return checkpointsPath
+        }
+        return checkpointsPath.appendingPathComponent(storageSubdirectory)
     }
 }
 
@@ -497,13 +528,13 @@ struct ModelRuntimeOptions: Codable, Equatable {
 struct MFluxRuntimeOptions: Codable, Equatable {
     let config: String
     let textToImageClass: String
-    let editClass: String
+    let editClass: String?
     let quantize: Int?
 
     init(
         config: String,
         textToImageClass: String,
-        editClass: String,
+        editClass: String? = nil,
         quantize: Int? = nil
     ) {
         self.config = config
@@ -515,9 +546,11 @@ struct MFluxRuntimeOptions: Codable, Equatable {
     var executionDictionary: [String: Any] {
         var options: [String: Any] = [
             "config": config,
-            "textToImageClass": textToImageClass,
-            "editClass": editClass
+            "textToImageClass": textToImageClass
         ]
+        if let editClass {
+            options["editClass"] = editClass
+        }
         if let quantize {
             options["quantize"] = quantize
         }
@@ -591,12 +624,54 @@ struct ModelRanking: Codable, Equatable {
     let quality: Int
     let speed: Int
     let defaultForMemoryGB: Double?
+    let preferredChipNames: [String]
+    let hardwareFallback: Bool
 
-    init(quality: Int = 0, speed: Int = 0, defaultForMemoryGB: Double? = nil) {
+    init(
+        quality: Int = 0,
+        speed: Int = 0,
+        defaultForMemoryGB: Double? = nil,
+        preferredChipNames: [String] = [],
+        hardwareFallback: Bool = false
+    ) {
         self.quality = quality
         self.speed = speed
         self.defaultForMemoryGB = defaultForMemoryGB
+        self.preferredChipNames = preferredChipNames
+        self.hardwareFallback = hardwareFallback
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case quality
+        case speed
+        case defaultForMemoryGB
+        case preferredChipNames
+        case hardwareFallback
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            quality: try container.decodeIfPresent(Int.self, forKey: .quality) ?? 0,
+            speed: try container.decodeIfPresent(Int.self, forKey: .speed) ?? 0,
+            defaultForMemoryGB: try container.decodeIfPresent(Double.self, forKey: .defaultForMemoryGB),
+            preferredChipNames: try container.decodeIfPresent([String].self, forKey: .preferredChipNames) ?? [],
+            hardwareFallback: try container.decodeIfPresent(Bool.self, forKey: .hardwareFallback) ?? false
+        )
+    }
+}
+
+struct ModelPromptingOptions: Codable, Equatable {
+    let imageAdapter: String?
+
+    init(imageAdapter: String? = nil) {
+        self.imageAdapter = imageAdapter
+    }
+}
+
+enum ImagePromptAdapter: String, Equatable {
+    case plainText = "plain_text"
+    case ideogram4JSON = "ideogram4_json"
 }
 
 struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
@@ -615,6 +690,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     let source: ModelSource
     let runtime: ModelRuntimeRequirement
     let runtimeOptions: ModelRuntimeOptions?
+    let prompting: ModelPromptingOptions?
     let acceleration: ModelAcceleration?
     let availability: ModelAvailability?
     let ranking: ModelRanking
@@ -637,6 +713,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         source: ModelSource? = nil,
         runtime: ModelRuntimeRequirement = ModelRuntimeRequirement(),
         runtimeOptions: ModelRuntimeOptions? = nil,
+        prompting: ModelPromptingOptions? = nil,
         acceleration: ModelAcceleration? = nil,
         availability: ModelAvailability? = nil,
         ranking: ModelRanking = ModelRanking(),
@@ -658,6 +735,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         self.source = source ?? ModelSource.defaultSource(modelId: modelId)
         self.runtime = runtime
         self.runtimeOptions = runtimeOptions
+        self.prompting = prompting
         self.acceleration = acceleration
         self.availability = availability
         self.ranking = ranking
@@ -731,6 +809,18 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 
     var supportsVision: Bool {
         capabilities.contains("vision")
+    }
+
+    var imagePromptAdapter: ImagePromptAdapter {
+        ImagePromptAdapter(rawValue: prompting?.imageAdapter ?? "") ?? .plainText
+    }
+
+    var supportsImageEditing: Bool {
+        capabilities.contains("image-editing") || runtimeOptions?.mflux?.editClass != nil
+    }
+
+    var supportsMusicLyrics: Bool {
+        !capabilities.contains("instrumental-only")
     }
 
     var isCatalogVisible: Bool {
@@ -819,20 +909,27 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     static func bestProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        hardwareChipName: String? = SystemHardware.currentChipName,
         runtimeManifestProvider: ((ModelCapabilityProfile) -> RuntimeManifest?)? = nil
     ) -> ModelCapabilityProfile? {
         recommendedProfiles(
             for: modality,
             hardwareMemoryGB: hardwareMemoryGB,
+            hardwareChipName: hardwareChipName,
             runtimeManifestProvider: runtimeManifestProvider
         ).first
     }
 
     static func fallbackProfile(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        hardwareChipName: String? = SystemHardware.currentChipName
     ) -> ModelCapabilityProfile {
-        bestProfile(for: modality, hardwareMemoryGB: hardwareMemoryGB)
+        bestProfile(
+            for: modality,
+            hardwareMemoryGB: hardwareMemoryGB,
+            hardwareChipName: hardwareChipName
+        )
             ?? visibleProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).first
             ?? profiles(for: modality).first
             ?? embedded.first
@@ -842,6 +939,7 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     static func recommendedProfiles(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        hardwareChipName: String? = SystemHardware.currentChipName,
         runtimeManifestProvider: ((ModelCapabilityProfile) -> RuntimeManifest?)? = nil
     ) -> [ModelCapabilityProfile] {
         let allCandidates = profiles(for: modality)
@@ -864,16 +962,22 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         }
 
         return comfortable.sorted { lhs, rhs in
-            isQualitySortedBefore(lhs, rhs)
+            isPreferredSortedBefore(lhs, rhs, hardwareChipName: hardwareChipName)
         }
     }
 
     static func sortedProfiles(
         for modality: ModelModality,
-        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB
+        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        hardwareChipName: String? = SystemHardware.currentChipName
     ) -> [ModelCapabilityProfile] {
         visibleProfiles(for: modality, hardwareMemoryGB: hardwareMemoryGB).sorted { lhs, rhs in
-            isRecommendationSortedBefore(lhs, rhs, hardwareMemoryGB: hardwareMemoryGB)
+            isRecommendationSortedBefore(
+                lhs,
+                rhs,
+                hardwareMemoryGB: hardwareMemoryGB,
+                hardwareChipName: hardwareChipName
+            )
         }
     }
 
@@ -968,7 +1072,8 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
     private static func isRecommendationSortedBefore(
         _ lhs: ModelCapabilityProfile,
         _ rhs: ModelCapabilityProfile,
-        hardwareMemoryGB: Double
+        hardwareMemoryGB: Double,
+        hardwareChipName: String?
     ) -> Bool {
         let lhsCompatible = lhs.isRuntimeCompatible()
         let rhsCompatible = rhs.isRuntimeCompatible()
@@ -980,6 +1085,12 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         let rhsFitRank = rhs.fit(hardwareMemoryGB: hardwareMemoryGB).sortRank
         if lhsFitRank != rhsFitRank {
             return lhsFitRank < rhsFitRank
+        }
+
+        let lhsHardwareRank = hardwarePreferenceRank(lhs, chipName: hardwareChipName)
+        let rhsHardwareRank = hardwarePreferenceRank(rhs, chipName: hardwareChipName)
+        if lhsHardwareRank != rhsHardwareRank {
+            return lhsHardwareRank < rhsHardwareRank
         }
 
         let lhsQualityRank = qualityRank(lhs)
@@ -997,10 +1108,17 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         return lhs.name < rhs.name
     }
 
-    private static func isQualitySortedBefore(
+    private static func isPreferredSortedBefore(
         _ lhs: ModelCapabilityProfile,
-        _ rhs: ModelCapabilityProfile
+        _ rhs: ModelCapabilityProfile,
+        hardwareChipName: String?
     ) -> Bool {
+        let lhsHardwareRank = hardwarePreferenceRank(lhs, chipName: hardwareChipName)
+        let rhsHardwareRank = hardwarePreferenceRank(rhs, chipName: hardwareChipName)
+        if lhsHardwareRank != rhsHardwareRank {
+            return lhsHardwareRank < rhsHardwareRank
+        }
+
         let lhsRank = qualityRank(lhs)
         let rhsRank = qualityRank(rhs)
         if lhsRank != rhsRank {
@@ -1034,6 +1152,38 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
 
     private static func lightweightRank(_ profile: ModelCapabilityProfile) -> Int {
         -profile.ranking.speed
+    }
+
+    private static func hardwarePreferenceRank(
+        _ profile: ModelCapabilityProfile,
+        chipName: String?
+    ) -> Int {
+        let normalizedChipName = chipName.map(normalizedHardwareName)
+        let isPreferred = normalizedChipName.map { chipName in
+            profile.ranking.preferredChipNames.contains {
+                normalizedHardwareName($0) == chipName
+            }
+        } ?? false
+
+        if isPreferred {
+            return 0
+        }
+        if profile.ranking.hardwareFallback {
+            return 1
+        }
+        if profile.ranking.preferredChipNames.isEmpty {
+            return 2
+        }
+        return 3
+    }
+
+    private static func normalizedHardwareName(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "apple ", with: "")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
     }
 }
 

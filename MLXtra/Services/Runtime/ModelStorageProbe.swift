@@ -93,15 +93,16 @@ extension RuntimeManager {
         huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
     ) -> ModelStorageStatus {
         if model.source.usesComponentBundle {
+            let storageRoot = model.source.componentStorageRoot(checkpointsPath: checkpointsPath)
             if model.source.helper == .aceStep {
                 return aceStepModelStorageStatus(
-                    checkpointsPath: checkpointsPath,
+                    checkpointsPath: storageRoot,
                     repoID: model.source.downloadRepository ?? model.modelId,
                     components: model.source.components
                 )
             }
             return componentBundleStorageStatus(
-                checkpointsPath: checkpointsPath,
+                checkpointsPath: storageRoot,
                 components: model.source.components
             )
         }

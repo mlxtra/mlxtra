@@ -374,6 +374,9 @@ extension ChatViewModel {
         }
         guard !isInputDisabled else { return }
         modelSelectionStore.setSelectedModelId(profile.modelId, for: profile.modality)
+        if profile.modality == .music, !profile.supportsMusicLyrics {
+            selectMusicVocalMode(.instrumental)
+        }
         modelSelectionRevision += 1
         isModelMenuOpen = false
         refreshLocalEngineDownloadStatus()

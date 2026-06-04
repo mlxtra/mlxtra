@@ -218,10 +218,18 @@ final class ModelCapabilityProfileTests: XCTestCase {
 
     func testImageProfilesExposeCuratedMFluxRuntimeOptions() throws {
         let klein4B = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B"))
+        let ideogram4 = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
         let zImageTurbo = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "Tongyi-MAI/Z-Image-Turbo"))
 
         XCTAssertEqual(klein4B.runtimeOptions?.mflux?.config, "flux2-klein-4b")
         XCTAssertEqual(klein4B.runtimeOptions?.mflux?.editClass, "Flux2KleinEdit")
+        XCTAssertEqual(ideogram4.runtimeOptions?.mflux?.config, "ideogram-4-fp8")
+        XCTAssertEqual(ideogram4.runtimeOptions?.mflux?.textToImageClass, "Ideogram4")
+        XCTAssertNil(ideogram4.runtimeOptions?.mflux?.editClass)
+        XCTAssertEqual(ideogram4.imagePromptAdapter, .ideogram4JSON)
+        XCTAssertEqual(ideogram4.parameterDefinition(key: "improve_prompt")?.defaultValue, "true")
+        XCTAssertEqual(ideogram4.parameterDefinition(key: "strict_caption_validation")?.defaultValue, "true")
+        XCTAssertFalse(ideogram4.supportsImageEditing)
         XCTAssertEqual(zImageTurbo.runtimeOptions?.mflux?.config, "z-image-turbo")
         XCTAssertEqual(zImageTurbo.runtimeOptions?.mflux?.textToImageClass, "ZImageTurbo")
         XCTAssertEqual(zImageTurbo.runtimeOptions?.mflux?.editClass, "ZImageTurbo")
@@ -286,6 +294,41 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(
             ModelCapabilityProfile.bestProfile(for: .image, hardwareMemoryGB: 64.0)?.modelId,
             "Tongyi-MAI/Z-Image-Turbo"
+        )
+    }
+
+    func testMagentaRealtimeHardwarePreferenceFollowsReadmeTable() {
+        XCTAssertEqual(
+            ModelCapabilityProfile.bestProfile(
+                for: .music,
+                hardwareMemoryGB: 24.0,
+                hardwareChipName: "Apple M4 Pro"
+            )?.modelId,
+            "google/magenta-realtime-2/mrt2_base"
+        )
+        XCTAssertEqual(
+            ModelCapabilityProfile.bestProfile(
+                for: .music,
+                hardwareMemoryGB: 16.0,
+                hardwareChipName: "Apple M1 Pro"
+            )?.modelId,
+            "google/magenta-realtime-2/mrt2_small"
+        )
+        XCTAssertEqual(
+            ModelCapabilityProfile.bestProfile(
+                for: .music,
+                hardwareMemoryGB: 16.0,
+                hardwareChipName: "Apple M4"
+            )?.modelId,
+            "google/magenta-realtime-2/mrt2_small"
+        )
+        XCTAssertEqual(
+            ModelCapabilityProfile.bestProfile(
+                for: .music,
+                hardwareMemoryGB: 64.0,
+                hardwareChipName: "Apple M4 Max"
+            )?.modelId,
+            "google/magenta-realtime-2/mrt2_small"
         )
     }
 
@@ -730,6 +773,24 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertTrue(zImageRuntime.supports(profile: zImageTurbo))
     }
 
+    func testRuntimeCompatibilityAllowsTextOnlyMFluxModelWithoutEditClass() throws {
+        let ideogram4 = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
+        let runtime = RuntimeManifest(
+            runtimeVersion: "0.1.7",
+            compatibilityApi: 1,
+            supportedBackends: [.image],
+            capabilities: ["image-generation"],
+            imageRuntimes: RuntimeImageRuntimes(
+                mflux: RuntimeMFluxCapabilities(
+                    configs: ["ideogram-4-fp8"],
+                    classes: ["Ideogram4"]
+                )
+            )
+        )
+
+        XCTAssertTrue(runtime.supports(profile: ideogram4))
+    }
+
     func testVersionComparatorOrdersPrereleasesBeforeFinalReleases() {
         XCTAssertEqual(VersionComparator.compare("0.2.0-beta", "0.2.0"), .orderedAscending)
         XCTAssertEqual(VersionComparator.compare("0.2.0-beta.2", "0.2.0-beta.10"), .orderedAscending)
@@ -912,6 +973,13 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(aceSource.helper, .aceStep)
         XCTAssertTrue(aceSource.usesComponentBundle)
         XCTAssertEqual(aceSource.components, ["acestep-v15-turbo", "vae", "Qwen3-Embedding-0.6B", "acestep-5Hz-lm-1.7B"])
+
+        let magenta = ModelCapabilityProfile.embeddedProfile(modelId: "google/magenta-realtime-2/mrt2_small")!
+        XCTAssertFalse(magenta.supportsMusicLyrics)
+        XCTAssertEqual(magenta.source.type, .componentBundle)
+        XCTAssertNil(magenta.source.helper)
+        XCTAssertEqual(magenta.source.storageSubdirectory, "magenta-realtime-2/mrt2_small")
+        XCTAssertEqual(magenta.source.components, ["models/mrt2_small", "resources/musiccoca"])
 
         let snapshotSource = ModelSource.defaultSource(modelId: "org/model")
         XCTAssertEqual(snapshotSource.type, .huggingFaceSnapshot)

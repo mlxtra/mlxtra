@@ -57,7 +57,7 @@ extension RuntimeManager {
 
     func modelStoragePath(for model: DownloadableModel) -> URL {
         if model.source.usesComponentBundle {
-            return checkpointsPath
+            return model.source.componentStorageRoot(checkpointsPath: checkpointsPath)
         }
         return modelCachePath(modelId: model.source.downloadRepository ?? model.modelId)
     }

@@ -29,6 +29,8 @@ SCALAR_NAMES = (
     "MLX_AUDIO_VERSION",
     "MISAKI_VERSION",
     "MFLUX_VERSION",
+    "MFLUX_REF",
+    "MFLUX_PACKAGE",
     "TRANSFORMERS_VERSION",
     "HUGGINGFACE_HUB_VERSION",
     "PILLOW_VERSION",
@@ -37,12 +39,15 @@ SCALAR_NAMES = (
     "TORCHVISION_VERSION",
     "ACE_STEP_REF",
     "ACE_STEP_PACKAGE",
+    "MAGENTA_RT_VERSION",
+    "MAGENTA_RT_PACKAGE",
     "RUNTIME_MLX_WHEEL_PLATFORM",
 )
 
 ARRAY_NAMES = (
     "RUNTIME_FORCED_BINARY_PYPI_PACKAGES",
     "RUNTIME_MAIN_PYPI_PACKAGES",
+    "RUNTIME_MAIN_INSTALL_PACKAGES",
     "RUNTIME_TORCH_PACKAGES",
     "RUNTIME_MAIN_PACKAGES",
 )
@@ -63,6 +68,8 @@ scalar_names=(
     MLX_AUDIO_VERSION
     MISAKI_VERSION
     MFLUX_VERSION
+    MFLUX_REF
+    MFLUX_PACKAGE
     TRANSFORMERS_VERSION
     HUGGINGFACE_HUB_VERSION
     PILLOW_VERSION
@@ -71,12 +78,15 @@ scalar_names=(
     TORCHVISION_VERSION
     ACE_STEP_REF
     ACE_STEP_PACKAGE
+    MAGENTA_RT_VERSION
+    MAGENTA_RT_PACKAGE
     RUNTIME_MLX_WHEEL_PLATFORM
 )
 
 array_names=(
     RUNTIME_FORCED_BINARY_PYPI_PACKAGES
     RUNTIME_MAIN_PYPI_PACKAGES
+    RUNTIME_MAIN_INSTALL_PACKAGES
     RUNTIME_TORCH_PACKAGES
     RUNTIME_MAIN_PACKAGES
 )
@@ -193,6 +203,7 @@ def build_lock(values: dict[str, Any]) -> dict[str, Any]:
             "MLX_AUDIO_VERSION": values["MLX_AUDIO_VERSION"],
             "MISAKI_VERSION": values["MISAKI_VERSION"],
             "MFLUX_VERSION": values["MFLUX_VERSION"],
+            "MFLUX_REF": values["MFLUX_REF"],
             "TRANSFORMERS_VERSION": values["TRANSFORMERS_VERSION"],
             "HUGGINGFACE_HUB_VERSION": values["HUGGINGFACE_HUB_VERSION"],
             "PILLOW_VERSION": values["PILLOW_VERSION"],
@@ -200,10 +211,12 @@ def build_lock(values: dict[str, Any]) -> dict[str, Any]:
             "TORCH_VERSION": values["TORCH_VERSION"],
             "TORCHVISION_VERSION": values["TORCHVISION_VERSION"],
             "ACE_STEP_REF": values["ACE_STEP_REF"],
+            "MAGENTA_RT_VERSION": values["MAGENTA_RT_VERSION"],
         },
         "packages": {
             "forcedBinaryPyPI": values["RUNTIME_FORCED_BINARY_PYPI_PACKAGES"],
             "mainPyPI": values["RUNTIME_MAIN_PYPI_PACKAGES"],
+            "mainInstall": values["RUNTIME_MAIN_INSTALL_PACKAGES"],
             "torch": values["RUNTIME_TORCH_PACKAGES"],
             "main": values["RUNTIME_MAIN_PACKAGES"],
         },
@@ -211,6 +224,16 @@ def build_lock(values: dict[str, Any]) -> dict[str, Any]:
             "aceStep": {
                 "ref": values["ACE_STEP_REF"],
                 "package": values["ACE_STEP_PACKAGE"],
+            },
+            "magentaRealtime": {
+                "version": values["MAGENTA_RT_VERSION"],
+                "package": values["MAGENTA_RT_PACKAGE"],
+            }
+        },
+        "sourcePackages": {
+            "mflux": {
+                "ref": values["MFLUX_REF"],
+                "package": values["MFLUX_PACKAGE"],
             }
         },
     }

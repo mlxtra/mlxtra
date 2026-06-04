@@ -134,7 +134,58 @@ final class VLMRequestPayloadBuilderTests: XCTestCase {
         XCTAssertNil(payload["repetition_penalty"])
         XCTAssertNil(payload["chat_template_kwargs"])
         XCTAssertNil(payload["tools"])
+        XCTAssertNil(payload["response_format"])
         XCTAssertNil(payload["parameters"])
+    }
+
+    func testExecutionPayloadIncludesStructuredResponseFormat() throws {
+        let responseFormat: [String: Any] = [
+            "type": "json_schema",
+            "json_schema": [
+                "name": "image_prompt",
+                "schema": [
+                    "type": "object",
+                    "properties": ["prompt": ["type": "string"]],
+                    "required": ["prompt"]
+                ]
+            ]
+        ]
+        let request = ExecutionRequest(
+            requestID: "request-structured-output",
+            backend: .vlm,
+            modelId: "mlx-community/test-vlm",
+            messages: [ExecutionMessage(role: .user, content: "Improve this prompt")],
+            responseFormat: responseFormat
+        )
+
+        let payload = VLMRequestPayloadBuilder.executionPayload(for: request)
+        let payloadFormat = try XCTUnwrap(payload["response_format"] as? [String: Any])
+        let jsonSchema = try XCTUnwrap(payloadFormat["json_schema"] as? [String: Any])
+
+        XCTAssertEqual(payloadFormat["type"] as? String, "json_schema")
+        XCTAssertEqual(jsonSchema["name"] as? String, "image_prompt")
+    }
+
+    func testImageExecutionPayloadIncludesStructuredPromptObject() throws {
+        let request = ExecutionRequest(
+            requestID: "request-image-caption",
+            backend: .image,
+            modelId: "ideogram-ai/ideogram-4-fp8",
+            messages: [ExecutionMessage(role: .user, content: "A poster")],
+            imageCaption: [
+                "high_level_description": "A structured poster",
+                "compositional_deconstruction": [
+                    "background": "Dark blue",
+                    "elements": []
+                ]
+            ]
+        )
+
+        let payload = VLMRequestPayloadBuilder.executionPayload(for: request)
+        let prompt = try XCTUnwrap(payload["prompt"] as? [String: Any])
+
+        XCTAssertEqual(prompt["high_level_description"] as? String, "A structured poster")
+        XCTAssertEqual(payload["type"] as? String, "image.generate")
     }
 
     func testModelLoadPayloadIncludesParametersWhenProvided() throws {

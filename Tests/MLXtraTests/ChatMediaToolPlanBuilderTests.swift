@@ -96,6 +96,89 @@ final class ChatMediaToolPlanBuilderTests: XCTestCase {
         XCTAssertNil(plan.request.images)
     }
 
+    func testIdeogramImagePlanCarriesStructuredCaptionAndDropsEditImages() throws {
+        let imageProfile = makeProfile(
+            id: "ideogram",
+            name: "Ideogram 4",
+            modelId: "ideogram-ai/ideogram-4-fp8",
+            modality: .image,
+            backend: .image,
+            runtimeOptions: ModelRuntimeOptions(
+                mflux: MFluxRuntimeOptions(
+                    config: "ideogram-4-fp8",
+                    textToImageClass: "Ideogram4"
+                )
+            ),
+            prompting: ModelPromptingOptions(imageAdapter: "ideogram4_json")
+        )
+        let generation = makeGenerationRequest(
+            tool: .image,
+            prompt: "fallback prompt",
+            images: [URL(fileURLWithPath: "/tmp/reference.png")],
+            profiles: [.image: imageProfile]
+        )
+        let caption: [String: Any] = [
+            "high_level_description": "A precise poster",
+            "style_description": [
+                "aesthetics": "minimal",
+                "lighting": "flat",
+                "medium": "graphic design",
+                "art_style": "modern poster"
+            ],
+            "compositional_deconstruction": ["background": "Blue", "elements": []]
+        ]
+
+        let plan = ChatMediaToolPlanBuilder.makeImagePlan(
+            decodedArguments: ["caption": caption],
+            fallbackPrompt: generation.prompt,
+            images: generation.images,
+            generation: generation,
+            outputDirectory: URL(fileURLWithPath: "/tmp/images")
+        )
+
+        XCTAssertEqual(plan.status, "A precise poster")
+        XCTAssertEqual(plan.request.messages.first?.content, "A precise poster")
+        XCTAssertNil(plan.request.images)
+        let requestCaption = try XCTUnwrap(plan.request.imageCaption)
+        XCTAssertEqual(requestCaption["high_level_description"] as? String, "A precise poster")
+        XCTAssertEqual(plan.details.first?.label, "Structured caption")
+        XCTAssertTrue(plan.details.first?.value.contains(#""high_level_description" : "A precise poster""#) == true)
+    }
+
+    func testIdeogramImagePlanDoesNotInventStructuredCaptionFromPlainPrompt() {
+        let imageProfile = makeProfile(
+            id: "ideogram",
+            name: "Ideogram 4",
+            modelId: "ideogram-ai/ideogram-4-fp8",
+            modality: .image,
+            backend: .image,
+            runtimeOptions: ModelRuntimeOptions(
+                mflux: MFluxRuntimeOptions(
+                    config: "ideogram-4-fp8",
+                    textToImageClass: "Ideogram4"
+                )
+            ),
+            prompting: ModelPromptingOptions(imageAdapter: "ideogram4_json")
+        )
+        let generation = makeGenerationRequest(
+            tool: .image,
+            prompt: "fallback prompt",
+            profiles: [.image: imageProfile]
+        )
+
+        let plan = ChatMediaToolPlanBuilder.makeImagePlan(
+            decodedArguments: ["prompt": "A precise poster"],
+            fallbackPrompt: generation.prompt,
+            images: [],
+            generation: generation,
+            outputDirectory: URL(fileURLWithPath: "/tmp/images")
+        )
+
+        XCTAssertNil(plan.request.imageCaption)
+        XCTAssertEqual(plan.request.messages.first?.content, "A precise poster")
+        XCTAssertTrue(plan.details.isEmpty)
+    }
+
     func testSpeechPlanUsesDecodedTextAndPreservesAudioRuntimeOptions() throws {
         let speechProfile = makeProfile(
             id: "speech",
@@ -211,7 +294,8 @@ final class ChatMediaToolPlanBuilderTests: XCTestCase {
         modelId: String,
         modality: ModelModality,
         backend: RuntimeBackend,
-        runtimeOptions: ModelRuntimeOptions? = nil
+        runtimeOptions: ModelRuntimeOptions? = nil,
+        prompting: ModelPromptingOptions? = nil
     ) -> ModelCapabilityProfile {
         ModelCapabilityProfile(
             id: id,
@@ -224,6 +308,7 @@ final class ChatMediaToolPlanBuilderTests: XCTestCase {
             downloadSizeGB: 1,
             estimatedMemoryGB: 1,
             runtimeOptions: runtimeOptions,
+            prompting: prompting,
             parameters: [],
             presets: []
         )

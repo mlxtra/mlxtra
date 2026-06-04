@@ -106,6 +106,27 @@ final class ChatMusicToolPlanBuilderTests: XCTestCase {
         XCTAssertNil(parameters["lyrics"])
     }
 
+    func testInstrumentalOnlyModelOverridesVocalArguments() {
+        let parameters = ChatMusicToolPlanBuilder.makeParameters(
+            prompt: "Create a vocal pop song",
+            decodedArguments: [
+                "lyrics": "[verse]\nSing this",
+                "instrumental": false,
+            ],
+            executionParameters: [:],
+            composerSelection: ChatMusicComposerSelection(
+                mode: .vocals,
+                approvedLyrics: "[verse]\nSing this"
+            ),
+            applyAutomaticInstrumentalFallback: false,
+            instrumentalOnly: true,
+            promptSoundsVocal: { _ in true }
+        )
+
+        XCTAssertEqual(parameters["instrumental"] as? Bool, true)
+        XCTAssertEqual(parameters["lyrics"] as? String, "[Instrumental]")
+    }
+
     func testPlanBuildsMusicRequestAndToolCallDetails() throws {
         let musicProfile = makeProfile(
             id: "music",

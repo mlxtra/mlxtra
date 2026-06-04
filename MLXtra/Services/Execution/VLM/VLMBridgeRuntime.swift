@@ -9,6 +9,7 @@ protocol VLMBridgeRuntimeProviding: AnyObject {
     func bridgeScriptPath() -> URL
     func pythonHomePath() -> URL
     func acestepPythonExecutablePath() -> URL
+    func magentaPythonExecutablePath() -> URL
 }
 
 extension RuntimeManager: VLMBridgeRuntimeProviding {}

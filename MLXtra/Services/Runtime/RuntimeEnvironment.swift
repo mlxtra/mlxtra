@@ -26,7 +26,7 @@ extension RuntimeManager {
 
     /// Downloading should not require unrelated model runtimes to be present.
     func validateDownloadSupport(for model: DownloadableModel) throws {
-        guard model.source.usesComponentBundle else {
+        guard model.source.usesComponentBundle, model.source.helper != nil else {
             return
         }
         let context = try downloadSupportValidationContext(for: model)
@@ -34,7 +34,7 @@ extension RuntimeManager {
     }
 
     func validateDownloadSupportOffMain(for model: DownloadableModel) async throws {
-        guard model.source.usesComponentBundle else {
+        guard model.source.usesComponentBundle, model.source.helper != nil else {
             return
         }
         let context = try downloadSupportValidationContext(for: model)
@@ -44,7 +44,10 @@ extension RuntimeManager {
     }
 
     private func downloadSupportValidationContext(for model: DownloadableModel) throws -> DownloadSupportValidationContext {
-        guard model.source.helper == .aceStep else {
+        guard let helper = model.source.helper else {
+            throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
+        }
+        guard helper == .aceStep else {
             throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
         }
         guard Self.activeRuntimeManifest(component: .music) != nil else {
@@ -183,6 +186,10 @@ extension RuntimeManager {
 
     func acestepPythonExecutablePath() -> URL {
         activeRuntimeURL.appendingPathComponent("acestep-venv/bin/python")
+    }
+
+    func magentaPythonExecutablePath() -> URL {
+        activeRuntimeURL.appendingPathComponent("magenta-venv/bin/python")
     }
 
     func acestepDownloadHelperPath() -> URL {

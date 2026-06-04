@@ -222,6 +222,7 @@ class VLMExecutor: NSObject, ModelExecutor {
             pythonHomePath: runtimeManager.pythonHomePath(),
             checkpointsPath: runtimeManager.checkpointsPath,
             acestepPythonPath: runtimeManager.acestepPythonExecutablePath(),
+            magentaPythonPath: runtimeManager.magentaPythonExecutablePath(),
             bridgeDebugEnabled: VLMBridgeDiagnostics.isEnabled
         )
 

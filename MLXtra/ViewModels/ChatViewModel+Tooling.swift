@@ -217,6 +217,26 @@ extension ChatViewModel {
         )
     }
 
+    func preparedImageGenerationToolCall(
+        from response: String,
+        generation: ChatGenerationRequest
+    ) throws -> ExecutionToolCall {
+        let imageProfile = generation.profile(for: .image)
+        let arguments = try imageToolArguments(
+            fromPreparedResponse: response,
+            sourcePrompt: generation.prompt,
+            adapter: imageProfile.imagePromptAdapter
+        )
+
+        return ExecutionToolCall(
+            id: "prepared-generate-image-\(UUID().uuidString)",
+            function: ExecutionToolCallFunction(
+                name: "generate_image",
+                arguments: jsonArguments(arguments)
+            )
+        )
+    }
+
     private func musicCaptionFallback(currentPrompt: String) -> String {
         let trimmedCurrentPrompt = currentPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if !isMusicApprovalOnly(trimmedCurrentPrompt), !trimmedCurrentPrompt.isEmpty {

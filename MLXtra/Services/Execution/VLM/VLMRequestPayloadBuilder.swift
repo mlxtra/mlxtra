@@ -15,6 +15,9 @@ enum VLMRequestPayloadBuilder {
         if let outputDirectory = request.outputDirectory {
             payload["output_dir"] = outputDirectory.path
         }
+        if let imageCaption = request.imageCaption {
+            payload["prompt"] = imageCaption
+        }
         if let topP = request.topP {
             payload["top_p"] = topP
         }
@@ -32,6 +35,9 @@ enum VLMRequestPayloadBuilder {
         }
         if let tools = request.tools {
             payload["tools"] = tools
+        }
+        if let responseFormat = request.responseFormat {
+            payload["response_format"] = responseFormat
         }
         if let parameters = request.parameters {
             payload["parameters"] = parameters

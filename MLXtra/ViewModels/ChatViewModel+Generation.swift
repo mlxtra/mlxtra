@@ -3,6 +3,7 @@ import Foundation
 private struct ChatGenerationExecutionContext {
     let prompt: String
     let isImageGeneration: Bool
+    let isImagePromptPreparation: Bool
     let isSpeechGeneration: Bool
     let isMusicGeneration: Bool
     let isDeepResearch: Bool
@@ -16,11 +17,17 @@ private struct ChatGenerationExecutionContext {
     let requiredModel: DownloadableModel
 
     var requiredOperationName: String {
-        isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")
+        if isImagePromptPreparation {
+            return "Image prompt preparation"
+        }
+        return isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")
     }
 
     var activeEngineRole: LocalEngineModelRole {
-        isImageGeneration ? .image : (isSpeechGeneration ? .speech : .chat)
+        if isImagePromptPreparation {
+            return .chat
+        }
+        return isImageGeneration ? .image : (isSpeechGeneration ? .speech : .chat)
     }
 }
 
@@ -71,6 +78,7 @@ extension ChatViewModel {
                 executionParameters: request.executionParameters(for: musicProfile),
                 composerSelection: musicComposerSelection(prompt: trimmedPrompt),
                 applyAutomaticInstrumentalFallback: false,
+                instrumentalOnly: !musicProfile.supportsMusicLyrics,
                 promptSoundsVocal: promptSoundsVocal
             )
 
@@ -131,6 +139,7 @@ extension ChatViewModel {
             let context = generationExecutionContext(for: request)
             let prompt = context.prompt
             let isImageGeneration = context.isImageGeneration
+            let isImagePromptPreparation = context.isImagePromptPreparation
             let isSpeechGeneration = context.isSpeechGeneration
             let isMusicGeneration = context.isMusicGeneration
             let isDeepResearch = context.isDeepResearch
@@ -170,12 +179,12 @@ extension ChatViewModel {
                 loadingMessage = "Using tool result..."
             } else {
                 let initialToolCall: ToolCall?
-                if isImageGeneration {
+                if isImageGeneration && !isImagePromptPreparation {
                     initialToolCall = ToolCall(
                         toolName: "Image generation",
                         status: prompt,
                         icon: "photo",
-                        details: toolCallDetails([], includingModel: executionProfile.name)
+                        details: toolCallDetails([], includingModel: request.profile(for: .image).name)
                     )
                 } else if isSpeechGeneration {
                     initialToolCall = ToolCall(
@@ -204,12 +213,36 @@ extension ChatViewModel {
                 }
             }
 
-            let tools: [[String: Any]]? = (isImageGeneration || isSpeechGeneration) ? nil : (isMusicGeneration ? [musicGenerationTool] : availableTools(toolDepth: toolDepth, for: request.tool))
+            let tools: [[String: Any]]?
+            if isImagePromptPreparation {
+                tools = nil
+            } else if isImageGeneration || isSpeechGeneration {
+                tools = nil
+            } else if isMusicGeneration {
+                tools = [musicGenerationTool]
+            } else {
+                tools = availableTools(toolDepth: toolDepth, for: request.tool)
+            }
             let allowedToolNames = ChatExecutionMessageBuilder.toolNames(from: tools)
 
             var messages: [ExecutionMessage]
             if let toolMessages {
                 messages = toolMessages
+            } else if isImagePromptPreparation {
+                let imageProfile = request.profile(for: .image)
+                messages = [
+                    ExecutionMessage(
+                        role: .system,
+                        content: PromptConfiguration.imagePromptPreparationSystemPrompt(
+                            adapter: imageProfile.imagePromptAdapter,
+                            modelName: imageProfile.name,
+                            improvingPrompt: request.shouldImproveImagePrompt(for: imageProfile),
+                            width: request.imageDimension("width", for: imageProfile),
+                            height: request.imageDimension("height", for: imageProfile)
+                        )
+                    ),
+                    ExecutionMessage(role: .user, content: prompt)
+                ]
             } else {
                 let musicContext: ChatExecutionMusicSystemContext?
                 if isMusicGeneration {
@@ -240,14 +273,22 @@ extension ChatViewModel {
                 }
             }
 
-            let outputDirectory = isImageGeneration ? generatedImagesDirectory : (isSpeechGeneration ? generatedSpeechDirectory : nil)
+            let outputDirectory = context.executionProfile.backend == .image
+                ? generatedImagesDirectory
+                : (context.executionProfile.backend == .audio ? generatedSpeechDirectory : nil)
+            let responseFormat = isImagePromptPreparation
+                ? PromptConfiguration.imagePromptPreparationResponseFormat(
+                    adapter: request.profile(for: .image).imagePromptAdapter
+                )
+                : nil
             let executionRequest = ChatExecutionRequestBuilder.makeRequest(
                 generation: request,
                 activeChatProfile: activeChatProfile,
                 executionProfile: executionProfile,
                 messages: messages,
                 tools: tools,
-                outputDirectory: outputDirectory
+                outputDirectory: outputDirectory,
+                responseFormat: responseFormat
             )
 
             let stream = try await vlmExecutor.execute(request: executionRequest)
@@ -259,7 +300,7 @@ extension ChatViewModel {
                 messages: messages,
                 request: request,
                 toolDepth: toolDepth,
-                hasTools: tools != nil,
+                hasTools: tools != nil || isImagePromptPreparation,
                 allowedToolNames: allowedToolNames,
                 isImageGeneration: isImageGeneration,
                 isSpeechGeneration: isSpeechGeneration,
@@ -372,19 +413,42 @@ extension ChatViewModel {
         messages.append(ExecutionMessage(role: .tool, content: result, toolCallId: toolCall.id, name: "web_search"))
     }
 
-    private func executeImageGenerationToolCall(
+    func executeImageGenerationToolCall(
         _ toolCall: ExecutionToolCall,
         messages: inout [ExecutionMessage],
         images: [URL],
         prompt: String,
         generation: ChatGenerationRequest,
+        promptIsPrepared: Bool = false,
         generationID: UUID? = nil
     ) async {
+        let decodedArguments = decodeToolArguments(toolCall)
+        let imageArguments: [String: Any]?
+        do {
+            imageArguments = promptIsPrepared
+                ? decodedArguments
+                : try await prepareImageToolArgumentsIfNeeded(
+                    decodedArguments: decodedArguments,
+                    fallbackPrompt: prompt,
+                    generation: generation,
+                    generationID: generationID
+                )
+        } catch {
+            guard ownsActiveGeneration(generationID) else { return }
+            messages.append(ExecutionMessage(
+                role: .tool,
+                content: "Image generation unavailable: Image prompt preparation failed: \(error.localizedDescription)",
+                toolCallId: toolCall.id,
+                name: "generate_image"
+            ))
+            return
+        }
+
         await executeMediaToolCall(
             toolCall,
             messages: &messages,
             plan: ChatMediaToolPlanBuilder.makeImagePlan(
-                decodedArguments: decodeToolArguments(toolCall),
+                decodedArguments: imageArguments,
                 fallbackPrompt: prompt,
                 images: images,
                 generation: generation,
@@ -392,6 +456,137 @@ extension ChatViewModel {
             ),
             generationID: generationID
         )
+    }
+
+    private func prepareImageToolArgumentsIfNeeded(
+        decodedArguments: [String: Any]?,
+        fallbackPrompt: String,
+        generation: ChatGenerationRequest,
+        generationID: UUID?
+    ) async throws -> [String: Any]? {
+        let imageProfile = generation.profile(for: .image)
+        guard generation.shouldPrepareImagePrompt(for: imageProfile) else {
+            return decodedArguments
+        }
+        if imageProfile.imagePromptAdapter == .ideogram4JSON,
+           ChatMediaToolPlanBuilder.structuredImageCaption(from: decodedArguments) != nil {
+            return decodedArguments
+        }
+
+        let sourcePrompt = ChatMediaToolPlanBuilder.resolvedImagePrompt(
+            decodedArguments: decodedArguments,
+            fallbackPrompt: fallbackPrompt
+        )
+        loadingMessage = "Preparing image prompt..."
+        let response = try await generateImagePromptPreparationResponse(
+            sourcePrompt: sourcePrompt,
+            imageProfile: imageProfile,
+            generation: generation,
+            generationID: generationID
+        )
+        return try imageToolArguments(
+            fromPreparedResponse: response,
+            sourcePrompt: sourcePrompt,
+            adapter: imageProfile.imagePromptAdapter
+        )
+    }
+
+    private func generateImagePromptPreparationResponse(
+        sourcePrompt: String,
+        imageProfile: ModelCapabilityProfile,
+        generation: ChatGenerationRequest,
+        generationID: UUID?
+    ) async throws -> String {
+        let activeChatProfile = generation.profile(for: .chat)
+        let messages = [
+            ExecutionMessage(
+                role: .system,
+                content: PromptConfiguration.imagePromptPreparationSystemPrompt(
+                    adapter: imageProfile.imagePromptAdapter,
+                    modelName: imageProfile.name,
+                    improvingPrompt: generation.shouldImproveImagePrompt(for: imageProfile),
+                    width: generation.imageDimension("width", for: imageProfile),
+                    height: generation.imageDimension("height", for: imageProfile)
+                )
+            ),
+            ExecutionMessage(role: .user, content: sourcePrompt)
+        ]
+        let request = ChatExecutionRequestBuilder.makeRequest(
+            generation: generation,
+            activeChatProfile: activeChatProfile,
+            executionProfile: activeChatProfile,
+            messages: messages,
+            tools: nil,
+            outputDirectory: nil,
+            responseFormat: PromptConfiguration.imagePromptPreparationResponseFormat(
+                adapter: imageProfile.imagePromptAdapter
+            )
+        )
+
+        let stream = try await vlmExecutor.execute(request: request)
+        var streamedResponse = ""
+        var completedResponse: String?
+        for await event in stream {
+            guard ownsActiveGeneration(generationID) else {
+                throw CancellationError()
+            }
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+
+            switch event {
+            case .token(let token):
+                streamedResponse += token
+            case .complete(let response, _):
+                completedResponse = response
+            case .error(let error):
+                throw error
+            case .progress(let message):
+                loadingMessage = message
+            case .modelLoadProgress(let progress):
+                modelLoadProgress = progress
+                loadingMessage = progress.detail ?? progress.phase.displayTitle
+            case .started, .image, .audio, .toolCalls, .generationProgress:
+                break
+            }
+        }
+
+        let response = (completedResponse ?? streamedResponse)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !response.isEmpty else {
+            throw ExecutionError.invalidResponse
+        }
+        return response
+    }
+
+    func imageToolArguments(
+        fromPreparedResponse response: String,
+        sourcePrompt: String,
+        adapter: ImagePromptAdapter
+    ) throws -> [String: Any] {
+        guard let data = response.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ExecutionError.pythonError("The VLM did not return valid JSON.")
+        }
+
+        switch adapter {
+        case .plainText:
+            guard let prompt = object["prompt"] as? String,
+                  !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ExecutionError.pythonError("The VLM response is missing a non-empty prompt.")
+            }
+            return ["prompt": prompt]
+        case .ideogram4JSON:
+            guard object["compositional_deconstruction"] is [String: Any] else {
+                throw ExecutionError.pythonError(
+                    "The Ideogram 4 caption is missing compositional_deconstruction."
+                )
+            }
+            return [
+                "prompt": sourcePrompt,
+                "caption": object
+            ]
+        }
     }
 
     private func executeSpeechGenerationToolCall(
@@ -429,6 +624,7 @@ extension ChatViewModel {
             executionParameters: generation.executionParameters(for: musicProfile),
             composerSelection: musicComposerSelection(prompt: prompt),
             applyAutomaticInstrumentalFallback: true,
+            instrumentalOnly: !musicProfile.supportsMusicLyrics,
             promptSoundsVocal: promptSoundsVocal
         )
 
@@ -459,19 +655,23 @@ extension ChatViewModel {
 
     private func generationExecutionContext(for request: ChatGenerationRequest) -> ChatGenerationExecutionContext {
         let isImageGeneration = request.isImageGeneration
+        let isImagePromptPreparation = request.shouldPrepareDirectImagePrompt
         let isSpeechGeneration = request.isSpeechGeneration
         let selectedCapabilityProfile = request.profile(for: request.tool)
         let activeChatProfile = request.profile(for: .chat)
-        let executionProfile = (isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile
+        let executionProfile = isImagePromptPreparation
+            ? activeChatProfile
+            : ((isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile)
         let resolvedModelId = executionProfile.modelId
         let activeBackend = executionProfile.backend
-        let modelLoadParameters = (isImageGeneration || isSpeechGeneration)
+        let modelLoadParameters = (!isImagePromptPreparation && (isImageGeneration || isSpeechGeneration))
             ? request.executionParameters(for: executionProfile)
             : nil
 
         return ChatGenerationExecutionContext(
             prompt: request.prompt,
             isImageGeneration: isImageGeneration,
+            isImagePromptPreparation: isImagePromptPreparation,
             isSpeechGeneration: isSpeechGeneration,
             isMusicGeneration: request.isMusicGeneration,
             isDeepResearch: request.isDeepResearch,

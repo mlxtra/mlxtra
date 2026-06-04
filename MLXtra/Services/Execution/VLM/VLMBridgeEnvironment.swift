@@ -15,6 +15,7 @@ enum VLMBridgeEnvironment {
         pythonHomePath: URL,
         checkpointsPath: URL,
         acestepPythonPath: URL,
+        magentaPythonPath: URL,
         bridgeDebugEnabled: Bool,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> [String: String] {
@@ -42,6 +43,8 @@ enum VLMBridgeEnvironment {
             .path
         environment["ACESTEP_CHECKPOINTS_DIR"] = checkpointsPath.path
         environment["ACESTEP_PYTHON"] = acestepPythonPath.path
+        environment["MAGENTA_RT_CHECKPOINTS_DIR"] = checkpointsPath.path
+        environment["MAGENTA_RT_PYTHON"] = magentaPythonPath.path
 
         environment["MTL_DEBUG_LAYER"] = "0"
         environment["MTL_SHADER_VALIDATION"] = "0"

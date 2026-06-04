@@ -489,6 +489,27 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testComponentBundleStorageUsesConfiguredSubdirectory() throws {
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: checkpointsPath) }
+        let model = try XCTUnwrap(
+            DownloadableModel.embeddedModel(modelId: "google/magenta-realtime-2/mrt2_small")
+        )
+
+        let storageURLs = ModelDownloadStorage.storageURLs(
+            for: model,
+            checkpointsPath: checkpointsPath
+        )
+
+        XCTAssertEqual(
+            storageURLs,
+            [
+                checkpointsPath.appendingPathComponent("magenta-realtime-2/mrt2_small/models/mrt2_small"),
+                checkpointsPath.appendingPathComponent("magenta-realtime-2/mrt2_small/resources/musiccoca"),
+            ]
+        )
+    }
+
     func testModelStorageStatusForEmbeddedHuggingFaceModelIdDoesNotRecurse() throws {
         let cacheRoot = try makeTemporaryDirectory()
         let checkpointsPath = try makeTemporaryDirectory()
@@ -1072,6 +1093,38 @@ final class RuntimeManagerTests: XCTestCase {
         )
     }
 
+    func testLegacyMusicRuntimeComponentDoesNotRequireMagentaPython() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let baseRuntimeRoot = directory.appendingPathComponent("active-base")
+        try makeBaseRuntimeBundle(at: baseRuntimeRoot, version: "0.1.6")
+        try makeMusicRuntimeComponent(
+            at: baseRuntimeRoot,
+            version: "0.1.6",
+            includeMagentaRuntime: false,
+            declaresRealtimeMusic: false
+        )
+
+        XCTAssertTrue(RuntimeManager.isRuntimeComponentStructurallyValid(.music, at: baseRuntimeRoot))
+    }
+
+    func testRealtimeMusicRuntimeComponentRequiresMagentaPython() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let baseRuntimeRoot = directory.appendingPathComponent("active-base")
+        try makeBaseRuntimeBundle(at: baseRuntimeRoot, version: "0.1.7")
+        try makeMusicRuntimeComponent(
+            at: baseRuntimeRoot,
+            version: "0.1.7",
+            includeMagentaRuntime: false,
+            declaresRealtimeMusic: true
+        )
+
+        XCTAssertFalse(RuntimeManager.isRuntimeComponentStructurallyValid(.music, at: baseRuntimeRoot))
+    }
+
     func testRuntimeBundleValidityDoesNotRequireHuggingFaceDownloadHelper() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1638,12 +1691,24 @@ final class RuntimeManagerTests: XCTestCase {
         try data.write(to: url.appendingPathComponent("runtime-manifest.json"))
     }
 
-    private func makeMusicRuntimeComponent(at url: URL, version: String) throws {
+    private func makeMusicRuntimeComponent(
+        at url: URL,
+        version: String,
+        includeMagentaRuntime: Bool = true,
+        declaresRealtimeMusic: Bool = true
+    ) throws {
         try FileManager.default.createDirectory(at: url.appendingPathComponent("acestep-venv/bin"), withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(
             atPath: url.appendingPathComponent("acestep-venv/bin/python").path,
             withDestinationPath: "../../python/Frameworks/Versions/3.12/bin/python3"
         )
+        if includeMagentaRuntime {
+            try FileManager.default.createDirectory(at: url.appendingPathComponent("magenta-venv/bin"), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                atPath: url.appendingPathComponent("magenta-venv/bin/python").path,
+                withDestinationPath: "../../python/Frameworks/Versions/3.12/bin/python3"
+            )
+        }
         FileManager.default.createFile(atPath: url.appendingPathComponent("acestep_download_helper.py").path, contents: Data())
         let manifest = RuntimeManifest(
             runtimeVersion: version,
@@ -1651,9 +1716,9 @@ final class RuntimeManagerTests: XCTestCase {
             component: .music,
             pythonPath: "acestep-venv/bin/python3",
             executables: ["python": "acestep-venv/bin/python3"],
-            isolatedPackages: ["ace-step"],
+            isolatedPackages: declaresRealtimeMusic ? ["ace-step", "magenta-rt[mlx]"] : ["ace-step"],
             supportedBackends: [.music],
-            capabilities: ["music-generation"]
+            capabilities: declaresRealtimeMusic ? ["music-generation", "realtime-music"] : ["music-generation"]
         )
         let data = try JSONEncoder().encode(manifest)
         try data.write(to: url.appendingPathComponent(RuntimeComponent.music.manifestFilename))

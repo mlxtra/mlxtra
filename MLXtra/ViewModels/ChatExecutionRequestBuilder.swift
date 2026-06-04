@@ -7,9 +7,10 @@ enum ChatExecutionRequestBuilder {
         executionProfile: ModelCapabilityProfile,
         messages: [ExecutionMessage],
         tools: [[String: Any]]?,
-        outputDirectory: URL?
+        outputDirectory: URL?,
+        responseFormat: [String: Any]? = nil
     ) -> ExecutionRequest {
-        let isDirectMediaGeneration = generation.isImageGeneration || generation.isSpeechGeneration
+        let isDirectMediaGeneration = executionProfile.backend == .image || executionProfile.backend == .audio
         let chatExecutionParameters = generation.executionParameters(for: activeChatProfile)
         let runtimeExecutionParameters = isDirectMediaGeneration
             ? nil
@@ -17,7 +18,10 @@ enum ChatExecutionRequestBuilder {
         let mediaExecutionParameters = isDirectMediaGeneration
             ? generation.executionParameters(for: executionProfile)
             : nil
-        let chatTemplateKwargs = shouldUseChatTemplateKwargs(for: generation)
+        let chatTemplateKwargs = shouldUseChatTemplateKwargs(
+            for: generation,
+            isDirectMediaGeneration: isDirectMediaGeneration
+        )
             ? generation.chatTemplateKwargs(for: activeChatProfile)
             : nil
 
@@ -50,13 +54,15 @@ enum ChatExecutionRequestBuilder {
             repetitionPenalty: isDirectMediaGeneration ? nil : repetitionPenalty,
             chatTemplateKwargs: chatTemplateKwargs,
             tools: tools,
+            responseFormat: responseFormat,
             parameters: mediaExecutionParameters ?? runtimeExecutionParameters
         )
     }
 
-    private static func shouldUseChatTemplateKwargs(for generation: ChatGenerationRequest) -> Bool {
-        !generation.isImageGeneration
-            && !generation.isSpeechGeneration
-            && !generation.isMusicGeneration
+    private static func shouldUseChatTemplateKwargs(
+        for generation: ChatGenerationRequest,
+        isDirectMediaGeneration: Bool
+    ) -> Bool {
+        !isDirectMediaGeneration && !generation.isMusicGeneration
     }
 }

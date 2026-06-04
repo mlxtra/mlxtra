@@ -9,6 +9,7 @@ This repository references or bundles tooling for:
 - mlx-vlm by Prince Canuma and contributors
 - mflux by Filip Strand and contributors
 - ACE-Step 1.5 by ACE-Step contributors
+- Magenta RealTime 2 by Google LLC
 - Hugging Face Hub tooling
 - Swift Markdown by the Swift project
 - Python and Python package dependencies used by the local runtime

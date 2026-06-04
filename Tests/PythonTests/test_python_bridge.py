@@ -157,6 +157,123 @@ class TestParseToolCalls(unittest.TestCase):
 
 
 class TestChatCompletionPerformance(unittest.TestCase):
+    def test_response_format_schema_extracts_openai_json_schema(self):
+        schema = {
+            "type": "object",
+            "properties": {"prompt": {"type": "string"}},
+            "required": ["prompt"],
+        }
+
+        result = python_bridge._response_format_schema(
+            {
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "image_prompt",
+                        "schema": schema,
+                    },
+                }
+            }
+        )
+
+        self.assertEqual(result, schema)
+
+    def test_chat_completion_uses_generic_structured_output_processor(self):
+        schema = {
+            "type": "object",
+            "properties": {"prompt": {"type": "string"}},
+            "required": ["prompt"],
+        }
+        tokenizer = object()
+        processor = types.SimpleNamespace(tokenizer=tokenizer)
+        observed = {}
+
+        def fake_load_model_if_needed(model_id, request=None):
+            return ("model", processor, {"model_type": "fake"})
+
+        def fake_apply_chat_template(processor, config, messages, num_images=0, **kwargs):
+            return "prompt"
+
+        def fake_build_json_schema_logits_processor(received_tokenizer, received_schema):
+            observed["tokenizer"] = received_tokenizer
+            observed["schema"] = received_schema
+            return "structured-processor"
+
+        def fake_stream_generate(*args, **kwargs):
+            observed["generation_kwargs"] = kwargs
+            yield types.SimpleNamespace(
+                text='{"prompt":"A detailed image prompt"}',
+                prompt_tokens=7,
+                generation_tokens=8,
+                prompt_tps=None,
+                generation_tps=None,
+                peak_memory=None,
+            )
+
+        mlx_vlm_module = types.ModuleType("mlx_vlm")
+        mlx_vlm_module.stream_generate = fake_stream_generate
+        prompt_utils_module = types.ModuleType("mlx_vlm.prompt_utils")
+        prompt_utils_module.apply_chat_template = fake_apply_chat_template
+        structured_module = types.ModuleType("mlx_vlm.structured")
+        structured_module.build_json_schema_logits_processor = (
+            fake_build_json_schema_logits_processor
+        )
+        mlx_module = types.ModuleType("mlx")
+        mlx_core_module = types.ModuleType("mlx.core")
+        mlx_core_module.clear_cache = lambda: None
+        mlx_module.core = mlx_core_module
+
+        request = {
+            "type": "chat.completions",
+            "model": "fake-model",
+            "messages": [{"role": "user", "content": "Improve this prompt"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "image_prompt",
+                    "schema": schema,
+                },
+            },
+            "parameters": {
+                "runtimeOptions": {
+                    "acceleration": {
+                        "draftModel": "fake-drafter",
+                    }
+                }
+            },
+            "request_id": "req-structured-output",
+        }
+
+        with patch.dict(
+            sys.modules,
+            {
+                "mlx": mlx_module,
+                "mlx.core": mlx_core_module,
+                "mlx_vlm": mlx_vlm_module,
+                "mlx_vlm.prompt_utils": prompt_utils_module,
+                "mlx_vlm.structured": structured_module,
+            },
+        ), patch.object(
+            python_bridge, "load_model_if_needed", fake_load_model_if_needed
+        ), patch.object(
+            python_bridge, "_load_drafter_if_requested"
+        ) as load_drafter, patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_chat_completion(request)
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        generation_kwargs = observed["generation_kwargs"]
+
+        self.assertIs(observed["tokenizer"], tokenizer)
+        self.assertEqual(observed["schema"], schema)
+        self.assertEqual(generation_kwargs["logits_processors"], ["structured-processor"])
+        self.assertNotIn("draft_model", generation_kwargs)
+        load_drafter.assert_not_called()
+        self.assertEqual(messages[-1]["type"], "chat.completion.complete")
+
     def test_chat_completion_reports_import_failure_as_json_error(self):
         original_import = builtins.__import__
 
@@ -806,6 +923,131 @@ class TestMediaGenerationBridge(unittest.TestCase):
         self.assertEqual(messages[-2]["type"], "image.generated")
         self.assertEqual(messages[-2]["seed"], 0)
         fake_mx.clear_cache.assert_called_once()
+
+    def test_ideogram_image_generation_passes_structured_caption_and_options(self):
+        class FakeImage:
+            def save(self, path, overwrite=False):
+                Path(path).write_bytes(b"png")
+
+        class FakeImageModel:
+            def __init__(self):
+                self.kwargs = None
+
+            def generate_image(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeImage()
+
+        fake_model = FakeImageModel()
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+        caption = {
+            "compositional_deconstruction": {
+                "elements": [
+                    {
+                        "desc": "Poster title",
+                        "text": "HELLO",
+                        "bbox": [100, 100, 900, 300],
+                        "type": "text",
+                    }
+                ],
+                "background": "Dark blue",
+            },
+            "style_description": {
+                "medium": "graphic design",
+                "art_style": "modern poster",
+                "lighting": "flat",
+                "aesthetics": "minimal",
+            },
+            "high_level_description": "A typography poster",
+        }
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_image_model_if_needed", return_value=fake_model
+        ), patch("sys.stdout", new_callable=io.StringIO):
+            python_bridge.handle_image_generation(
+                {
+                    "type": "image.generate",
+                    "model": "ideogram-ai/ideogram-4-fp8",
+                    "prompt": caption,
+                    "parameters": {
+                        "preset": "V4_QUALITY_48",
+                        "use_preset_steps": True,
+                        "strict_caption_validation": True,
+                        "warn_on_caption_issues": False,
+                        "runtimeOptions": {
+                            "mflux": {
+                                "config": "ideogram-4-fp8",
+                                "textToImageClass": "Ideogram4",
+                            }
+                        },
+                    },
+                    "output_dir": output_dir,
+                    "request_id": "req-ideogram-caption",
+                }
+            )
+
+        self.assertEqual(
+            list(fake_model.kwargs["prompt"]),
+            [
+                "high_level_description",
+                "style_description",
+                "compositional_deconstruction",
+            ],
+        )
+        self.assertEqual(
+            list(fake_model.kwargs["prompt"]["style_description"]),
+            ["aesthetics", "lighting", "medium", "art_style"],
+        )
+        self.assertEqual(
+            list(
+                fake_model.kwargs["prompt"]["compositional_deconstruction"][
+                    "elements"
+                ][0]
+            ),
+            ["type", "bbox", "text", "desc"],
+        )
+        self.assertEqual(fake_model.kwargs["preset"], "V4_QUALITY_48")
+        self.assertTrue(fake_model.kwargs["use_preset_steps"])
+        self.assertTrue(fake_model.kwargs["strict_caption_validation"])
+        self.assertFalse(fake_model.kwargs["warn_on_caption_issues"])
+        fake_mx.clear_cache.assert_called_once()
+
+    def test_ideogram_image_generation_rejects_plain_prompt_before_model_load(self):
+        request = {
+            "type": "image.generate",
+            "model": "ideogram-ai/ideogram-4-fp8",
+            "prompt": "Create a poster",
+            "parameters": {
+                "strict_caption_validation": False,
+                "runtimeOptions": {
+                    "mflux": {
+                        "config": "ideogram-4-fp8",
+                        "textToImageClass": "Ideogram4",
+                    }
+                },
+            },
+            "request_id": "req-ideogram-plain-prompt",
+        }
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.object(
+            python_bridge, "load_image_model_if_needed"
+        ) as load_model, patch("sys.stdout", new_callable=io.StringIO) as captured:
+            request["output_dir"] = output_dir
+            python_bridge.handle_image_generation(request)
+
+        load_model.assert_not_called()
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertIn("requires a structured JSON caption object", messages[-1]["message"])
 
     def test_image_generation_emits_mflux_callback_progress(self):
         class FakeImage:
@@ -1528,6 +1770,52 @@ python_bridge.main()
 
 
 class TestAceStepForwarding(unittest.TestCase):
+    def test_handle_music_generation_uses_one_shot_magenta_forwarder(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            magenta_python = Path(temp_dir) / "python"
+            magenta_python.write_text("#!/bin/sh\n")
+
+            with patch.dict(
+                os.environ,
+                {"MAGENTA_RT_PYTHON": str(magenta_python)},
+            ), patch.object(
+                python_bridge, "_forward_magenta_subprocess", return_value=0
+            ) as forwarder:
+                python_bridge.handle_music_generation(
+                    {
+                        "request_id": "req-magenta",
+                        "type": "music.generate",
+                        "model": "google/magenta-realtime-2/mrt2_small",
+                        "parameters": {"caption": "clockwork piano"},
+                    }
+                )
+
+            forwarder.assert_called_once()
+            assert Path(forwarder.call_args.args[0]).resolve() == magenta_python.resolve()
+            assert forwarder.call_args.args[2]["request_id"] == "req-magenta"
+
+    def test_handle_music_generation_reports_missing_magenta_runtime(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_python = Path(temp_dir) / "missing-magenta-python"
+            with patch.object(
+                python_bridge,
+                "_candidate_magenta_python_paths",
+                return_value=[missing_python],
+            ), patch.object(python_bridge, "send_json") as send_json:
+                python_bridge.handle_music_generation(
+                    {
+                        "request_id": "req-magenta",
+                        "type": "music.generate",
+                        "model": "google/magenta-realtime-2/mrt2_base",
+                        "parameters": {"caption": "clockwork piano"},
+                    }
+                )
+
+        send_json.assert_called_once()
+        payload = send_json.call_args.args[0]
+        assert payload["type"] == "error"
+        assert "Magenta RealTime 2 runtime is not installed" in payload["message"]
+
     def test_handle_music_generation_uses_one_shot_acestep_forwarder(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             ace_python = Path(temp_dir) / "python"
@@ -1983,6 +2271,69 @@ class TestImageModelLoading(unittest.TestCase):
             assert kwargs["model_config"] == fake_config
             assert kwargs["quantize"] == 8
             assert result == mock_model_instance
+
+    def test_selects_ideogram4_text_to_image_runtime_options(self):
+        model_id = "ideogram-ai/ideogram-4-fp8"
+        mock_model_instance = MagicMock()
+        mock_ideogram_class = MagicMock(return_value=mock_model_instance)
+        fake_config = types.SimpleNamespace(model_name=model_id)
+
+        config_module = types.ModuleType("mflux.models.common.config")
+        config_module.ModelConfig = types.SimpleNamespace(
+            from_name=MagicMock(return_value=fake_config)
+        )
+
+        ideogram_module = types.ModuleType("mflux.models.ideogram4")
+        ideogram_module.Ideogram4 = mock_ideogram_class
+
+        request = {
+            "parameters": {
+                "runtimeOptions": {
+                    "mflux": {
+                        "config": "ideogram-4-fp8",
+                        "textToImageClass": "Ideogram4",
+                    }
+                }
+            }
+        }
+        stubbed_modules = {
+            "mflux": types.ModuleType("mflux"),
+            "mflux.models": types.ModuleType("mflux.models"),
+            "mflux.models.common": types.ModuleType("mflux.models.common"),
+            "mflux.models.common.config": config_module,
+            "mflux.models.ideogram4": ideogram_module,
+        }
+
+        with patch.dict(sys.modules, stubbed_modules):
+            result = python_bridge.load_image_model_if_needed(model_id, request=request)
+
+            config_module.ModelConfig.from_name.assert_called_once_with(
+                model_name="ideogram-4-fp8"
+            )
+            args, kwargs = mock_ideogram_class.call_args
+            assert kwargs["model_path"] == model_id
+            assert kwargs["model_config"] == fake_config
+            assert kwargs["quantize"] is None
+            assert result == mock_model_instance
+
+    def test_text_only_image_model_rejects_edit_request_without_edit_class(self):
+        request = {
+            "parameters": {
+                "runtimeOptions": {
+                    "mflux": {
+                        "config": "ideogram-4-fp8",
+                        "textToImageClass": "Ideogram4",
+                    }
+                }
+            }
+        }
+
+        with self.assertRaisesRegex(ValueError, "Image editing is not supported"):
+            python_bridge.load_image_model_if_needed(
+                "ideogram-ai/ideogram-4-fp8",
+                edit=True,
+                request=request,
+            )
 
 
 if __name__ == "__main__":

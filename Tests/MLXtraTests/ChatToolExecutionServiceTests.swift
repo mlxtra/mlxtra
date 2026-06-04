@@ -520,6 +520,102 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
     }
 
+    func testDirectImagePromptImprovementUsesChatVLMThenMediaTool() async throws {
+        resetPromptConfigurationDefaults()
+        let userDefaults = isolatedUserDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B"))
+        let improvePrompt = try XCTUnwrap(imageProfile.parameterDefinition(key: "improve_prompt"))
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                #"{"prompt":"A detailed quiet studio desk in soft morning light"}"#,
+                usage: TokenUsage(promptTokens: 10, completionTokens: 12)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(
+            downloadedModelIds: [Self.defaultChatModelId, imageProfile.modelId]
+        )
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor,
+            userDefaults: userDefaults
+        )
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.setParameterValue("true", for: improvePrompt, profile: imageProfile)
+        viewModel.selectTool(.image)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        XCTAssertEqual(executor.receivedRequests.count, 1)
+        XCTAssertEqual(executor.receivedRequests[0].backend, .vlm)
+        XCTAssertEqual(executor.receivedRequests[0].modelId, Self.defaultChatModelId)
+        XCTAssertNil(executor.receivedRequests[0].tools)
+        XCTAssertEqual(
+            executor.receivedRequests[0].responseFormat?["type"] as? String,
+            "json_schema"
+        )
+        XCTAssertEqual(
+            toolExecutor.mediaPlans[0].request.messages.first?.content,
+            "A detailed quiet studio desk in soft morning light"
+        )
+        XCTAssertEqual(toolExecutor.mediaPlans[0].request.modelId, imageProfile.modelId)
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.toolCalls.count, 1)
+    }
+
+    func testDirectIdeogramPromptPreparationCannotBeDisabled() async throws {
+        resetPromptConfigurationDefaults()
+        let userDefaults = isolatedUserDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
+        let improvePrompt = try XCTUnwrap(imageProfile.parameterDefinition(key: "improve_prompt"))
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                """
+                {"high_level_description":"A precise poster","style_description":{"aesthetics":"minimal","lighting":"flat","medium":"graphic_design","art_style":"modern poster"},"compositional_deconstruction":{"background":"Dark blue","elements":[]}}
+                """,
+                usage: TokenUsage(promptTokens: 10, completionTokens: 30)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(
+            downloadedModelIds: [Self.defaultChatModelId, imageProfile.modelId]
+        )
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor,
+            userDefaults: userDefaults
+        )
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.setParameterValue("false", for: improvePrompt, profile: imageProfile)
+        viewModel.selectTool(.image)
+        viewModel.inputText = "Create a precise poster"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        XCTAssertEqual(executor.receivedRequests.first?.backend, .vlm)
+        XCTAssertNil(executor.receivedRequests.first?.tools)
+        let responseFormat = try XCTUnwrap(executor.receivedRequests.first?.responseFormat)
+        let jsonSchema = try XCTUnwrap(responseFormat["json_schema"] as? [String: Any])
+        XCTAssertEqual(jsonSchema["name"] as? String, "ideogram4_caption")
+        XCTAssertEqual(
+            toolExecutor.mediaPlans[0].request.imageCaption?["high_level_description"] as? String,
+            "A precise poster"
+        )
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.toolCalls.count, 1)
+        XCTAssertEqual(
+            viewModel.chats.first?.messages.last?.toolCalls.first?.details.first?.label,
+            "Structured caption"
+        )
+    }
+
     func testSendMessageUsesGenerationSnapshotWhenSelectionChangesAfterSend() async {
         let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
         let executor = MockChatModelExecutor(events: [
@@ -737,6 +833,117 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(plan.request.modelId, imageProfile.modelId)
         XCTAssertEqual(parameters["width"] as? Int, 512)
         XCTAssertEqual(viewModel.selectedTool, .auto)
+    }
+
+    func testAutoModeUsesGenericImageToolThenPreparesIdeogramCaption() async throws {
+        resetPromptConfigurationDefaults()
+        let userDefaults = isolatedUserDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
+        let toolCall = ExecutionToolCall(
+            id: "ideogram-image",
+            function: ExecutionToolCallFunction(
+                name: "generate_image",
+                arguments: #"{"prompt":"Create a precise poster"}"#
+            )
+        )
+        let executor = MockChatModelExecutor(eventBatches: [
+            [.toolCalls([toolCall])],
+            [
+                .complete(
+                    """
+                    {"high_level_description":"A precise poster","style_description":{"aesthetics":"minimal","lighting":"flat","medium":"graphic_design","art_style":"modern poster"},"compositional_deconstruction":{"background":"Dark blue","elements":[]}}
+                    """,
+                    usage: TokenUsage(promptTokens: 10, completionTokens: 30)
+                )
+            ]
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor,
+            userDefaults: userDefaults
+        )
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Create a precise poster"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        let requestTools = try XCTUnwrap(executor.receivedRequests.first?.tools)
+        let imageTool = try XCTUnwrap(requestTools.first { tool in
+            (tool["function"] as? [String: Any])?["name"] as? String == "generate_image"
+        })
+        let function = try XCTUnwrap(imageTool["function"] as? [String: Any])
+        let parameters = try XCTUnwrap(function["parameters"] as? [String: Any])
+        XCTAssertEqual(parameters["required"] as? [String], ["prompt"])
+        XCTAssertNil((parameters["properties"] as? [String: Any])?["caption"])
+        XCTAssertEqual(executor.receivedRequests.count, 2)
+        XCTAssertNil(executor.receivedRequests[1].tools)
+        let responseFormat = try XCTUnwrap(executor.receivedRequests[1].responseFormat)
+        let jsonSchema = try XCTUnwrap(responseFormat["json_schema"] as? [String: Any])
+        XCTAssertEqual(jsonSchema["name"] as? String, "ideogram4_caption")
+
+        let plan = toolExecutor.mediaPlans[0]
+        XCTAssertEqual(plan.request.modelId, imageProfile.modelId)
+        XCTAssertEqual(plan.status, "Create a precise poster")
+        XCTAssertEqual(
+            plan.request.imageCaption?["high_level_description"] as? String,
+            "A precise poster"
+        )
+    }
+
+    func testAutoModeOptionallyImprovesPlainTextImagePromptAfterToolSelection() async throws {
+        resetPromptConfigurationDefaults()
+        let userDefaults = isolatedUserDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B"))
+        let improvePrompt = try XCTUnwrap(imageProfile.parameterDefinition(key: "improve_prompt"))
+        let toolCall = ExecutionToolCall(
+            id: "plain-image",
+            function: ExecutionToolCallFunction(
+                name: "generate_image",
+                arguments: #"{"prompt":"Draw a quiet studio desk"}"#
+            )
+        )
+        let executor = MockChatModelExecutor(eventBatches: [
+            [.toolCalls([toolCall])],
+            [
+                .complete(
+                    #"{"prompt":"A quiet studio desk in soft morning light, carefully arranged stationery, warm natural shadows"}"#,
+                    usage: TokenUsage(promptTokens: 10, completionTokens: 20)
+                )
+            ]
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor,
+            userDefaults: userDefaults
+        )
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.setParameterValue("true", for: improvePrompt, profile: imageProfile)
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "Draw a quiet studio desk"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        XCTAssertEqual(executor.receivedRequests.count, 2)
+        let responseFormat = try XCTUnwrap(executor.receivedRequests[1].responseFormat)
+        let jsonSchema = try XCTUnwrap(responseFormat["json_schema"] as? [String: Any])
+        XCTAssertEqual(jsonSchema["name"] as? String, "image_prompt")
+        XCTAssertEqual(
+            toolExecutor.mediaPlans[0].request.messages.first?.content,
+            "A quiet studio desk in soft morning light, carefully arranged stationery, warm natural shadows"
+        )
     }
 
     func testSendMessageBuildsSpeechGenerationRequestThroughInjectedExecutor() async throws {

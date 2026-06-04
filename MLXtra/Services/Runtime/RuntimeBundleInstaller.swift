@@ -291,24 +291,33 @@ extension RuntimeManager {
         case .base:
             return isRuntimeBundleStructurallyValid(root, fileManager: fileManager)
         case .music:
-            guard runtimeManifest(at: root, component: .music)?.component == .music else {
+            guard let manifest = runtimeManifest(at: root, component: .music),
+                  manifest.component == .music else {
                 return false
             }
-            let requiredFiles = [
+            var requiredFiles = [
                 "acestep-venv/bin/python",
                 "acestep_download_helper.py",
                 RuntimeComponent.music.manifestFilename,
             ]
+            var pythonPaths = [
+                root.appendingPathComponent("acestep-venv/bin/python"),
+            ]
+            if manifest.requiresMagentaRuntime {
+                requiredFiles.append("magenta-venv/bin/python")
+                pythonPaths.append(root.appendingPathComponent("magenta-venv/bin/python"))
+            }
             guard requiredFiles.allSatisfy({ relativePath in
                 runtimeTreeItemExists(root.appendingPathComponent(relativePath), fileManager: fileManager)
             }) else {
                 return false
             }
-            let python = root.appendingPathComponent("acestep-venv/bin/python")
-            if fileManager.isExecutableFile(atPath: python.path) {
+            if pythonPaths.allSatisfy({ fileManager.isExecutableFile(atPath: $0.path) }) {
                 return true
             }
-            guard (try? fileManager.destinationOfSymbolicLink(atPath: python.path)) != nil else {
+            guard pythonPaths.allSatisfy({
+                (try? fileManager.destinationOfSymbolicLink(atPath: $0.path)) != nil
+            }) else {
                 return false
             }
             return fileManager.fileExists(
@@ -329,11 +338,18 @@ extension RuntimeManager {
         case .base:
             throw RuntimeUpdateError.unsupportedArchive
         case .music:
-            relativePaths = [
+            guard let manifest = runtimeManifest(at: componentRoot, component: .music) else {
+                throw RuntimeUpdateError.invalidRuntime
+            }
+            var musicRelativePaths = [
                 "acestep-venv",
                 "acestep_download_helper.py",
                 RuntimeComponent.music.manifestFilename,
             ]
+            if manifest.requiresMagentaRuntime {
+                musicRelativePaths.append("magenta-venv")
+            }
+            relativePaths = musicRelativePaths
         }
 
         let backupURL = stagingURL.appendingPathComponent("backup-\(component.rawValue)-\(UUID().uuidString)")

@@ -8,8 +8,10 @@ RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
 PYTHON_HOME="${RUNTIME_DIR}/python/Frameworks/Versions/3.12"
 MAIN_PYTHON="${RUNTIME_DIR}/venv/bin/python"
 ACE_PYTHON="${RUNTIME_DIR}/acestep-venv/bin/python"
+MAGENTA_PYTHON="${RUNTIME_DIR}/magenta-venv/bin/python"
 MAIN_SITE_PACKAGES="${RUNTIME_DIR}/venv/lib/python3.12/site-packages"
 ACE_SITE_PACKAGES="${RUNTIME_DIR}/acestep-venv/lib/python3.12/site-packages"
+MAGENTA_SITE_PACKAGES="${RUNTIME_DIR}/magenta-venv/lib/python3.12/site-packages"
 MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
 MUSIC_MANIFEST="${RUNTIME_DIR}/runtime-music-manifest.json"
 BUILD_RUNTIME_SCRIPT="${SCRIPT_DIR}/build-runtime-bundle.sh"
@@ -63,6 +65,7 @@ runtime_bootstrap_required() {
     [ -f "${MANIFEST}" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" ] || return 0
+    [ -f "${PROJECT_DIR}/MLXtra/Resources/magenta_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" ] || return 0
     return 1
 }
@@ -90,6 +93,7 @@ require_executable "${MAIN_PYTHON}" "Main runtime Python"
 require_file "${MANIFEST}" "Runtime manifest"
 require_file "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" "Python bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" "ACE-Step bridge"
+require_file "${PROJECT_DIR}/MLXtra/Resources/magenta_bridge.py" "Magenta RealTime 2 bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/bridge_utils.py" "Bridge utilities"
 
 validate_manifest() {
@@ -194,6 +198,11 @@ import importlib.metadata as metadata
 
 metadata.version("ace-step")
 PY
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${MAGENTA_PYTHON}" - <<'PY'
+import importlib.metadata as metadata
+
+metadata.version("magenta-rt")
+PY
     fi
 }
 
@@ -212,6 +221,12 @@ import importlib
 for package in ("huggingface_hub", "tqdm", "acestep"):
     importlib.import_module(package)
 PY
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${MAGENTA_PYTHON}" - <<'PY'
+import importlib
+
+for package in ("magenta_rt", "mlx"):
+    importlib.import_module(package)
+PY
     fi
 }
 
@@ -220,10 +235,12 @@ validate_download_helper_structure() {
     require_directory "${MAIN_SITE_PACKAGES}/tqdm" "Main runtime tqdm package"
     if [ -f "${MUSIC_MANIFEST}" ]; then
         require_executable "${ACE_PYTHON}" "ACE-Step runtime Python"
+        require_executable "${MAGENTA_PYTHON}" "Magenta RealTime 2 runtime Python"
         require_file "${RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
         require_directory "${ACE_SITE_PACKAGES}/huggingface_hub" "ACE-Step runtime huggingface_hub package"
         require_directory "${ACE_SITE_PACKAGES}/tqdm" "ACE-Step runtime tqdm package"
         require_directory "${ACE_SITE_PACKAGES}/acestep" "ACE-Step runtime acestep package"
+        require_directory "${MAGENTA_SITE_PACKAGES}/magenta_rt" "Magenta RealTime 2 runtime package"
     fi
 }
 

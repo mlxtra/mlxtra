@@ -20,6 +20,7 @@ KNOWN_DOWNLOAD_HELPERS = {"ace_step"}
 KNOWN_RUNTIME_COMPONENTS = {"base", "music"}
 KNOWN_PARAMETER_TYPES = {"decimal", "integer", "boolean", "option", "text"}
 KNOWN_AVAILABILITY = {"visible", "hidden", "requires_hf_access"}
+KNOWN_IMAGE_PROMPT_ADAPTERS = {"ideogram4_json"}
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:[-.][0-9A-Za-z]+)?$")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -216,6 +217,14 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
             helper = source.get("helper")
             if helper is not None:
                 validator.require(helper in KNOWN_DOWNLOAD_HELPERS, f"{path}.source.helper is unsupported: {helper}")
+            storage_subdirectory = source.get("storageSubdirectory")
+            if storage_subdirectory is not None:
+                validator.require(
+                    is_non_empty_string(storage_subdirectory)
+                    and not storage_subdirectory.startswith("/")
+                    and ".." not in storage_subdirectory.split("/"),
+                    f"{path}.source.storageSubdirectory must be a safe relative path",
+                )
 
     runtime = model.get("runtime")
     validator.require(isinstance(runtime, dict), f"{path}.runtime must be an object")
@@ -246,7 +255,10 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
                     text_class = mflux_options.get("textToImageClass")
                     edit_class = mflux_options.get("editClass")
                     validator.require(is_non_empty_string(text_class), f"{path}.runtimeOptions.mflux.textToImageClass must be a non-empty string")
-                    validator.require(is_non_empty_string(edit_class), f"{path}.runtimeOptions.mflux.editClass must be a non-empty string")
+                    if edit_class is not None:
+                        validator.require(is_non_empty_string(edit_class), f"{path}.runtimeOptions.mflux.editClass must be a non-empty string")
+                    if isinstance(capabilities, list) and "image-editing" in capabilities:
+                        validator.require(is_non_empty_string(edit_class), f"{path}.runtimeOptions.mflux.editClass is required for image-editing models")
                     quantize = mflux_options.get("quantize")
                     if quantize is not None:
                         require_int(quantize, f"{path}.runtimeOptions.mflux.quantize", validator, minimum=1)
@@ -278,6 +290,19 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
                     if backend != "audio":
                         validator.error(f"{path}.runtimeOptions.audio is only supported for audio backend models")
 
+    prompting = model.get("prompting")
+    if prompting is not None:
+        validator.require(isinstance(prompting, dict), f"{path}.prompting must be an object")
+        if isinstance(prompting, dict):
+            image_adapter = prompting.get("imageAdapter")
+            if image_adapter is not None:
+                validator.require(
+                    image_adapter in KNOWN_IMAGE_PROMPT_ADAPTERS,
+                    f"{path}.prompting.imageAdapter is unsupported: {image_adapter}",
+                )
+                if backend != "image":
+                    validator.error(f"{path}.prompting.imageAdapter is only supported for image backend models")
+
     ranking = model.get("ranking")
     validator.require(isinstance(ranking, dict), f"{path}.ranking must be an object")
     if isinstance(ranking, dict):
@@ -285,6 +310,19 @@ def validate_model(model: dict[str, Any], index: int, validator: Validator) -> d
         require_int(ranking.get("speed"), f"{path}.ranking.speed", validator, minimum=0)
         if ranking.get("defaultForMemoryGB") is not None:
             require_number(ranking.get("defaultForMemoryGB"), f"{path}.ranking.defaultForMemoryGB", validator, minimum=1)
+        preferred_chip_names = ranking.get("preferredChipNames", [])
+        validator.require(isinstance(preferred_chip_names, list), f"{path}.ranking.preferredChipNames must be an array")
+        if isinstance(preferred_chip_names, list):
+            for chip_index, chip_name in enumerate(preferred_chip_names):
+                validator.require(
+                    is_non_empty_string(chip_name),
+                    f"{path}.ranking.preferredChipNames[{chip_index}] must be a non-empty string",
+                )
+        if ranking.get("hardwareFallback") is not None:
+            validator.require(
+                isinstance(ranking.get("hardwareFallback"), bool),
+                f"{path}.ranking.hardwareFallback must be a boolean",
+            )
 
     parameter_keys: set[str] = set()
     parameters = model.get("parameters")

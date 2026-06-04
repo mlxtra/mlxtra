@@ -336,7 +336,7 @@ echo "Installing MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
     --find-links "${FORCED_WHEELHOUSE}" \
     "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
 
-for package in "${RUNTIME_MAIN_PYPI_PACKAGES[@]}"; do
+for package in "${RUNTIME_MAIN_INSTALL_PACKAGES[@]}"; do
     echo "Installing ${package}..."
     "${VENV_PIP}" install --no-compile "${package}"
 done
@@ -351,6 +351,7 @@ mkdir -p "${OUTPUT_DIR}"
 ACE_DOWNLOAD_HELPER_CACHE="${BUILD_DIR}/acestep_download_helper.py"
 for helper_source in \
     "${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py" \
+    "${PROJECT_DIR}/MLXtra/Resources/runtime/music-macos-arm64/acestep_download_helper.py" \
     "${MUSIC_OUTPUT_DIR}/acestep_download_helper.py"
 do
     if [ -f "${helper_source}" ]; then
@@ -358,7 +359,7 @@ do
         break
     fi
 done
-rm -rf "${OUTPUT_DIR}/venv" "${OUTPUT_DIR}/python" "${OUTPUT_DIR}/shared" "${OUTPUT_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep_download_helper.py" "${OUTPUT_DIR}/runtime-music-manifest.json"
+rm -rf "${OUTPUT_DIR}/venv" "${OUTPUT_DIR}/python" "${OUTPUT_DIR}/shared" "${OUTPUT_DIR}/acestep-venv" "${OUTPUT_DIR}/magenta-venv" "${OUTPUT_DIR}/acestep_download_helper.py" "${OUTPUT_DIR}/runtime-music-manifest.json"
 rm -rf "${MUSIC_OUTPUT_DIR}"
 
 # Copy Python framework first so venv interpreter links can be made relative to it.
@@ -396,6 +397,19 @@ echo "Installing ACE-Step MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
     "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
 "${ACE_PIP}" install --no-compile "${ACE_STEP_PACKAGE}"
 cp -R "${BUILD_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep-venv"
+
+echo "Creating isolated Magenta RealTime 2 runtime..."
+create_build_venv "${BUILD_DIR}/magenta-venv"
+MAGENTA_PIP="${BUILD_DIR}/magenta-venv/bin/pip"
+"${MAGENTA_PIP}" install --no-compile --upgrade pip
+echo "Installing Magenta MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
+"${MAGENTA_PIP}" install \
+    --no-compile \
+    --no-index \
+    --find-links "${FORCED_WHEELHOUSE}" \
+    "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
+"${MAGENTA_PIP}" install --no-compile "${MAGENTA_RT_PACKAGE}"
+cp -R "${BUILD_DIR}/magenta-venv" "${OUTPUT_DIR}/magenta-venv"
 
 relocate_venv() {
     local venv_dir="$1"
@@ -694,11 +708,14 @@ relocate_python_framework() {
 relocate_python_framework
 relocate_venv "${OUTPUT_DIR}/venv"
 relocate_venv "${OUTPUT_DIR}/acestep-venv"
+relocate_venv "${OUTPUT_DIR}/magenta-venv"
 prune_runtime_tree "${OUTPUT_DIR}/venv"
 prune_runtime_tree "${OUTPUT_DIR}/acestep-venv"
+prune_runtime_tree "${OUTPUT_DIR}/magenta-venv"
 dedupe_shared_site_packages "${OUTPUT_DIR}"
 codesign_native_artifacts "${OUTPUT_DIR}/venv"
 codesign_native_artifacts "${OUTPUT_DIR}/acestep-venv"
+codesign_native_artifacts "${OUTPUT_DIR}/magenta-venv"
 codesign_native_artifacts "${OUTPUT_DIR}/shared"
 
 validate_mlx_wheel_platform() {
@@ -731,6 +748,7 @@ PY
 
 validate_mlx_wheel_platform "${OUTPUT_DIR}/venv/lib/python3.12/site-packages"
 validate_mlx_wheel_platform "${OUTPUT_DIR}/acestep-venv/lib/python3.12/site-packages"
+validate_mlx_wheel_platform "${OUTPUT_DIR}/magenta-venv/lib/python3.12/site-packages"
 if [ ! -f "${OUTPUT_DIR}/acestep_download_helper.py" ]; then
     echo "ACE-Step download helper is missing from the runtime bundle." >&2
     exit 1
@@ -833,7 +851,8 @@ cat > "${OUTPUT_DIR}/runtime-music-manifest.json" << EOF
 $(json_array_items 4 "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}")
   ],
   "isolatedPackages": [
-    "ace-step @ ${ACE_STEP_PACKAGE}"
+    "ace-step @ ${ACE_STEP_PACKAGE}",
+    "${MAGENTA_RT_PACKAGE}"
   ],
   "supportedBackends": [
 $(json_array_items 4 "${RUNTIME_MUSIC_SUPPORTED_BACKENDS[@]}")
@@ -890,11 +909,24 @@ if mlx_metal != os.environ['RUNTIME_MLX_METAL_VERSION']:
     raise RuntimeError(f'mlx-metal version mismatch: expected {os.environ[\"RUNTIME_MLX_METAL_VERSION\"]}, got {mlx_metal}')
 print('ACE-Step mlx-metal: ' + mlx_metal)
 "
+
+RUNTIME_MLX_METAL_VERSION="${MLX_METAL_VERSION}" \
+PYTHONHOME="${RUNTIME_PYTHONHOME}" PYTHONDONTWRITEBYTECODE=1 "${OUTPUT_DIR}/magenta-venv/bin/python" -c "
+import importlib.metadata as metadata
+from magenta_rt import MagentaRT2Mlxfn
+print('Magenta RealTime 2: OK')
+print('magenta-rt: ' + metadata.version('magenta-rt'))
+mlx_metal = metadata.version('mlx-metal')
+if mlx_metal != '${MLX_METAL_VERSION}':
+    raise RuntimeError(f'mlx-metal version mismatch: expected ${MLX_METAL_VERSION}, got {mlx_metal}')
+print('Magenta mlx-metal: ' + mlx_metal)
+"
 fi
 
 echo "Step 8: Splitting music runtime component..."
 mkdir -p "${MUSIC_OUTPUT_DIR}"
 mv "${OUTPUT_DIR}/acestep-venv" "${MUSIC_OUTPUT_DIR}/acestep-venv"
+mv "${OUTPUT_DIR}/magenta-venv" "${MUSIC_OUTPUT_DIR}/magenta-venv"
 mv "${OUTPUT_DIR}/acestep_download_helper.py" "${MUSIC_OUTPUT_DIR}/acestep_download_helper.py"
 mv "${OUTPUT_DIR}/runtime-music-manifest.json" "${MUSIC_OUTPUT_DIR}/runtime-music-manifest.json"
 validate_self_contained_symlinks "${OUTPUT_DIR}"

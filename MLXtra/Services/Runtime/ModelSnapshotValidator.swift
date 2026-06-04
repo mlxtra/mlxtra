@@ -278,7 +278,11 @@ extension RuntimeManager {
         if knownWeightFilenames.contains(filename) {
             return true
         }
-        if filename.hasSuffix(".safetensors") || filename.hasSuffix(".gguf") || filename.hasSuffix(".ckpt") {
+        if filename.hasSuffix(".safetensors")
+            || filename.hasSuffix(".gguf")
+            || filename.hasSuffix(".ckpt")
+            || filename.hasSuffix(".mlxfn")
+            || filename.hasSuffix(".tflite") {
             return true
         }
         if filename.hasSuffix(".bin") {

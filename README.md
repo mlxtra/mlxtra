@@ -41,7 +41,7 @@ server project.
 - Chat with local vision-language models and attach images
 - Generate images with FLUX.2 Klein or Z-Image Turbo
 - Generate speech with KugelAudio or Kokoro
-- Generate music with ACE-Step
+- Generate music with ACE-Step or Magenta RealTime 2
 - Manage runtime and model downloads from Settings
 - Stream responses and keep conversation history locally
 
@@ -62,7 +62,11 @@ MLXtra ships with a curated model catalog:
 - **Chat and vision:** Qwen 3.5, Qwen 3.6, and Gemma 4 variants
 - **Image:** FLUX.2-klein-4B and Z-Image Turbo
 - **Speech:** KugelAudio 0 Open and Kokoro 82M 4-bit
-- **Music:** ACE-Step 1.5 Turbo
+- **Music:** ACE-Step 1.5 Turbo and Magenta RealTime 2 Small/Base
+
+Magenta RealTime 2 is instrumental-only. MLXtra recommends the Base model on
+the Macs listed as real-time capable by Magenta's README (M5 Max, M3 Max,
+M2 Max, and M4 Pro), and Small on other Apple Silicon Macs.
 
 Large models are shown only on Macs where they are expected to fit comfortably.
 Some model providers may require accepting model terms or signing in to Hugging
@@ -140,3 +144,4 @@ separately by their respective owners. See
 - [mlx-audio](https://github.com/Blaizzy/mlx-audio)
 - [mflux](https://github.com/filipstrand/mflux)
 - [ACE-Step](https://github.com/ace-step/ACE-Step)
+- [Magenta RealTime](https://github.com/magenta/magenta-realtime)

@@ -31,6 +31,7 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         func bridgeScriptPath() -> URL { scriptPath }
         func pythonHomePath() -> URL { pythonHome }
         func acestepPythonExecutablePath() -> URL { aceStepPython }
+        func magentaPythonExecutablePath() -> URL { aceStepPython }
     }
 
 

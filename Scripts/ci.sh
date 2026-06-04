@@ -44,6 +44,7 @@ run_py_compile() {
     python3 -m py_compile \
         MLXtra/Resources/python_bridge.py \
         MLXtra/Resources/acestep_bridge.py \
+        MLXtra/Resources/magenta_bridge.py \
         MLXtra/Resources/bridge_utils.py \
         "${ace_helper}" \
         Scripts/validate-release-metadata.py \

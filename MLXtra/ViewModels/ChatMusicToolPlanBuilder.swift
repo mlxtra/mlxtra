@@ -12,6 +12,7 @@ enum ChatMusicToolPlanBuilder {
         executionParameters: [String: Any],
         composerSelection: ChatMusicComposerSelection,
         applyAutomaticInstrumentalFallback: Bool,
+        instrumentalOnly: Bool = false,
         promptSoundsVocal: (String) -> Bool
     ) -> [String: Any] {
         var parameters = defaultParameters(caption: prompt, executionParameters: executionParameters)
@@ -20,6 +21,10 @@ enum ChatMusicToolPlanBuilder {
 
         if applyAutomaticInstrumentalFallback {
             applyInstrumentalFallback(to: &parameters, prompt: prompt, promptSoundsVocal: promptSoundsVocal)
+        }
+        if instrumentalOnly {
+            parameters["instrumental"] = true
+            parameters["lyrics"] = "[Instrumental]"
         }
 
         return parameters

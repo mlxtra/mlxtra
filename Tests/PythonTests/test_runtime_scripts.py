@@ -136,6 +136,12 @@ class RuntimeScriptTests(unittest.TestCase):
         manifest = json.loads(RUNTIME_MANIFEST.read_text())
 
         self.assertEqual(set(manifest["packages"]), set(bash_array("RUNTIME_MAIN_PACKAGES")))
+        self.assertTrue(
+            any(
+                package.startswith("git+https://github.com/omercelik/mflux.git@")
+                for package in bash_array("RUNTIME_MAIN_INSTALL_PACKAGES")
+            )
+        )
         self.assertEqual(
             set(manifest["supportedBackends"]),
             set(bash_array("RUNTIME_SUPPORTED_BACKENDS")),
