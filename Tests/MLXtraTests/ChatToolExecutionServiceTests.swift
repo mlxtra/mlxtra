@@ -859,7 +859,10 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 )
             ]
         ])
-        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [
+            Self.defaultChatModelId,
+            imageProfile.modelId,
+        ])
         let toolExecutor = MockChatToolExecutionService()
         let persistence = MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil)
         let viewModel = ChatViewModel(
@@ -874,7 +877,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.inputText = "Create a precise poster"
 
         viewModel.sendMessage()
-        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+        await waitUntil { executor.receivedRequests.count == 2 && toolExecutor.mediaPlans.count == 1 }
 
         let requestTools = try XCTUnwrap(executor.receivedRequests.first?.tools)
         let imageTool = try XCTUnwrap(requestTools.first { tool in
@@ -884,9 +887,9 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let parameters = try XCTUnwrap(function["parameters"] as? [String: Any])
         XCTAssertEqual(parameters["required"] as? [String], ["prompt"])
         XCTAssertNil((parameters["properties"] as? [String: Any])?["caption"])
-        XCTAssertEqual(executor.receivedRequests.count, 2)
-        XCTAssertNil(executor.receivedRequests[1].tools)
-        let responseFormat = try XCTUnwrap(executor.receivedRequests[1].responseFormat)
+        let promptPreparationRequest = try XCTUnwrap(executor.receivedRequests.dropFirst().first)
+        XCTAssertNil(promptPreparationRequest.tools)
+        let responseFormat = try XCTUnwrap(promptPreparationRequest.responseFormat)
         let jsonSchema = try XCTUnwrap(responseFormat["json_schema"] as? [String: Any])
         XCTAssertEqual(jsonSchema["name"] as? String, "ideogram4_caption")
 
