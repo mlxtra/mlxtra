@@ -19,6 +19,7 @@ struct ModeDraftControls: View {
 
     private var shouldShowLyricsEditor: Bool {
         draft.showsMusicControls
+            && viewModel.selectedMusicModelSupportsLyrics
             && viewModel.musicVocalMode != .instrumental
             && (
                 viewModel.musicVocalMode == .vocals
@@ -30,7 +31,7 @@ struct ModeDraftControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if draft.showsMusicControls {
+            if draft.showsMusicControls && viewModel.selectedMusicModelSupportsLyrics {
                 musicSetupRow
                     .padding(.horizontal, controlTextRailInset)
             }

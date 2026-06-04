@@ -237,11 +237,13 @@ else:
     manifest_name = "runtime-music-manifest.json"
     required_paths = [
         "acestep-venv/bin/python",
+        "magenta-venv/bin/python",
         "acestep_download_helper.py",
         manifest_name,
     ]
     required_executables = [
         "acestep-venv/bin/python",
+        "magenta-venv/bin/python",
     ]
     wheel_site_packages = []
 
@@ -353,12 +355,41 @@ if [ "${COMPONENT}" = "music" ]; then
     copy_runtime_tree "${BASE_RUNTIME_DIR}" "${OVERLAY_ROOT}"
     rm -rf \
         "${OVERLAY_ROOT}/acestep-venv" \
+        "${OVERLAY_ROOT}/magenta-venv" \
         "${OVERLAY_ROOT}/acestep_download_helper.py" \
         "${OVERLAY_ROOT}/runtime-music-manifest.json"
     copy_runtime_tree "${RUNTIME_ROOT}/acestep-venv" "${OVERLAY_ROOT}/acestep-venv"
+    copy_runtime_tree "${RUNTIME_ROOT}/magenta-venv" "${OVERLAY_ROOT}/magenta-venv"
     cp "${RUNTIME_ROOT}/acestep_download_helper.py" "${OVERLAY_ROOT}/acestep_download_helper.py"
     cp "${RUNTIME_ROOT}/runtime-music-manifest.json" "${OVERLAY_ROOT}/runtime-music-manifest.json"
     RUNTIME_ROOT="${OVERLAY_ROOT}"
+
+    EXPECTED_MLX_WHEEL_PLATFORM="${RUNTIME_MLX_WHEEL_PLATFORM}" \
+    /usr/bin/python3 - \
+        "${RUNTIME_ROOT}/acestep-venv/lib/python3.12/site-packages" \
+        "${RUNTIME_ROOT}/magenta-venv/lib/python3.12/site-packages" <<'PY'
+import os
+import pathlib
+import sys
+
+expected_platform = os.environ["EXPECTED_MLX_WHEEL_PLATFORM"]
+
+for site_packages_arg in sys.argv[1:]:
+    site_packages = pathlib.Path(site_packages_arg)
+    for wheel_stem in ("mlx", "mlx_metal"):
+        wheel_files = sorted(site_packages.glob(f"{wheel_stem}-*.dist-info/WHEEL"))
+        if not wheel_files:
+            raise SystemExit(f"{wheel_stem} WHEEL metadata not found in {site_packages}")
+        tags = [
+            line.removeprefix("Tag: ").strip()
+            for line in wheel_files[-1].read_text().splitlines()
+            if line.startswith("Tag: ")
+        ]
+        if not any(expected_platform in tag for tag in tags):
+            raise SystemExit(
+                f"{wheel_stem} is not using {expected_platform}; found tags: {tags}"
+            )
+PY
 fi
 
 PYTHON_HOME="${RUNTIME_ROOT}/python/Frameworks/Versions/3.12"
@@ -388,6 +419,16 @@ for package in ("ace-step", "mlx", "mlx-metal"):
 if GenerationConfig is None:
     raise SystemExit("ACE-Step import failed")
 PY
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/magenta-venv/bin/python" - <<'PY'
+import importlib.metadata as metadata
+from magenta_rt import MagentaRT2Mlxfn
+
+for package in ("magenta-rt", "mlx", "mlx-metal"):
+    metadata.version(package)
+
+if MagentaRT2Mlxfn is None:
+    raise SystemExit("Magenta RealTime 2 import failed")
+PY
     fi
 fi
 
@@ -407,6 +448,12 @@ import mlx.core as mx
 
 if (mx.array([1, 2, 3]) + 1).tolist() != [2, 3, 4]:
     raise SystemExit("ACE-Step MLX Metal smoke failed")
+PY
+        PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/magenta-venv/bin/python" - <<'PY'
+import mlx.core as mx
+
+if (mx.array([1, 2, 3]) + 1).tolist() != [2, 3, 4]:
+    raise SystemExit("Magenta MLX Metal smoke failed")
 PY
     fi
 fi

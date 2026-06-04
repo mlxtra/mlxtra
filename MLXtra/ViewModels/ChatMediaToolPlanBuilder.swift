@@ -8,8 +8,15 @@ enum ChatMediaToolPlanBuilder {
         generation: ChatGenerationRequest,
         outputDirectory: URL
     ) -> ChatMediaToolExecutionPlan {
-        let imagePrompt = nonEmptyStringArgument("prompt", from: decodedArguments) ?? fallbackPrompt
         let imageProfile = generation.profile(for: .image)
+        let imageCaption = imageProfile.imagePromptAdapter == .ideogram4JSON
+            ? structuredImageCaption(from: decodedArguments)
+            : nil
+        let imagePrompt = nonEmptyStringArgument("prompt", from: decodedArguments)
+            ?? nonEmptyStringArgument("high_level_description", from: imageCaption)
+            ?? fallbackPrompt
+        let details = imageCaption.flatMap(structuredCaptionDetail).map { [$0] } ?? []
+        let supportedImages = imageProfile.supportsImageEditing ? images : []
         let model = imageProfile.downloadableModel
 
         return ChatMediaToolExecutionPlan(
@@ -17,13 +24,14 @@ enum ChatMediaToolPlanBuilder {
             toolName: "Image generation",
             status: imagePrompt,
             icon: "photo",
-            details: [],
+            details: details,
             model: model,
             request: ExecutionRequest(
                 backend: .image,
                 modelId: imageProfile.modelId,
                 messages: [ExecutionMessage(role: .user, content: imagePrompt)],
-                images: images.isEmpty ? nil : images,
+                images: supportedImages.isEmpty ? nil : supportedImages,
+                imageCaption: imageCaption,
                 outputDirectory: outputDirectory,
                 maxTokens: 0,
                 temperature: 1.0,
@@ -36,6 +44,25 @@ enum ChatMediaToolPlanBuilder {
             completionHint: "The generated image is already displayed in the app UI. In your final response, use text only. Do not include markdown image syntax, image URLs, local file paths, HTML image tags, data URLs, or links to external image services such as Pollinations.",
             attachmentKind: .image
         )
+    }
+
+    static func resolvedImagePrompt(
+        decodedArguments: [String: Any]?,
+        fallbackPrompt: String
+    ) -> String {
+        nonEmptyStringArgument("prompt", from: decodedArguments) ?? fallbackPrompt
+    }
+
+    static func structuredImageCaption(from arguments: [String: Any]?) -> [String: Any]? {
+        if let caption = arguments?["caption"] as? [String: Any] {
+            return caption
+        }
+        guard let captionText = arguments?["caption"] as? String,
+              let data = captionText.data(using: .utf8),
+              let caption = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return caption
     }
 
     static func makeSpeechPlan(
@@ -79,5 +106,17 @@ enum ChatMediaToolPlanBuilder {
             return nil
         }
         return value
+    }
+
+    private static func structuredCaptionDetail(_ caption: [String: Any]) -> ToolCallDetail? {
+        guard JSONSerialization.isValidJSONObject(caption),
+              let data = try? JSONSerialization.data(
+                withJSONObject: caption,
+                options: [.prettyPrinted]
+              ),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return ToolCallDetail(label: "Structured caption", value: json)
     }
 }

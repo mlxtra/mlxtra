@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "2026.06.03.2",
+  "catalogVersion": "2026.06.04.2",
   "minAppVersion": "1.0.12",
   "models": [
     {
@@ -703,6 +703,15 @@
       },
       "parameters": [
         {
+          "key": "improve_prompt",
+          "label": "Improve Prompt",
+          "type": "boolean",
+          "defaultValue": "false",
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
           "key": "width",
           "label": "Width",
           "type": "integer",
@@ -767,6 +776,157 @@
       ]
     },
     {
+      "id": "ideogram-ai/ideogram-4-fp8",
+      "name": "Ideogram 4 FP8",
+      "subtitle": "Experimental typography-focused image model (non-commercial)",
+      "modelId": "ideogram-ai/ideogram-4-fp8",
+      "modality": "image",
+      "backend": "image",
+      "icon": "textformat",
+      "capabilities": ["image-generation"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 27.55,
+      "estimatedMemoryGB": 36.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "ideogram-ai/ideogram-4-fp8",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.7",
+        "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "mflux": {
+          "config": "ideogram-4-fp8",
+          "textToImageClass": "Ideogram4"
+        }
+      },
+      "prompting": {
+        "imageAdapter": "ideogram4_json"
+      },
+      "ranking": {
+        "quality": 94,
+        "speed": 25
+      },
+      "parameters": [
+        {
+          "key": "improve_prompt",
+          "label": "Improve Prompt",
+          "type": "boolean",
+          "defaultValue": "true",
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "width",
+          "label": "Width",
+          "type": "integer",
+          "defaultValue": "1024",
+          "range": { "min": 256, "max": 2048 },
+          "step": 16,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "type": "integer",
+          "defaultValue": "1024",
+          "range": { "min": 256, "max": 2048 },
+          "step": 16,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "preset",
+          "label": "Preset",
+          "type": "option",
+          "defaultValue": "V4_DEFAULT_20",
+          "step": 1,
+          "options": ["V4_TURBO_12", "V4_DEFAULT_20", "V4_QUALITY_48"],
+          "isAdvanced": false
+        },
+        {
+          "key": "use_preset_steps",
+          "label": "Use Preset Steps",
+          "type": "boolean",
+          "defaultValue": "true",
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "type": "integer",
+          "defaultValue": "20",
+          "range": { "min": 1, "max": 100 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance",
+          "type": "decimal",
+          "defaultValue": "7",
+          "range": { "min": 1, "max": 10 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "strict_caption_validation",
+          "label": "Strict Caption Validation",
+          "type": "boolean",
+          "defaultValue": "true",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "warn_on_caption_issues",
+          "label": "Caption Warnings",
+          "type": "boolean",
+          "defaultValue": "true",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "seed",
+          "label": "Seed",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 2147483647 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "turbo",
+          "label": "Turbo",
+          "values": { "preset": "V4_TURBO_12", "use_preset_steps": "true" }
+        },
+        {
+          "id": "default",
+          "label": "Default",
+          "values": { "preset": "V4_DEFAULT_20", "use_preset_steps": "true" }
+        },
+        {
+          "id": "quality",
+          "label": "Quality",
+          "values": { "preset": "V4_QUALITY_48", "use_preset_steps": "true" }
+        }
+      ]
+    },
+    {
       "id": "Tongyi-MAI/Z-Image-Turbo",
       "name": "Z-Image Turbo",
       "subtitle": "Fast photorealistic image generation model",
@@ -802,6 +962,15 @@
         "speed": 82
       },
       "parameters": [
+        {
+          "key": "improve_prompt",
+          "label": "Improve Prompt",
+          "type": "boolean",
+          "defaultValue": "false",
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
         {
           "key": "width",
           "label": "Width",
@@ -1033,6 +1202,216 @@
             "speed": "1",
             "voice": "af_heart"
           }
+        }
+      ]
+    },
+    {
+      "id": "google/magenta-realtime-2/mrt2_small",
+      "name": "Magenta RealTime 2 Small",
+      "subtitle": "Instrumental music, real-time on any Apple Silicon Mac",
+      "modelId": "google/magenta-realtime-2/mrt2_small",
+      "modality": "music",
+      "backend": "music",
+      "icon": "waveform",
+      "capabilities": ["music-generation", "instrumental-only", "realtime-music"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 1.42,
+      "estimatedMemoryGB": 3.0,
+      "source": {
+        "type": "component_bundle",
+        "repo": "google/magenta-realtime-2",
+        "revision": "main",
+        "components": ["models/mrt2_small", "resources/musiccoca"],
+        "storageSubdirectory": "magenta-realtime-2/mrt2_small"
+      },
+      "runtime": {
+        "minVersion": "0.1.7",
+        "compatibilityApi": 1,
+        "component": "music"
+      },
+      "ranking": {
+        "quality": 88,
+        "speed": 100,
+        "hardwareFallback": true
+      },
+      "parameters": [
+        {
+          "key": "duration",
+          "label": "Duration",
+          "type": "integer",
+          "defaultValue": "10",
+          "range": { "min": 1, "max": 120 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "type": "decimal",
+          "defaultValue": "1.3",
+          "range": { "min": 0.1, "max": 2 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "top_k",
+          "label": "Top K",
+          "type": "integer",
+          "defaultValue": "40",
+          "range": { "min": 1, "max": 200 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "cfg_musiccoca",
+          "label": "Style Guidance",
+          "type": "decimal",
+          "defaultValue": "3",
+          "range": { "min": -1, "max": 7 },
+          "step": 0.2,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "cfg_notes",
+          "label": "Notes Guidance",
+          "type": "decimal",
+          "defaultValue": "0.1",
+          "range": { "min": -1, "max": 7 },
+          "step": 0.2,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "seed",
+          "label": "Seed",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 2147483647 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "balanced",
+          "label": "Balanced",
+          "values": { "temperature": "1.3", "top_k": "40", "cfg_musiccoca": "3" }
+        },
+        {
+          "id": "focused",
+          "label": "Focused",
+          "values": { "temperature": "0.9", "top_k": "30", "cfg_musiccoca": "4" }
+        }
+      ]
+    },
+    {
+      "id": "google/magenta-realtime-2/mrt2_base",
+      "name": "Magenta RealTime 2 Base",
+      "subtitle": "Higher-quality instrumental music for supported Pro and Max chips",
+      "modelId": "google/magenta-realtime-2/mrt2_base",
+      "modality": "music",
+      "backend": "music",
+      "icon": "waveform",
+      "capabilities": ["music-generation", "instrumental-only", "realtime-music"],
+      "maxContextWindow": 0,
+      "defaultMaxTokens": 0,
+      "downloadSizeGB": 3.75,
+      "estimatedMemoryGB": 8.0,
+      "source": {
+        "type": "component_bundle",
+        "repo": "google/magenta-realtime-2",
+        "revision": "main",
+        "components": ["models/mrt2_base", "resources/musiccoca"],
+        "storageSubdirectory": "magenta-realtime-2/mrt2_base"
+      },
+      "runtime": {
+        "minVersion": "0.1.7",
+        "compatibilityApi": 1,
+        "component": "music"
+      },
+      "ranking": {
+        "quality": 96,
+        "speed": 70,
+        "preferredChipNames": ["M5 Max", "M3 Max", "M2 Max", "M4 Pro"]
+      },
+      "parameters": [
+        {
+          "key": "duration",
+          "label": "Duration",
+          "type": "integer",
+          "defaultValue": "10",
+          "range": { "min": 1, "max": 120 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "type": "decimal",
+          "defaultValue": "1.3",
+          "range": { "min": 0.1, "max": 2 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "top_k",
+          "label": "Top K",
+          "type": "integer",
+          "defaultValue": "40",
+          "range": { "min": 1, "max": 200 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "cfg_musiccoca",
+          "label": "Style Guidance",
+          "type": "decimal",
+          "defaultValue": "3",
+          "range": { "min": -1, "max": 7 },
+          "step": 0.2,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "cfg_notes",
+          "label": "Notes Guidance",
+          "type": "decimal",
+          "defaultValue": "0.1",
+          "range": { "min": -1, "max": 7 },
+          "step": 0.2,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "seed",
+          "label": "Seed",
+          "type": "integer",
+          "defaultValue": "0",
+          "range": { "min": 0, "max": 2147483647 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "balanced",
+          "label": "Balanced",
+          "values": { "temperature": "1.3", "top_k": "40", "cfg_musiccoca": "3" }
+        },
+        {
+          "id": "focused",
+          "label": "Focused",
+          "values": { "temperature": "0.9", "top_k": "30", "cfg_musiccoca": "4" }
         }
       ]
     },

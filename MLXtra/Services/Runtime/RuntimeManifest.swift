@@ -24,8 +24,11 @@ struct RuntimeMFluxCapabilities: Codable, Equatable {
             return false
         }
         if !classes.isEmpty {
-            guard classes.contains(options.textToImageClass),
-                  classes.contains(options.editClass) else {
+            guard classes.contains(options.textToImageClass) else {
+                return false
+            }
+            if let editClass = options.editClass,
+               !classes.contains(editClass) {
                 return false
             }
         }
@@ -148,6 +151,13 @@ struct RuntimeManifest: Codable, Equatable {
             return true
         }
         return supportedBackends.contains(backend)
+    }
+
+    var requiresMagentaRuntime: Bool {
+        capabilities.contains("realtime-music")
+            || isolatedPackages.contains {
+                $0.lowercased().hasPrefix("magenta-rt")
+            }
     }
 
     func supports(profile: ModelCapabilityProfile) -> Bool {

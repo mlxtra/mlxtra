@@ -1,5 +1,5 @@
 {
-  "runtimeVersion": "0.1.6",
+  "runtimeVersion": "0.1.7",
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
@@ -42,11 +42,13 @@
     "mflux": {
       "configs": [
         "flux2-klein-4b",
+        "ideogram-4-fp8",
         "z-image-turbo"
       ],
       "classes": [
         "Flux2Klein",
         "Flux2KleinEdit",
+        "Ideogram4",
         "ZImage",
         "ZImageTurbo"
       ],

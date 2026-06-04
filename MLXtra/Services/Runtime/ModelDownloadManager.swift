@@ -202,7 +202,7 @@ final class ModelDownloadManager: ObservableObject {
                 if model.source.helper == .aceStep {
                     try await runAceStepDownload(model: model, downloadToken: downloadToken)
                 } else if model.source.usesComponentBundle {
-                    throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
+                    try await runComponentBundleDownload(model: model, downloadToken: downloadToken)
                 } else {
                     try await runSnapshotDownload(model: model, downloadToken: downloadToken)
                 }
@@ -350,6 +350,23 @@ final class ModelDownloadManager: ObservableObject {
             }
         )
         try nativeDownloader.markAceStepContractComplete(plan: plan)
+    }
+
+    private func runComponentBundleDownload(model: DownloadableModel, downloadToken: UUID) async throws {
+        let repoID = model.source.downloadRepository ?? model.modelId
+        guard !model.source.components.isEmpty else {
+            throw NativeModelDownloadError.emptyManifest(repoID)
+        }
+        let plan = ComponentBundleDownloadPlan(
+            repoID: repoID,
+            revision: model.source.revision ?? "main",
+            components: model.source.components,
+            destinationRoot: model.source.componentStorageRoot(checkpointsPath: checkpointsPath)
+        )
+
+        try await nativeDownloader.downloadComponentBundle(plan: plan) { [weak self] progress in
+            await self?.handleNativeDownloadProgress(progress, modelId: model.id, downloadToken: downloadToken)
+        }
     }
 
     private func cleanupNativePartialDownloads(for model: DownloadableModel) async {

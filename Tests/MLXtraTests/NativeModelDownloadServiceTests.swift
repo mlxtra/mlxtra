@@ -437,6 +437,33 @@ final class NativeModelDownloadServiceTests: XCTestCase {
         }
     }
 
+    func testHuggingFaceManifestSelectsOnlyRequestedComponentPrefixes() throws {
+        let manifest = HuggingFaceManifest(
+            repoID: "google/magenta-realtime-2",
+            revision: "main",
+            resolvedRevision: "revision",
+            files: [
+                HuggingFaceManifestFile(path: "checkpoints/mrt2_small.safetensors", size: 1, sha256: nil),
+                HuggingFaceManifestFile(path: "models/mrt2_small/mrt2_small.mlxfn", size: 2, sha256: nil),
+                HuggingFaceManifestFile(path: "models/mrt2_base/mrt2_base.mlxfn", size: 3, sha256: nil),
+                HuggingFaceManifestFile(path: "resources/musiccoca/text_encoder.tflite", size: 4, sha256: nil),
+            ]
+        )
+
+        let selected = try manifest.selectingComponents([
+            "models/mrt2_small",
+            "resources/musiccoca",
+        ])
+
+        XCTAssertEqual(
+            selected.files.map(\.path),
+            [
+                "models/mrt2_small/mrt2_small.mlxfn",
+                "resources/musiccoca/text_encoder.tflite",
+            ]
+        )
+    }
+
     func testAceStepPlanUsesOfficialMainRepositoryAndCheckpointComponents() throws {
         let checkpointsRoot = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: checkpointsRoot) }

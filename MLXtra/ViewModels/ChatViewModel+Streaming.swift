@@ -93,7 +93,8 @@ extension ChatViewModel {
         generationID: UUID? = nil
     ) async {
         guard ownsActiveGeneration(generationID) else { return }
-        if let plainTextToolCall = plainTextToolCall(from: response, prompt: request.prompt),
+        if !request.shouldPrepareDirectImagePrompt,
+           let plainTextToolCall = plainTextToolCall(from: response, prompt: request.prompt),
            var currentMessages = messages {
             guard isToolAllowed(plainTextToolCall.function.name, allowedToolNames: allowedToolNames) else {
                 finishStreamWithMessage(
@@ -146,6 +147,46 @@ extension ChatViewModel {
             }
 
             await generateResponse(for: request, toolMessages: currentMessages, toolDepth: toolDepth + 1, generationID: generationID)
+            return
+        }
+
+        if isImageGeneration,
+           request.shouldPrepareDirectImagePrompt,
+           var currentMessages = messages {
+            let preparedToolCall: ExecutionToolCall
+            do {
+                preparedToolCall = try preparedImageGenerationToolCall(
+                    from: response,
+                    generation: request
+                )
+            } catch {
+                finishStreamWithMessage(
+                    messageId,
+                    content: "Image generation unavailable: Image prompt preparation failed: \(error.localizedDescription)",
+                    usage: usage,
+                    performanceMetrics: performanceMetrics,
+                    isMusicGeneration: false,
+                    generationID: generationID
+                )
+                return
+            }
+            updateStreamingMessage(messageId, content: "")
+            currentMessages.append(ExecutionMessage(role: .assistant, toolCalls: [preparedToolCall]))
+            await executeImageGenerationToolCall(
+                preparedToolCall,
+                messages: &currentMessages,
+                images: request.images,
+                prompt: request.prompt,
+                generation: request,
+                promptIsPrepared: true,
+                generationID: generationID
+            )
+            finishTerminalMediaToolResult(
+                messages: currentMessages,
+                messageId: messageId,
+                isMusicGeneration: false,
+                generationID: generationID
+            )
             return
         }
 
@@ -351,8 +392,11 @@ extension ChatViewModel {
 
                 performanceTracker.recordTokenOutput()
                 fullResponse += token
-                if hasTools && shouldBufferToolEnabledOutput(fullResponse) {
-                    loadingMessage = "Preparing tool..."
+                if request.shouldPrepareDirectImagePrompt
+                    || (hasTools && shouldBufferToolEnabledOutput(fullResponse)) {
+                    loadingMessage = request.shouldPrepareDirectImagePrompt
+                        ? "Preparing image prompt..."
+                        : "Preparing tool..."
 #if DEBUG
                     ChatStreamDiagnostics.log("token.buffered index=\(tokenIndex) responseChars=\(fullResponse.count)")
 #endif

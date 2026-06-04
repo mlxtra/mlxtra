@@ -9,7 +9,7 @@ RUNTIME_DEPENDENCIES_DIR="$(
 RUNTIME_DEPENDENCY_LOCK_FILE="${RUNTIME_DEPENDENCIES_DIR}/runtime-locks/macos-arm64.lock.json"
 RUNTIME_DEPENDENCY_LOCK_VALIDATOR="${RUNTIME_DEPENDENCIES_DIR}/runtime-locks/validate-runtime-lock.py"
 
-RUNTIME_VERSION="0.1.6"
+RUNTIME_VERSION="0.1.7"
 PYTHON_VERSION="3.12.8"
 PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-macos11.pkg"
 PYTHON_PKG_NAME="python-${PYTHON_VERSION}-macos11.pkg"
@@ -21,6 +21,8 @@ MLX_VLM_VERSION="0.6.1"
 MLX_AUDIO_VERSION="0.4.3"
 MISAKI_VERSION="0.9.4"
 MFLUX_VERSION="0.17.5"
+MFLUX_REF="02dce47cf2a94b438dad8ba1b620869f1cc28489"
+MFLUX_PACKAGE="git+https://github.com/omercelik/mflux.git@${MFLUX_REF}"
 TRANSFORMERS_VERSION="5.8.0"
 HUGGINGFACE_HUB_VERSION="1.14.0"
 PILLOW_VERSION="12.2.0"
@@ -29,6 +31,8 @@ TORCH_VERSION="2.11.0"
 TORCHVISION_VERSION="0.26.0"
 ACE_STEP_REF="6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
 ACE_STEP_PACKAGE="git+https://github.com/ace-step/ACE-Step-1.5.git@${ACE_STEP_REF}"
+MAGENTA_RT_VERSION="2.0.2"
+MAGENTA_RT_PACKAGE="magenta-rt[mlx]==${MAGENTA_RT_VERSION}"
 RUNTIME_MLX_WHEEL_PLATFORM="macosx_14_0_arm64"
 
 RUNTIME_FORCED_BINARY_PYPI_PACKAGES=(
@@ -41,6 +45,17 @@ RUNTIME_MAIN_PYPI_PACKAGES=(
     "mlx-audio==${MLX_AUDIO_VERSION}"
     "misaki[en]==${MISAKI_VERSION}"
     "mflux==${MFLUX_VERSION}"
+    "transformers==${TRANSFORMERS_VERSION}"
+    "huggingface-hub==${HUGGINGFACE_HUB_VERSION}"
+    "pillow==${PILLOW_VERSION}"
+    "numpy==${NUMPY_VERSION}"
+)
+
+RUNTIME_MAIN_INSTALL_PACKAGES=(
+    "mlx-vlm==${MLX_VLM_VERSION}"
+    "mlx-audio==${MLX_AUDIO_VERSION}"
+    "misaki[en]==${MISAKI_VERSION}"
+    "${MFLUX_PACKAGE}"
     "transformers==${TRANSFORMERS_VERSION}"
     "huggingface-hub==${HUGGINGFACE_HUB_VERSION}"
     "pillow==${PILLOW_VERSION}"
@@ -79,16 +94,19 @@ RUNTIME_MUSIC_SUPPORTED_BACKENDS=(
 
 RUNTIME_MUSIC_CAPABILITIES=(
     "music-generation"
+    "realtime-music"
 )
 
 RUNTIME_MFLUX_CONFIGS=(
     "flux2-klein-4b"
+    "ideogram-4-fp8"
     "z-image-turbo"
 )
 
 RUNTIME_MFLUX_CLASSES=(
     "Flux2Klein"
     "Flux2KleinEdit"
+    "Ideogram4"
     "ZImage"
     "ZImageTurbo"
 )

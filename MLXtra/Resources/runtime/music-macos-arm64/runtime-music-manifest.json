@@ -1,5 +1,5 @@
 {
-  "runtimeVersion": "0.1.6",
+  "runtimeVersion": "0.1.7",
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
@@ -16,12 +16,14 @@
     "mlx-metal==0.31.2"
   ],
   "isolatedPackages": [
-    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
+    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2",
+    "magenta-rt[mlx]==2.0.2"
   ],
   "supportedBackends": [
     "music"
   ],
   "capabilities": [
-    "music-generation"
+    "music-generation",
+    "realtime-music"
   ]
 }

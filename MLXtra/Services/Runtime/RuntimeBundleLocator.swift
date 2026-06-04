@@ -154,22 +154,30 @@ extension RuntimeManager {
             return isRuntimeBundleStructurallyValid(runtimeURL, fileManager: fileManager)
         case .music:
             guard isRuntimeBundleStructurallyValid(runtimeURL, fileManager: fileManager),
-                  runtimeManifest(at: runtimeURL, component: .music)?.component == .music else {
+                  let manifest = runtimeManifest(at: runtimeURL, component: .music),
+                  manifest.component == .music else {
                 return false
             }
-            let requiredFiles = [
+            var requiredFiles = [
                 "acestep-venv/bin/python",
                 "acestep_download_helper.py",
                 RuntimeComponent.music.manifestFilename,
             ]
+            var requiredExecutables = [
+                "acestep-venv/bin/python",
+            ]
+            if manifest.requiresMagentaRuntime {
+                requiredFiles.append("magenta-venv/bin/python")
+                requiredExecutables.append("magenta-venv/bin/python")
+            }
             guard requiredFiles.allSatisfy({ relativePath in
                 fileManager.fileExists(atPath: runtimeURL.appendingPathComponent(relativePath).path)
             }) else {
                 return false
             }
-            return fileManager.isExecutableFile(
-                atPath: runtimeURL.appendingPathComponent("acestep-venv/bin/python").path
-            )
+            return requiredExecutables.allSatisfy {
+                fileManager.isExecutableFile(atPath: runtimeURL.appendingPathComponent($0).path)
+            }
         }
     }
 

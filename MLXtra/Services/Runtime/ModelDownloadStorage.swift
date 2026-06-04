@@ -7,7 +7,8 @@ enum ModelDownloadStorage {
         huggingFaceCacheRoot: URL = RuntimeManager.huggingFaceCacheRoot()
     ) -> [URL] {
         if model.source.usesComponentBundle {
-            return model.source.components.map { checkpointsPath.appendingPathComponent($0) }
+            let storageRoot = model.source.componentStorageRoot(checkpointsPath: checkpointsPath)
+            return model.source.components.map { storageRoot.appendingPathComponent($0) }
         }
 
         return model.snapshotRequirements.map {
@@ -77,7 +78,7 @@ enum ModelDownloadStorage {
     ) async {
         let roots: [URL]
         if model.source.usesComponentBundle {
-            roots = [checkpointsPath]
+            roots = [model.source.componentStorageRoot(checkpointsPath: checkpointsPath)]
         } else {
             roots = model.snapshotRequirements.map {
                 RuntimeManager.modelCachePath(

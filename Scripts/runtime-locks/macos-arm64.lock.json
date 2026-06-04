@@ -1,7 +1,7 @@
 {
   "lockVersion": 1,
   "runtime": {
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pythonVersion": "3.12.8",
     "mlxWheelPlatform": "macosx_14_0_arm64"
   },
@@ -17,13 +17,15 @@
     "MLX_AUDIO_VERSION": "0.4.3",
     "MISAKI_VERSION": "0.9.4",
     "MFLUX_VERSION": "0.17.5",
+    "MFLUX_REF": "02dce47cf2a94b438dad8ba1b620869f1cc28489",
     "TRANSFORMERS_VERSION": "5.8.0",
     "HUGGINGFACE_HUB_VERSION": "1.14.0",
     "PILLOW_VERSION": "12.2.0",
     "NUMPY_VERSION": "2.4.4",
     "TORCH_VERSION": "2.11.0",
     "TORCHVISION_VERSION": "0.26.0",
-    "ACE_STEP_REF": "6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
+    "ACE_STEP_REF": "6c1b2ef130bb7a7705a2abc61c11a258202b9ed2",
+    "MAGENTA_RT_VERSION": "2.0.2"
   },
   "packages": {
     "forcedBinaryPyPI": [
@@ -35,6 +37,16 @@
       "mlx-audio==0.4.3",
       "misaki[en]==0.9.4",
       "mflux==0.17.5",
+      "transformers==5.8.0",
+      "huggingface-hub==1.14.0",
+      "pillow==12.2.0",
+      "numpy==2.4.4"
+    ],
+    "mainInstall": [
+      "mlx-vlm==0.6.1",
+      "mlx-audio==0.4.3",
+      "misaki[en]==0.9.4",
+      "git+https://github.com/omercelik/mflux.git@02dce47cf2a94b438dad8ba1b620869f1cc28489",
       "transformers==5.8.0",
       "huggingface-hub==1.14.0",
       "pillow==12.2.0",
@@ -62,6 +74,16 @@
     "aceStep": {
       "ref": "6c1b2ef130bb7a7705a2abc61c11a258202b9ed2",
       "package": "git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
+    },
+    "magentaRealtime": {
+      "version": "2.0.2",
+      "package": "magenta-rt[mlx]==2.0.2"
+    }
+  },
+  "sourcePackages": {
+    "mflux": {
+      "ref": "02dce47cf2a94b438dad8ba1b620869f1cc28489",
+      "package": "git+https://github.com/omercelik/mflux.git@02dce47cf2a94b438dad8ba1b620869f1cc28489"
     }
   }
 }

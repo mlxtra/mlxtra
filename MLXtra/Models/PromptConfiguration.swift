@@ -70,6 +70,190 @@ enum PromptConfiguration {
         ]
     }
 
+    static func imagePromptPreparationSystemPrompt(
+        adapter: ImagePromptAdapter,
+        modelName: String,
+        improvingPrompt: Bool,
+        width: Int,
+        height: Int
+    ) -> String {
+        var prompt = "You prepare a prompt for \(modelName). Return only JSON matching the provided response schema. Preserve the user's intent, requested wording, and constraints."
+        if improvingPrompt {
+            prompt += " Make the visual description more specific and useful to the image model."
+        } else {
+            prompt += " Do not add unrequested creative details."
+        }
+
+        if adapter == .ideogram4JSON {
+            let aspectRatio = reducedAspectRatio(width: width, height: height)
+            prompt += """
+
+            Build the structured JSON caption described by the official Ideogram 4 prompting guide. The target image is \(width)x\(height), aspect ratio \(aspectRatio) (width:height). Use the aspect ratio only to plan the composition; do not add an aspect_ratio field to the caption.
+
+            Always include a concrete high_level_description and compositional_deconstruction. Write descriptions as observations of the desired image, never as commands or as a copy of the user's request. The background must describe the actual scene, not a generic placeholder.
+
+            Use one obj element for each explicitly named visual subject. Use one text element for every quoted string or other visible wording the user requests. Copy each text field verbatim, including capitalization, punctuation, line breaks, and non-ASCII characters. Do not hide requested lettering inside an obj description.
+
+            Bounding boxes are optional. Include them only when useful for layout, using integer normalized [0, 1000] coordinates as [y_min, x_min, y_max, x_max] with y_min < y_max and x_min < x_max. If style_description is included, use exactly one of photo or art_style. Use only uppercase #RRGGBB values in color palettes.
+            """
+        } else {
+            prompt += " Return a JSON object with a single non-empty prompt field."
+        }
+        return prompt
+    }
+
+    static func imagePromptPreparationResponseFormat(adapter: ImagePromptAdapter) -> [String: Any] {
+        let name: String
+        let schema: [String: Any]
+        switch adapter {
+        case .plainText:
+            name = "image_prompt"
+            schema = [
+                "type": "object",
+                "properties": [
+                    "prompt": [
+                        "type": "string",
+                        "minLength": 1
+                    ]
+                ],
+                "required": ["prompt"],
+                "additionalProperties": false
+            ]
+        case .ideogram4JSON:
+            name = "ideogram4_caption"
+            schema = ideogram4CaptionSchema
+        }
+
+        return [
+            "type": "json_schema",
+            "json_schema": [
+                "name": name,
+                "strict": true,
+                "schema": schema
+            ]
+        ]
+    }
+
+    private static var ideogram4CaptionSchema: [String: Any] {
+        let colorPalette: [String: Any] = [
+            "type": "array",
+            "items": [
+                "type": "string",
+                "pattern": "^#[0-9A-F]{6}$"
+            ]
+        ]
+        let bbox: [String: Any] = [
+            "type": "array",
+            "items": ["type": "integer", "minimum": 0, "maximum": 1000],
+            "minItems": 4,
+            "maxItems": 4
+        ]
+        let objectElement: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "type": [
+                    "type": "string",
+                    "enum": ["obj"]
+                ],
+                "bbox": bbox,
+                "desc": ["type": "string", "minLength": 1],
+                "color_palette": colorPalette.merging(["maxItems": 5]) { _, new in new }
+            ],
+            "required": ["type", "desc"],
+            "additionalProperties": false
+        ]
+        let textElement: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "type": [
+                    "type": "string",
+                    "enum": ["text"]
+                ],
+                "bbox": bbox,
+                "text": ["type": "string"],
+                "desc": ["type": "string", "minLength": 1],
+                "color_palette": colorPalette.merging(["maxItems": 5]) { _, new in new }
+            ],
+            "required": ["type", "text", "desc"],
+            "additionalProperties": false
+        ]
+        let photoStyle: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "aesthetics": ["type": "string", "minLength": 1],
+                "lighting": ["type": "string", "minLength": 1],
+                "photo": ["type": "string", "minLength": 1],
+                "medium": ["type": "string", "minLength": 1],
+                "color_palette": colorPalette.merging(["maxItems": 16]) { _, new in new }
+            ],
+            "required": ["aesthetics", "lighting", "photo", "medium"],
+            "additionalProperties": false
+        ]
+        let artStyle: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "aesthetics": ["type": "string", "minLength": 1],
+                "lighting": ["type": "string", "minLength": 1],
+                "medium": ["type": "string", "minLength": 1],
+                "art_style": ["type": "string", "minLength": 1],
+                "color_palette": colorPalette.merging(["maxItems": 16]) { _, new in new }
+            ],
+            "required": ["aesthetics", "lighting", "medium", "art_style"],
+            "additionalProperties": false
+        ]
+
+        return [
+            "type": "object",
+            "properties": [
+                "high_level_description": [
+                    "type": "string",
+                    "minLength": 1
+                ],
+                "style_description": [
+                    "anyOf": [photoStyle, artStyle]
+                ],
+                "compositional_deconstruction": [
+                    "type": "object",
+                    "properties": [
+                        "background": [
+                            "type": "string",
+                            "minLength": 1
+                        ],
+                        "elements": [
+                            "type": "array",
+                            "items": [
+                                "anyOf": [
+                                    objectElement,
+                                    textElement
+                                ]
+                            ]
+                        ]
+                    ],
+                    "required": ["background", "elements"],
+                    "additionalProperties": false
+                ]
+            ],
+            "required": ["compositional_deconstruction"],
+            "additionalProperties": false
+        ]
+    }
+
+    private static func reducedAspectRatio(width: Int, height: Int) -> String {
+        let safeWidth = max(width, 1)
+        let safeHeight = max(height, 1)
+        let divisor = greatestCommonDivisor(safeWidth, safeHeight)
+        return "\(safeWidth / divisor):\(safeHeight / divisor)"
+    }
+
+    private static func greatestCommonDivisor(_ lhs: Int, _ rhs: Int) -> Int {
+        var a = lhs
+        var b = rhs
+        while b != 0 {
+            (a, b) = (b, a % b)
+        }
+        return max(a, 1)
+    }
+
     static var speechGenerationTool: [String: Any] {
         [
             "type": "function",

@@ -332,6 +332,7 @@ final class VLMExecutorHelperTests: XCTestCase {
             pythonHomePath: URL(fileURLWithPath: "/runtime/python"),
             checkpointsPath: URL(fileURLWithPath: "/checkpoints"),
             acestepPythonPath: URL(fileURLWithPath: "/runtime/acestep/bin/python"),
+            magentaPythonPath: URL(fileURLWithPath: "/runtime/magenta/bin/python"),
             bridgeDebugEnabled: false,
             homeDirectory: URL(fileURLWithPath: "/Users/test")
         )
@@ -349,6 +350,7 @@ final class VLMExecutorHelperTests: XCTestCase {
             pythonHomePath: URL(fileURLWithPath: "/runtime/python"),
             checkpointsPath: URL(fileURLWithPath: "/checkpoints"),
             acestepPythonPath: URL(fileURLWithPath: "/runtime/acestep/bin/python"),
+            magentaPythonPath: URL(fileURLWithPath: "/runtime/magenta/bin/python"),
             bridgeDebugEnabled: true,
             homeDirectory: URL(fileURLWithPath: "/Users/test")
         )
@@ -361,6 +363,8 @@ final class VLMExecutorHelperTests: XCTestCase {
         XCTAssertEqual(environment["HF_HUB_CACHE"], "/Users/test/.cache/huggingface/hub")
         XCTAssertEqual(environment["ACESTEP_CHECKPOINTS_DIR"], "/checkpoints")
         XCTAssertEqual(environment["ACESTEP_PYTHON"], "/runtime/acestep/bin/python")
+        XCTAssertEqual(environment["MAGENTA_RT_CHECKPOINTS_DIR"], "/checkpoints")
+        XCTAssertEqual(environment["MAGENTA_RT_PYTHON"], "/runtime/magenta/bin/python")
         XCTAssertEqual(environment["MTL_DEBUG_LAYER"], "0")
         XCTAssertEqual(environment["MTL_SHADER_VALIDATION"], "0")
     }

@@ -1643,6 +1643,13 @@ private final class SequencedNativeDownloader: NativeModelDownloading, @unchecke
         throw SequencedNativeDownloadError.unexpectedAceStepDownload
     }
 
+    func downloadComponentBundle(
+        plan: ComponentBundleDownloadPlan,
+        progress: @escaping NativeModelDownloadService.ProgressHandler
+    ) async throws {
+        throw SequencedNativeDownloadError.unexpectedAceStepDownload
+    }
+
     func markAceStepContractComplete(plan: AceStepDownloadPlan) throws {}
 
     func removePartialDownloads(at root: URL) throws {}

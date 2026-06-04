@@ -13,6 +13,11 @@ protocol NativeModelDownloading: Sendable {
         progress: @escaping NativeModelDownloadService.ProgressHandler
     ) async throws
 
+    func downloadComponentBundle(
+        plan: ComponentBundleDownloadPlan,
+        progress: @escaping NativeModelDownloadService.ProgressHandler
+    ) async throws
+
     func markAceStepContractComplete(plan: AceStepDownloadPlan) throws
 
     func removePartialDownloads(at root: URL) throws
@@ -100,6 +105,22 @@ final class NativeModelDownloadService: @unchecked Sendable {
             progress: progress
         )
         try markerStore.writeCompletionManifest(manifest, destinationRoot: plan.checkpointsRoot)
+    }
+
+    func downloadComponentBundle(
+        plan: ComponentBundleDownloadPlan,
+        progress: @escaping ProgressHandler
+    ) async throws {
+        let manifest = try await fetchManifest(repoID: plan.repoID, revision: plan.revision)
+            .selectingComponents(plan.components)
+        try markerStore.markSnapshotInProgress(at: plan.destinationRoot)
+        try await downloadManifest(
+            manifest,
+            destinationRoot: plan.destinationRoot,
+            progress: progress
+        )
+        try markerStore.writeCompletionManifest(manifest, destinationRoot: plan.destinationRoot)
+        try markerStore.clearSnapshotInProgress(at: plan.destinationRoot)
     }
 
     func markAceStepContractComplete(plan: AceStepDownloadPlan) throws {

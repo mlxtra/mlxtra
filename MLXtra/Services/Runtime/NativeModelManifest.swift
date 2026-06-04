@@ -40,6 +40,28 @@ struct HuggingFaceManifest: Equatable {
             files: files
         )
     }
+
+    func selectingComponents(_ components: [String]) throws -> HuggingFaceManifest {
+        let normalizedComponents = components
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+            .filter { !$0.isEmpty }
+        let selectedFiles = files.filter { file in
+            normalizedComponents.contains { component in
+                file.path == component || file.path.hasPrefix(component + "/")
+            }
+        }
+
+        guard !selectedFiles.isEmpty else {
+            throw NativeModelDownloadError.emptyManifest(repoID)
+        }
+
+        return HuggingFaceManifest(
+            repoID: repoID,
+            revision: revision,
+            resolvedRevision: resolvedRevision,
+            files: selectedFiles
+        )
+    }
 }
 
 struct NativeSnapshotCompletionManifest: Codable, Equatable {
@@ -112,6 +134,25 @@ struct AceStepDownloadPlan: Equatable {
 
     func componentURL(component: String) -> URL {
         checkpointsRoot.appendingPathComponent(component)
+    }
+}
+
+struct ComponentBundleDownloadPlan: Equatable {
+    let repoID: String
+    let revision: String
+    let components: [String]
+    let destinationRoot: URL
+
+    init(
+        repoID: String,
+        revision: String = "main",
+        components: [String],
+        destinationRoot: URL
+    ) {
+        self.repoID = repoID
+        self.revision = revision
+        self.components = components
+        self.destinationRoot = destinationRoot
     }
 }
 

@@ -16,6 +16,7 @@ struct ExecutionRequest {
     let modelId: String
     let messages: [ExecutionMessage]
     let images: [URL]?
+    let imageCaption: [String: Any]?
     let outputDirectory: URL?
     let maxTokens: Int
     let temperature: Double
@@ -25,6 +26,7 @@ struct ExecutionRequest {
     let repetitionPenalty: Double?
     let chatTemplateKwargs: [String: Any]?
     let tools: [[String: Any]]?
+    let responseFormat: [String: Any]?
     let parameters: [String: Any]?
 
     init(
@@ -33,6 +35,7 @@ struct ExecutionRequest {
         modelId: String,
         messages: [ExecutionMessage],
         images: [URL]? = nil,
+        imageCaption: [String: Any]? = nil,
         outputDirectory: URL? = nil,
         maxTokens: Int = 32768,
         temperature: Double = 0.7,
@@ -42,6 +45,7 @@ struct ExecutionRequest {
         repetitionPenalty: Double? = nil,
         chatTemplateKwargs: [String: Any]? = nil,
         tools: [[String: Any]]? = nil,
+        responseFormat: [String: Any]? = nil,
         parameters: [String: Any]? = nil
     ) {
         self.requestID = requestID
@@ -49,6 +53,7 @@ struct ExecutionRequest {
         self.modelId = modelId
         self.messages = messages
         self.images = images
+        self.imageCaption = imageCaption
         self.outputDirectory = outputDirectory
         self.maxTokens = maxTokens
         self.temperature = temperature
@@ -58,6 +63,7 @@ struct ExecutionRequest {
         self.repetitionPenalty = repetitionPenalty
         self.chatTemplateKwargs = chatTemplateKwargs
         self.tools = tools
+        self.responseFormat = responseFormat
         self.parameters = parameters
     }
 }

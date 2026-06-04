@@ -10,6 +10,10 @@ extension ChatViewModel {
         !musicPromptForCurrentDraft().isEmpty
     }
 
+    var selectedMusicModelSupportsLyrics: Bool {
+        profile(for: .music).supportsMusicLyrics
+    }
+
     var musicComposerPrompt: MusicComposerPrompt? {
         musicComposerResolution().promptState
     }
@@ -128,6 +132,9 @@ extension ChatViewModel {
     }
 
     func selectMusicVocalMode(_ mode: MusicVocalMode) {
+        guard selectedMusicModelSupportsLyrics || mode == .instrumental else {
+            return
+        }
         musicVocalMode = mode
         switch mode {
         case .auto:
@@ -141,11 +148,13 @@ extension ChatViewModel {
     }
 
     func showMusicLyricsEditor() {
+        guard selectedMusicModelSupportsLyrics else { return }
         musicVocalMode = .vocals
         isMusicLyricsEditorVisible = true
     }
 
     func approveMusicLyrics() {
+        guard selectedMusicModelSupportsLyrics else { return }
         guard !musicLyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             isMusicLyricsEditorVisible = true
             return
@@ -163,6 +172,7 @@ extension ChatViewModel {
     func draftMusicLyrics() {
         let brief = musicPromptForCurrentDraft()
         guard selectedTool == .music,
+              selectedMusicModelSupportsLyrics,
               !brief.isEmpty,
               !isInputDisabled,
               !isDraftingMusicLyrics else {
@@ -260,6 +270,10 @@ extension ChatViewModel {
     }
 
     func resolvedMusicVocalMode(for prompt: String) -> MusicVocalMode {
+        if !selectedMusicModelSupportsLyrics {
+            return .instrumental
+        }
+
         if let activeMusicGenerationDraft {
             return activeMusicGenerationDraft.vocalMode
         }

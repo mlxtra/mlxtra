@@ -46,6 +46,7 @@ struct ModelSelectionStore {
     func selectedProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        hardwareChipName: String? = SystemHardware.currentChipName,
         runtimeManifest: RuntimeManifest? = nil
     ) -> ModelCapabilityProfile? {
         if let profile = storedProfile(
@@ -59,6 +60,7 @@ struct ModelSelectionStore {
         return ModelCapabilityProfile.bestProfile(
             for: modality,
             hardwareMemoryGB: hardwareMemoryGB,
+            hardwareChipName: hardwareChipName,
             runtimeManifestProvider: { profile in
                 resolvedRuntimeManifest(for: profile, override: runtimeManifest)
             }
@@ -68,6 +70,7 @@ struct ModelSelectionStore {
     func selectedAvailableProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
+        hardwareChipName: String? = SystemHardware.currentChipName,
         runtimeManifest: RuntimeManifest? = nil,
         isAvailable: (DownloadableModel) -> Bool
     ) -> ModelCapabilityProfile? {
@@ -83,6 +86,7 @@ struct ModelSelectionStore {
         return availableFallbackProfile(
             for: modality,
             hardwareMemoryGB: hardwareMemoryGB,
+            hardwareChipName: hardwareChipName,
             runtimeManifest: runtimeManifest,
             isAvailable: isAvailable
         )
@@ -100,12 +104,14 @@ struct ModelSelectionStore {
     private func availableFallbackProfile(
         for modality: ModelModality,
         hardwareMemoryGB: Double,
+        hardwareChipName: String?,
         runtimeManifest: RuntimeManifest?,
         isAvailable: (DownloadableModel) -> Bool
     ) -> ModelCapabilityProfile? {
         let sortedProfiles = ModelCapabilityProfile.sortedProfiles(
             for: modality,
-            hardwareMemoryGB: hardwareMemoryGB
+            hardwareMemoryGB: hardwareMemoryGB,
+            hardwareChipName: hardwareChipName
         )
         let compatibleProfiles = sortedProfiles.filter { profile in
             guard let manifest = resolvedRuntimeManifest(for: profile, override: runtimeManifest) else {

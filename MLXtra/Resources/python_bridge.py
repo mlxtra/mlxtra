@@ -631,6 +631,20 @@ def _coerce_positive_int_parameter(value: Any, default: int) -> int:
     return number if number > 0 else default
 
 
+def _coerce_bool_parameter(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1", "on"}:
+            return True
+        if normalized in {"false", "no", "0", "off"}:
+            return False
+    return default
+
+
 def _first_present_parameter(*values: Any, default: Any = None) -> Any:
     for value in values:
         if value is None:
@@ -658,6 +672,11 @@ def _mflux_class_by_name(class_name: str):
             "ZImageTurbo": ZImageTurbo,
         }[class_name]
 
+    if class_name == "Ideogram4":
+        from mflux.models.ideogram4 import Ideogram4
+
+        return Ideogram4
+
     raise ValueError(f"Unsupported mflux model class '{class_name}'")
 
 
@@ -674,13 +693,14 @@ def _resolve_mflux_model(model_id: str, edit: bool, request: Optional[dict] = No
             f"Unsupported mflux model config '{configured_name}'. Allowed configs: {allowed}"
         )
 
-    from mflux.models.common.config import ModelConfig
-
-    model_config = ModelConfig.from_name(model_name=configured_name)
-
     class_key = "editClass" if edit else "textToImageClass"
     class_name = str(options.get(class_key) or "").strip()
     if not class_name:
+        if edit:
+            raise ValueError(
+                "Image editing is not supported by this image model because "
+                "runtimeOptions.mflux.editClass is not configured"
+            )
         raise ValueError(f"Missing required runtimeOptions.mflux.{class_key} for image model")
     allowed_classes = set(capabilities.get("classes") or [])
     if allowed_classes and class_name not in allowed_classes:
@@ -688,6 +708,10 @@ def _resolve_mflux_model(model_id: str, edit: bool, request: Optional[dict] = No
         raise ValueError(
             f"Unsupported mflux model class '{class_name}'. Allowed classes: {allowed}"
         )
+
+    from mflux.models.common.config import ModelConfig
+
+    model_config = ModelConfig.from_name(model_name=configured_name)
 
     quantize = options.get("quantize")
     if quantize is not None:
@@ -703,6 +727,56 @@ def _resolve_mflux_model(model_id: str, edit: bool, request: Optional[dict] = No
             )
 
     return _mflux_class_by_name(class_name), model_config, quantize
+
+
+def _ordered_mapping(value: dict, keys: tuple[str, ...]) -> dict:
+    ordered = {key: value[key] for key in keys if key in value}
+    ordered.update({key: item for key, item in value.items() if key not in ordered})
+    return ordered
+
+
+def _normalize_ideogram4_caption(prompt: Any) -> Any:
+    if not isinstance(prompt, dict):
+        return prompt
+
+    caption = _ordered_mapping(
+        prompt,
+        (
+            "high_level_description",
+            "style_description",
+            "compositional_deconstruction",
+        ),
+    )
+
+    style = caption.get("style_description")
+    if isinstance(style, dict):
+        style_keys = (
+            ("aesthetics", "lighting", "photo", "medium", "color_palette")
+            if "photo" in style
+            else ("aesthetics", "lighting", "medium", "art_style", "color_palette")
+        )
+        caption["style_description"] = _ordered_mapping(style, style_keys)
+
+    composition = caption.get("compositional_deconstruction")
+    if isinstance(composition, dict):
+        composition = _ordered_mapping(composition, ("background", "elements"))
+        elements = composition.get("elements")
+        if isinstance(elements, list):
+            normalized_elements = []
+            for element in elements:
+                if not isinstance(element, dict):
+                    normalized_elements.append(element)
+                    continue
+                element_keys = (
+                    ("type", "bbox", "text", "desc", "color_palette")
+                    if element.get("type") == "text"
+                    else ("type", "bbox", "desc", "color_palette")
+                )
+                normalized_elements.append(_ordered_mapping(element, element_keys))
+            composition["elements"] = normalized_elements
+        caption["compositional_deconstruction"] = composition
+
+    return caption
 
 
 def load_image_model_if_needed(
@@ -1056,6 +1130,37 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
     return tool_calls
 
 
+def _response_format_schema(request: dict) -> Optional[dict]:
+    response_format = request.get("response_format")
+    if response_format is None:
+        return None
+    if not isinstance(response_format, dict):
+        raise ValueError("response_format must be an object")
+
+    format_type = response_format.get("type")
+    if format_type in (None, "text"):
+        return None
+    if format_type != "json_schema":
+        raise ValueError(f"Unsupported response_format type: {format_type!r}")
+
+    json_schema = response_format.get("json_schema")
+    if json_schema is None:
+        json_schema = response_format
+    if not isinstance(json_schema, dict) or not isinstance(json_schema.get("schema"), dict):
+        raise ValueError("response_format json_schema must include an object schema field")
+    return json_schema["schema"]
+
+
+def _structured_logits_processors(processor: Any, schema: Optional[dict]) -> Optional[list]:
+    if schema is None:
+        return None
+
+    from mlx_vlm.structured import build_json_schema_logits_processor
+
+    tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+    return [build_json_schema_logits_processor(tokenizer, schema)]
+
+
 def handle_chat_completion(request: dict) -> None:
     """Handle chat.completions request - transparent proxy to mlx-vlm"""
     request_started_at = time.perf_counter()
@@ -1079,6 +1184,10 @@ def handle_chat_completion(request: dict) -> None:
     chat_template_kwargs = request.get("chat_template_kwargs", {})
 
     try:
+        structured_schema = _response_format_schema(request)
+        if tools and structured_schema is not None:
+            raise ValueError("tools and response_format cannot be used in the same request")
+
         from mlx_vlm import stream_generate
         from mlx_vlm.prompt_utils import apply_chat_template
         send_timing("chat.imports", imports_started_at, request=request)
@@ -1086,6 +1195,10 @@ def handle_chat_completion(request: dict) -> None:
         model_was_cached = model_id in MODEL_REGISTRY
         model_ready_started_at = time.perf_counter()
         model, processor, config = load_model_if_needed(model_id, request=request)
+        structured_logits_processors = _structured_logits_processors(
+            processor,
+            structured_schema,
+        )
         send_timing(
             "chat.model_ready",
             model_ready_started_at,
@@ -1132,10 +1245,13 @@ def handle_chat_completion(request: dict) -> None:
         )
         acceleration_state = None
 
-        draft_model, draft_kind, draft_block_size = _load_drafter_if_requested(
-            model_id,
-            request=request,
-        )
+        if structured_schema is None:
+            draft_model, draft_kind, draft_block_size = _load_drafter_if_requested(
+                model_id,
+                request=request,
+            )
+        else:
+            draft_model, draft_kind, draft_block_size = None, None, None
         if acceleration_requested:
             acceleration_state = "active" if draft_model is not None else "unavailable"
         generation_kwargs = {
@@ -1147,6 +1263,8 @@ def handle_chat_completion(request: dict) -> None:
             "repetition_penalty": repetition_penalty,
             "verbose": False,
         }
+        if structured_logits_processors is not None:
+            generation_kwargs["logits_processors"] = structured_logits_processors
         if draft_model is not None:
             generation_kwargs["draft_model"] = draft_model
             if draft_kind:
@@ -1254,7 +1372,7 @@ def handle_chat_completion(request: dict) -> None:
             completion_tokens=completion_tokens,
         )
 
-        parsed_tool_calls = parse_tool_calls(full_response)
+        parsed_tool_calls = [] if structured_schema is not None else parse_tool_calls(full_response)
 
         performance = _chat_performance_payload(
             prompt_tps=prompt_tps,
@@ -1596,6 +1714,16 @@ def handle_image_generation(request: dict) -> None:
         return
 
     try:
+        mflux_options = _mflux_options_from_request(request)
+        is_ideogram4 = str(mflux_options.get("textToImageClass") or "").strip() == "Ideogram4"
+        if is_ideogram4:
+            if not isinstance(prompt, dict):
+                raise ValueError(
+                    "Ideogram 4 requires a structured JSON caption object; "
+                    "image prompt preparation did not return a usable caption"
+                )
+            prompt = _normalize_ideogram4_caption(prompt)
+
         output_dir.mkdir(parents=True, exist_ok=True)
         model = load_image_model_if_needed(
             model_id, edit=bool(image_paths), request=request
@@ -1622,6 +1750,37 @@ def handle_image_generation(request: dict) -> None:
 
         if image_paths and hasattr(model, "generate_image"):
             generation_kwargs["image_paths"] = image_paths
+
+        if is_ideogram4:
+            preset = _first_present_parameter(
+                parameters.get("preset"), request.get("preset")
+            )
+            if preset is not None:
+                generation_kwargs["preset"] = str(preset)
+            generation_kwargs["use_preset_steps"] = _coerce_bool_parameter(
+                _first_present_parameter(
+                    parameters.get("use_preset_steps"),
+                    request.get("use_preset_steps"),
+                    default=False,
+                ),
+                False,
+            )
+            generation_kwargs["strict_caption_validation"] = _coerce_bool_parameter(
+                _first_present_parameter(
+                    parameters.get("strict_caption_validation"),
+                    request.get("strict_caption_validation"),
+                    default=True,
+                ),
+                True,
+            )
+            generation_kwargs["warn_on_caption_issues"] = _coerce_bool_parameter(
+                _first_present_parameter(
+                    parameters.get("warn_on_caption_issues"),
+                    request.get("warn_on_caption_issues"),
+                    default=True,
+                ),
+                True,
+            )
 
         progress_callback = _MFluxGenerationProgressCallback(model_id, request, steps)
         unregister_progress_callback = _register_mflux_progress_callback(
@@ -1962,9 +2121,14 @@ def _forward_music_request(child, request):
 
 
 
-def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dict) -> int:
+def _forward_music_subprocess(
+    python_path: str,
+    helper_path: Path,
+    request: dict,
+    label: str,
+) -> int:
     child = subprocess.Popen(
-        [ace_python, str(helper_path)],
+        [python_path, str(helper_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -2009,7 +2173,7 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
                             saw_error = saw_error or payload.get("type") == "error"
                             print(line, end="", flush=True)
                         except json.JSONDecodeError:
-                            log_debug(f"[ACE-Step stdout ignored] {stripped}")
+                            log_debug(f"[{label} stdout ignored] {stripped}")
                 else:
                     log_debug(line.rstrip())
 
@@ -2027,7 +2191,7 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
                                         saw_error = saw_error or payload.get("type") == "error"
                                         print(line, flush=True)
                                     except json.JSONDecodeError:
-                                        log_debug(f"[ACE-Step stdout ignored] {stripped}")
+                                        log_debug(f"[{label} stdout ignored] {stripped}")
                         else:
                             log_debug(remaining.rstrip())
                     selector.unregister(fileobj)
@@ -2037,7 +2201,7 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
             send_json(
                 {
                     "type": "error",
-                    "message": f"ACE-Step helper exited with code {returncode}",
+                    "message": f"{label} helper exited with code {returncode}",
                 },
                 request=request,
             )
@@ -2057,6 +2221,23 @@ def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dic
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGINT, previous_sigint)
         _terminate_child(child)
+
+
+def _forward_acestep_subprocess(ace_python: str, helper_path: Path, request: dict) -> int:
+    return _forward_music_subprocess(ace_python, helper_path, request, "ACE-Step")
+
+
+def _forward_magenta_subprocess(
+    magenta_python: str,
+    helper_path: Path,
+    request: dict,
+) -> int:
+    return _forward_music_subprocess(
+        magenta_python,
+        helper_path,
+        request,
+        "Magenta RealTime 2",
+    )
 
 
 def _candidate_acestep_python_paths() -> List[Path]:
@@ -2108,8 +2289,86 @@ def _resolve_acestep_python() -> Optional[str]:
     return None
 
 
+def _magenta_realtime_model_name(model_id: Any) -> Optional[str]:
+    value = coerce_string(model_id).strip()
+    prefix = "google/magenta-realtime-2/"
+    if not value.startswith(prefix):
+        return None
+    model_name = value[len(prefix):]
+    if model_name in {"mrt2_small", "mrt2_base"}:
+        return model_name
+    return None
+
+
+def _candidate_magenta_python_paths() -> List[Path]:
+    candidates: List[Path] = []
+
+    env_python = os.environ.get("MAGENTA_RT_PYTHON")
+    if env_python:
+        candidates.append(Path(env_python))
+
+    executable_path = Path(sys.executable)
+    try:
+        runtime_root = executable_path.resolve().parents[2]
+    except IndexError:
+        runtime_root = None
+    if runtime_root is not None:
+        candidates.append(runtime_root / "magenta-venv" / "bin" / "python")
+
+    candidates.append(
+        Path(__file__).parent
+        / "runtime"
+        / "music-macos-arm64"
+        / "magenta-venv"
+        / "bin"
+        / "python"
+    )
+    return candidates
+
+
+def _resolve_magenta_python() -> Optional[str]:
+    seen: set[str] = set()
+    current_python = Path(sys.executable).resolve()
+
+    for candidate in _candidate_magenta_python_paths():
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+
+        candidate_key = str(resolved)
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
+
+        if not candidate.exists() or resolved == current_python:
+            continue
+        return str(resolved)
+
+    return None
+
+
 def handle_music_generation(request: dict) -> None:
-    """Handle text-to-music request via ACE-Step 1.5."""
+    """Handle text-to-music requests via an isolated music runtime."""
+    if _magenta_realtime_model_name(request.get("model")) is not None:
+        magenta_python = _resolve_magenta_python()
+        if magenta_python:
+            helper_path = Path(__file__).with_name("magenta_bridge.py")
+            _forward_magenta_subprocess(magenta_python, helper_path, request)
+            return
+
+        send_json(
+            {
+                "type": "error",
+                "message": (
+                    "Magenta RealTime 2 runtime is not installed. Install or update "
+                    "the music runtime from Models settings, then retry generation."
+                ),
+            },
+            request=request,
+        )
+        return
+
     ace_python = _resolve_acestep_python()
 
     if ace_python:
