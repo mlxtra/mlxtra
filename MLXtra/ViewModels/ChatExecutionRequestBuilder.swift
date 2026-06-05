@@ -8,9 +8,15 @@ enum ChatExecutionRequestBuilder {
         messages: [ExecutionMessage],
         tools: [[String: Any]]?,
         outputDirectory: URL?,
+        contextImages: [URL] = [],
         responseFormat: [String: Any]? = nil
     ) -> ExecutionRequest {
         let isDirectMediaGeneration = executionProfile.backend == .image || executionProfile.backend == .audio
+        let requestImages = requestImages(
+            generationImages: generation.images,
+            contextImages: contextImages,
+            includeContextImages: !isDirectMediaGeneration && tools == nil
+        )
         let chatExecutionParameters = generation.executionParameters(for: activeChatProfile)
         let runtimeExecutionParameters = isDirectMediaGeneration
             ? nil
@@ -44,7 +50,7 @@ enum ChatExecutionRequestBuilder {
             messages: isDirectMediaGeneration
                 ? [ExecutionMessage(role: .user, content: generation.prompt)]
                 : messages,
-            images: generation.images.isEmpty ? nil : generation.images,
+            images: requestImages.isEmpty ? nil : requestImages,
             outputDirectory: outputDirectory,
             maxTokens: isDirectMediaGeneration ? 0 : maxTokens,
             temperature: isDirectMediaGeneration ? 1.0 : temperature,
@@ -64,5 +70,17 @@ enum ChatExecutionRequestBuilder {
         isDirectMediaGeneration: Bool
     ) -> Bool {
         !isDirectMediaGeneration && !generation.isMusicGeneration
+    }
+
+    private static func requestImages(
+        generationImages: [URL],
+        contextImages: [URL],
+        includeContextImages: Bool
+    ) -> [URL] {
+        var seen = Set<String>()
+        let candidates = (includeContextImages ? contextImages : []) + generationImages
+        return candidates.filter { url in
+            seen.insert(url.standardizedFileURL.path).inserted
+        }
     }
 }

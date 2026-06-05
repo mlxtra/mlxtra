@@ -9,11 +9,14 @@ enum DownloadDiagnostics {
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["MLXTRA_DOWNLOAD_DEBUG"] == "1"
             || UserDefaults.standard.bool(forKey: "MLXtra.downloadDebug")
+            || DiagnosticsLogStore.isDiagnosticsEnabled
     }
 
     static func log(_ message: @autoclosure () -> String) {
         guard isEnabled else { return }
-        print(message())
+        let text = message()
+        print(text)
+        DiagnosticsLogStore.log(text, category: .download, level: .debug)
     }
 }
 

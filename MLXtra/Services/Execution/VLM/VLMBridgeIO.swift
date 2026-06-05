@@ -224,6 +224,9 @@ final class VLMBridgeOutputProcessor: @unchecked Sendable {
 
     private func processStderrLine(_ line: String) {
         stderrBuffer.append(line)
+        if DiagnosticsLogStore.isVerboseBridgeLoggingEnabled {
+            DiagnosticsLogStore.log(line, category: .bridge, level: .debug)
+        }
         log("[Python STDERR] \(line)")
     }
 }

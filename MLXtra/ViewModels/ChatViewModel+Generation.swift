@@ -104,6 +104,7 @@ extension ChatViewModel {
                 messages: toolMessages,
                 messageId: aiMessage.id,
                 isMusicGeneration: true,
+                requestTool: request.tool,
                 generationID: generationID
             )
         } catch {
@@ -226,23 +227,31 @@ extension ChatViewModel {
             let allowedToolNames = ChatExecutionMessageBuilder.toolNames(from: tools)
 
             var messages: [ExecutionMessage]
+            let activeChat = chats.first(where: { $0.id == request.chatId })
+            var contextImages: [URL]
             if let toolMessages {
                 messages = toolMessages
+                contextImages = ChatExecutionMessageBuilder.contextImages(
+                    chat: activeChat,
+                    excluding: aiMessage.id
+                )
             } else if isImagePromptPreparation {
                 let imageProfile = request.profile(for: .image)
-                messages = [
-                    ExecutionMessage(
-                        role: .system,
-                        content: PromptConfiguration.imagePromptPreparationSystemPrompt(
-                            adapter: imageProfile.imagePromptAdapter,
-                            modelName: imageProfile.name,
-                            improvingPrompt: request.shouldImproveImagePrompt(for: imageProfile),
-                            width: request.imageDimension("width", for: imageProfile),
-                            height: request.imageDimension("height", for: imageProfile)
-                        )
+                let promptPreparationContext = ChatExecutionMessageBuilder.makeInitialContext(
+                    chat: activeChat,
+                    excluding: aiMessage.id,
+                    baseSystemPrompt: PromptConfiguration.imagePromptPreparationSystemPrompt(
+                        adapter: imageProfile.imagePromptAdapter,
+                        modelName: imageProfile.name,
+                        improvingPrompt: request.shouldImproveImagePrompt(for: imageProfile),
+                        width: request.imageDimension("width", for: imageProfile),
+                        height: request.imageDimension("height", for: imageProfile)
                     ),
-                    ExecutionMessage(role: .user, content: prompt)
-                ]
+                    allowedToolNames: [],
+                    musicContext: nil
+                )
+                messages = promptPreparationContext.messages
+                contextImages = promptPreparationContext.images
             } else {
                 let musicContext: ChatExecutionMusicSystemContext?
                 if isMusicGeneration {
@@ -255,13 +264,15 @@ extension ChatViewModel {
                     musicContext = nil
                 }
 
-                messages = ChatExecutionMessageBuilder.makeInitialMessages(
-                    chat: chats.first(where: { $0.id == request.chatId }),
+                let initialContext = ChatExecutionMessageBuilder.makeInitialContext(
+                    chat: activeChat,
                     excluding: aiMessage.id,
                     baseSystemPrompt: isDeepResearch ? deepResearchSystemPrompt : systemPrompt,
                     allowedToolNames: allowedToolNames,
                     musicContext: musicContext
                 )
+                messages = initialContext.messages
+                contextImages = initialContext.images
 
                 if isDeepResearch {
                     let researchContext = await seedDeepResearchContext(
@@ -288,6 +299,7 @@ extension ChatViewModel {
                 messages: messages,
                 tools: tools,
                 outputDirectory: outputDirectory,
+                contextImages: contextImages,
                 responseFormat: responseFormat
             )
 
@@ -425,12 +437,21 @@ extension ChatViewModel {
         let decodedArguments = decodeToolArguments(toolCall)
         let imageArguments: [String: Any]?
         do {
+            let promptPreparationImages = combinedImages(
+                ChatExecutionMessageBuilder.contextImages(
+                    chat: chats.first(where: { $0.id == generation.chatId }),
+                    excluding: streamingMessageId ?? UUID()
+                ),
+                images
+            )
             imageArguments = promptIsPrepared
                 ? decodedArguments
                 : try await prepareImageToolArgumentsIfNeeded(
                     decodedArguments: decodedArguments,
                     fallbackPrompt: prompt,
                     generation: generation,
+                    contextMessages: messages,
+                    contextImages: promptPreparationImages,
                     generationID: generationID
                 )
         } catch {
@@ -462,6 +483,8 @@ extension ChatViewModel {
         decodedArguments: [String: Any]?,
         fallbackPrompt: String,
         generation: ChatGenerationRequest,
+        contextMessages: [ExecutionMessage] = [],
+        contextImages: [URL] = [],
         generationID: UUID?
     ) async throws -> [String: Any]? {
         let imageProfile = generation.profile(for: .image)
@@ -482,6 +505,8 @@ extension ChatViewModel {
             sourcePrompt: sourcePrompt,
             imageProfile: imageProfile,
             generation: generation,
+            contextMessages: contextMessages,
+            contextImages: contextImages,
             generationID: generationID
         )
         return try imageToolArguments(
@@ -495,22 +520,23 @@ extension ChatViewModel {
         sourcePrompt: String,
         imageProfile: ModelCapabilityProfile,
         generation: ChatGenerationRequest,
+        contextMessages: [ExecutionMessage] = [],
+        contextImages: [URL] = [],
         generationID: UUID?
     ) async throws -> String {
         let activeChatProfile = generation.profile(for: .chat)
-        let messages = [
-            ExecutionMessage(
-                role: .system,
-                content: PromptConfiguration.imagePromptPreparationSystemPrompt(
-                    adapter: imageProfile.imagePromptAdapter,
-                    modelName: imageProfile.name,
-                    improvingPrompt: generation.shouldImproveImagePrompt(for: imageProfile),
-                    width: generation.imageDimension("width", for: imageProfile),
-                    height: generation.imageDimension("height", for: imageProfile)
-                )
-            ),
-            ExecutionMessage(role: .user, content: sourcePrompt)
-        ]
+        let systemPrompt = PromptConfiguration.imagePromptPreparationSystemPrompt(
+            adapter: imageProfile.imagePromptAdapter,
+            modelName: imageProfile.name,
+            improvingPrompt: generation.shouldImproveImagePrompt(for: imageProfile),
+            width: generation.imageDimension("width", for: imageProfile),
+            height: generation.imageDimension("height", for: imageProfile)
+        )
+        let messages = ChatExecutionMessageBuilder.promptPreparationMessages(
+            systemPrompt: systemPrompt,
+            contextMessages: contextMessages,
+            sourcePrompt: sourcePrompt
+        )
         let request = ChatExecutionRequestBuilder.makeRequest(
             generation: generation,
             activeChatProfile: activeChatProfile,
@@ -518,6 +544,7 @@ extension ChatViewModel {
             messages: messages,
             tools: nil,
             outputDirectory: nil,
+            contextImages: contextImages,
             responseFormat: PromptConfiguration.imagePromptPreparationResponseFormat(
                 adapter: imageProfile.imagePromptAdapter
             )
@@ -557,6 +584,13 @@ extension ChatViewModel {
             throw ExecutionError.invalidResponse
         }
         return response
+    }
+
+    private func combinedImages(_ first: [URL], _ second: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return (first + second).filter { url in
+            seen.insert(url.standardizedFileURL.path).inserted
+        }
     }
 
     func imageToolArguments(

@@ -11,9 +11,9 @@ enum MusicIntentState: Equatable {
         case .needsInstrumentalOrVocals:
             return "Current music intent state: ask whether the user wants instrumental music or vocals with lyrics before calling generate_music."
         case .needsLyrics:
-            return "Current music intent state: the user requested vocals, but lyrics are missing. Draft concise lyrics yourself, ask for explicit approval, and wait before calling generate_music."
+            return "Current music intent state: the user requested vocals, but approved lyrics are missing. If the user explicitly asks you to write lyrics, write them as a normal assistant response and wait for approval. Otherwise ask the user to provide lyrics, paste lyrics, or choose instrumental music before calling generate_music."
         case .awaitingLyricsApproval:
-            return "Current music intent state: lyrics are drafted but not approved. Ask for explicit approval before calling generate_music."
+            return "Current music intent state: lyrics are present but not clearly user-provided or approved. Ask for explicit approval before calling generate_music."
         case .readyToGenerate:
             return "Current music intent state: enough information is available to call generate_music."
         }
@@ -24,9 +24,9 @@ enum MusicIntentState: Equatable {
         case .needsInstrumentalOrVocals:
             return "Do not call generate_music yet. Ask the user whether they want instrumental music or vocals with lyrics."
         case .needsLyrics:
-            return "Do not call generate_music yet. Lyrics are missing for the requested vocal song. Draft concise lyrics yourself, ask the user to approve them, then wait."
+            return "Do not call generate_music yet. Approved lyrics are missing for the requested vocal song. If the user explicitly asked you to write lyrics, write lyrics as a normal assistant response and wait for approval. Otherwise ask the user to provide lyrics or choose instrumental music."
         case .awaitingLyricsApproval:
-            return "Do not call generate_music yet. You drafted lyrics, but the user has not explicitly approved them. Ask whether the lyrics look good or need changes."
+            return "Do not call generate_music yet. Lyrics are present but not clearly user-provided or approved. Ask the user to approve those exact lyrics or provide different lyrics."
         case .readyToGenerate:
             return nil
         }

@@ -45,11 +45,11 @@ struct ToolCallView: View {
                     )
                     .frame(height: 4)
 
-                    Text(progress.percentText ?? "")
+                    Text(progressDisplayText(progress))
                         .font(MLXtraDesignSystem.Typography.microMedium)
                         .foregroundStyle(statusColor)
                         .monospacedDigit()
-                        .frame(minWidth: 34, alignment: .trailing)
+                        .frame(minWidth: 48, alignment: .trailing)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(progressAccessibilityLabel(progress))
@@ -211,6 +211,11 @@ struct ToolCallView: View {
         return progress.isEstimated
             ? "Estimated generation progress"
             : "Generation progress"
+    }
+
+    private func progressDisplayText(_ progress: GenerationProgress) -> String {
+        guard let percent = progress.percent else { return "" }
+        return progress.isEstimated ? "est. \(percent)%" : "\(percent)%"
     }
 }
 

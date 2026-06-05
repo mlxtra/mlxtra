@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct PerformanceSettingsSection: View {
@@ -32,6 +33,203 @@ struct PerformanceSettingsSection: View {
         }
         .padding(14)
         .designPanelSurface(cornerRadius: MLXtraDesignSystem.Radius.card)
+    }
+}
+
+struct DiagnosticsSettingsSection: View {
+    @ObservedObject private var logStore = DiagnosticsLogStore.shared
+    @State private var copyStatus: String?
+
+    private var recentEntries: [DiagnosticsLogEntry] {
+        Array(logStore.entries.suffix(80).reversed())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "stethoscope")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 34, height: 34)
+                    .designTintSurface(Color.accentColor, cornerRadius: MLXtraDesignSystem.Radius.control)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Diagnostics")
+                        .font(.headline)
+
+                    Text("Capture local runtime, bridge, and generation events for troubleshooting.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 16)
+
+                VStack(alignment: .trailing, spacing: 8) {
+                    Toggle("Capture logs", isOn: $logStore.isEnabled)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .help("Records normal diagnostic events. Warnings and errors are kept even when this is off.")
+
+                    Toggle("Verbose bridge logs", isOn: $logStore.verboseBridgeLoggingEnabled)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .help("Records Python bridge stderr and enables bridge debug output for newly started local engines.")
+                }
+                .frame(width: 190, alignment: .trailing)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    copyLogs()
+                } label: {
+                    Label("Copy Logs", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    revealLogs()
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+
+                Button(role: .destructive) {
+                    logStore.clear()
+                    copyStatus = nil
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+
+                if let copyStatus {
+                    Text(copyStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Text(logStore.logFileURL.path)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(logStore.logFileURL.path)
+            }
+
+            Divider()
+
+            HStack {
+                Text("Recent Events")
+                    .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                Text("\(logStore.entries.count) captured")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if recentEntries.isEmpty {
+                Text("No diagnostics captured yet. Enable Capture logs, then reproduce the issue.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
+                    .background(MLXtraDesignSystem.Surface.panelFill, in: RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous))
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(recentEntries) { entry in
+                            DiagnosticsLogEntryRow(entry: entry)
+                        }
+                    }
+                    .padding(10)
+                }
+                .frame(maxHeight: 220)
+                .background(MLXtraDesignSystem.Surface.panelFill, in: RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: MLXtraDesignSystem.Radius.control, style: .continuous)
+                        .stroke(MLXtraDesignSystem.Surface.quietHairline, lineWidth: 1)
+                }
+            }
+        }
+        .padding(14)
+        .designPanelSurface(cornerRadius: MLXtraDesignSystem.Radius.card)
+        .accessibilityIdentifier("settings.diagnostics")
+    }
+
+    private func copyLogs() {
+        Task {
+            let text = await logStore.exportText()
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copyStatus = "Copied"
+        }
+    }
+
+    private func revealLogs() {
+        Task {
+            await logStore.prepareLogFile()
+            NSWorkspace.shared.activateFileViewerSelecting([logStore.logFileURL])
+        }
+    }
+}
+
+private struct DiagnosticsLogEntryRow: View {
+    let entry: DiagnosticsLogEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(entry.timestamp.formatted(date: .omitted, time: .standard))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Text(entry.level.displayName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(tint.opacity(0.12), in: Capsule())
+
+                Text(entry.category.rawValue)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+            }
+
+            Text(entry.message)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .help(entry.message)
+
+            if let details = trimmedDetails {
+                Text(details)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .help(details)
+            }
+        }
+        .padding(8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var tint: Color {
+        switch entry.level {
+        case .debug: return .secondary
+        case .info: return .accentColor
+        case .warning: return .orange
+        case .error: return .red
+        }
+    }
+
+    private var trimmedDetails: String? {
+        let details = entry.details?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return details.isEmpty ? nil : details
     }
 }
 

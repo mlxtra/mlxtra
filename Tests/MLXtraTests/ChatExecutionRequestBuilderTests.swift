@@ -157,6 +157,112 @@ final class ChatExecutionRequestBuilderTests: XCTestCase {
         XCTAssertEqual(mflux["quantize"] as? Int, 4)
     }
 
+    func testVLMRequestCombinesContextAndCurrentImages() {
+        let chatProfile = makeProfile(
+            id: "chat",
+            name: "Chat Model",
+            modelId: "mlx-community/chat",
+            modality: .vision,
+            backend: .vlm
+        )
+        let generation = makeGenerationRequest(
+            tool: .chat,
+            prompt: "Describe the follow-up",
+            images: [
+                URL(fileURLWithPath: "/tmp/current.png"),
+                URL(fileURLWithPath: "/tmp/generated.png")
+            ],
+            profiles: [.vision: chatProfile]
+        )
+
+        let request = ChatExecutionRequestBuilder.makeRequest(
+            generation: generation,
+            activeChatProfile: chatProfile,
+            executionProfile: chatProfile,
+            messages: [ExecutionMessage(role: .user, content: "Describe the follow-up")],
+            tools: nil,
+            outputDirectory: nil,
+            contextImages: [
+                URL(fileURLWithPath: "/tmp/generated.png"),
+                URL(fileURLWithPath: "/tmp/older.png")
+            ]
+        )
+
+        XCTAssertEqual(
+            request.images,
+            [
+                URL(fileURLWithPath: "/tmp/generated.png"),
+                URL(fileURLWithPath: "/tmp/older.png"),
+                URL(fileURLWithPath: "/tmp/current.png")
+            ]
+        )
+    }
+
+    func testDirectMediaRequestDoesNotUseContextImagesAsEditInputs() {
+        let chatProfile = makeProfile(
+            id: "chat",
+            name: "Chat Model",
+            modelId: "mlx-community/chat",
+            modality: .vision,
+            backend: .vlm
+        )
+        let imageProfile = makeProfile(
+            id: "image",
+            name: "Image Model",
+            modelId: "black-forest-labs/FLUX.2-klein-4B",
+            modality: .image,
+            backend: .image
+        )
+        let generation = makeGenerationRequest(
+            tool: .image,
+            prompt: "Create a new poster",
+            images: [URL(fileURLWithPath: "/tmp/current.png")],
+            profiles: [
+                .vision: chatProfile,
+                .image: imageProfile
+            ]
+        )
+
+        let request = ChatExecutionRequestBuilder.makeRequest(
+            generation: generation,
+            activeChatProfile: chatProfile,
+            executionProfile: imageProfile,
+            messages: [ExecutionMessage(role: .user, content: "Create a new poster")],
+            tools: nil,
+            outputDirectory: nil,
+            contextImages: [URL(fileURLWithPath: "/tmp/generated.png")]
+        )
+
+        XCTAssertEqual(request.images, [URL(fileURLWithPath: "/tmp/current.png")])
+    }
+
+    func testToolEnabledVLMRequestKeepsContextImagesAsTextOnlyContext() {
+        let chatProfile = makeProfile(
+            id: "chat",
+            name: "Chat Model",
+            modelId: "mlx-community/chat",
+            modality: .vision,
+            backend: .vlm
+        )
+        let generation = makeGenerationRequest(
+            tool: .auto,
+            prompt: "Make it a movie poster",
+            profiles: [.vision: chatProfile]
+        )
+
+        let request = ChatExecutionRequestBuilder.makeRequest(
+            generation: generation,
+            activeChatProfile: chatProfile,
+            executionProfile: chatProfile,
+            messages: [ExecutionMessage(role: .user, content: "Make it a movie poster")],
+            tools: [["type": "function", "function": ["name": "generate_image"]]],
+            outputDirectory: nil,
+            contextImages: [URL(fileURLWithPath: "/tmp/generated.png")]
+        )
+
+        XCTAssertNil(request.images)
+    }
+
     func testMusicToolChatRequestKeepsToolsButSkipsChatTemplateKwargs() throws {
         let chatProfile = makeProfile(
             id: "chat",

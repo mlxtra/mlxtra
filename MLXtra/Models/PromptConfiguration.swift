@@ -77,7 +77,7 @@ enum PromptConfiguration {
         width: Int,
         height: Int
     ) -> String {
-        var prompt = "You prepare a prompt for \(modelName). Return only JSON matching the provided response schema. Preserve the user's intent, requested wording, and constraints."
+        var prompt = "You prepare a prompt for \(modelName). Return only JSON matching the provided response schema. Preserve the user's intent, requested wording, and constraints. If the latest user request is a follow-up, resolve it against the prior conversation, generated assets, and attached images so the returned prompt is standalone."
         if improvingPrompt {
             prompt += " Make the visual description more specific and useful to the image model."
         } else {
@@ -279,7 +279,7 @@ enum PromptConfiguration {
             "type": "function",
             "function": [
                 "name": "generate_music",
-                "description": "Create music only when the user has either requested instrumental/no-vocal music or approved/provided lyrics for vocals. Ask a follow-up instead of calling this tool when that choice is unclear.",
+                "description": "Create music. Default to instrumental unless the user explicitly provides or approves lyrics. Do not invent, draft, or write lyrics inside this tool call. If the user asks for vocals/lyrics but has not provided lyrics, ask them to provide lyrics or choose instrumental music before calling this tool.",
                 "parameters": [
                     "type": "object",
                     "properties": [
@@ -289,7 +289,7 @@ enum PromptConfiguration {
                         ],
                         "lyrics": [
                             "type": "string",
-                            "description": "Lyrics with section labels like [verse] and [chorus]. Required when instrumental is false."
+                            "description": "Lyrics with section labels like [verse] and [chorus]. Use only lyrics explicitly provided or approved by the user. Do not write new lyrics here. Omit this field or use [Instrumental] when instrumental is true."
                         ],
                         "duration": [
                             "type": "number",
@@ -297,7 +297,7 @@ enum PromptConfiguration {
                         ],
                         "instrumental": [
                             "type": "boolean",
-                            "description": "True only for instrumental, beat, backing track, background music, or no-vocal requests. False only when lyrics are provided or approved."
+                            "description": "Set true for instrumental, beat, backing track, background music, no-vocal requests, or when the user has not provided/approved lyrics. Set false only when using user-provided or user-approved lyrics."
                         ]
                     ],
                     "required": ["caption", "instrumental"]

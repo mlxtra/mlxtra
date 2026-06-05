@@ -520,6 +520,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests[0].messages.first?.content, "Draw a quiet studio desk")
         XCTAssertEqual(viewModel.chats.first?.messages.last?.imageURLs, [assetURL])
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
+        XCTAssertEqual(viewModel.selectedTool, .auto)
     }
 
     func testDirectImagePromptImprovementUsesChatVLMThenMediaTool() async throws {
@@ -567,6 +568,186 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         )
         XCTAssertEqual(toolExecutor.mediaPlans[0].request.modelId, imageProfile.modelId)
         XCTAssertEqual(viewModel.chats.first?.messages.last?.toolCalls.count, 1)
+    }
+
+    func testDirectImagePromptPreparationIncludesPriorGeneratedImageContext() async throws {
+        resetPromptConfigurationDefaults()
+        let userDefaults = isolatedUserDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B"))
+        let improvePrompt = try XCTUnwrap(imageProfile.parameterDefinition(key: "improve_prompt"))
+        let generatedURL = URL(fileURLWithPath: "/tmp/generated-superman.png")
+        let chatId = UUID()
+        let existingChat = Chat(
+            id: chatId,
+            title: "Superman",
+            messages: [
+                Message(
+                    content: "superman in london",
+                    isUser: true,
+                    timestamp: Date(timeIntervalSince1970: 1)
+                ),
+                Message(
+                    content: "",
+                    isUser: false,
+                    timestamp: Date(timeIntervalSince1970: 2),
+                    toolCall: ToolCall(
+                        toolName: "Image generation",
+                        status: "superman in london",
+                        icon: "photo"
+                    ),
+                    imageURLs: [generatedURL]
+                )
+            ],
+            timestamp: Date(),
+            icon: "photo"
+        )
+        let executor = MockChatModelExecutor(events: [
+            .complete(
+                #"{"prompt":"A cinematic Superman-inspired movie poster set in London"}"#,
+                usage: TokenUsage(promptTokens: 10, completionTokens: 12)
+            )
+        ])
+        let runtimeManager = MockChatRuntimeManager(
+            downloadedModelIds: [Self.defaultChatModelId, imageProfile.modelId]
+        )
+        let toolExecutor = MockChatToolExecutionService()
+        let persistence = MockChatPersistenceService(chatsToLoad: [existingChat], selectedChatIdToLoad: chatId)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: toolExecutor,
+            userDefaults: userDefaults
+        )
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.setParameterValue("true", for: improvePrompt, profile: imageProfile)
+        viewModel.selectTool(.image)
+        viewModel.inputText = "make it a movie poster"
+
+        viewModel.sendMessage()
+        await waitUntil { toolExecutor.mediaPlans.count == 1 }
+
+        let request = try XCTUnwrap(executor.receivedRequests.first)
+        XCTAssertEqual(request.backend, .vlm)
+        XCTAssertEqual(request.images, [generatedURL])
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("superman in london") == true })
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("Generated 1 image in this message.") == true })
+        XCTAssertTrue(request.messages.contains { $0.content == "make it a movie poster" })
+        XCTAssertEqual(
+            toolExecutor.mediaPlans[0].request.messages.first?.content,
+            "A cinematic Superman-inspired movie poster set in London"
+        )
+    }
+
+    func testAutoModeVLMRequestIncludesPriorGeneratedImageContext() async {
+        resetPromptConfigurationDefaults()
+        let generatedURL = URL(fileURLWithPath: "/tmp/generated-superman.png")
+        let chatId = UUID()
+        let existingChat = Chat(
+            id: chatId,
+            title: "Superman",
+            messages: [
+                Message(
+                    content: "superman in london",
+                    isUser: true,
+                    timestamp: Date(timeIntervalSince1970: 1)
+                ),
+                Message(
+                    content: "",
+                    isUser: false,
+                    timestamp: Date(timeIntervalSince1970: 2),
+                    toolCall: ToolCall(
+                        toolName: "Image generation",
+                        status: "superman in london",
+                        icon: "photo"
+                    ),
+                    imageURLs: [generatedURL]
+                )
+            ],
+            timestamp: Date(),
+            icon: "photo"
+        )
+        let executor = MockChatModelExecutor(events: [
+            .complete("I can use the prior image context.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [existingChat], selectedChatIdToLoad: chatId)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "make it a movie poster"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+
+        let request = executor.receivedRequests[0]
+        XCTAssertNil(request.images)
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("superman in london") == true })
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("Generated 1 image in this message.") == true })
+        XCTAssertTrue(request.messages.contains { $0.content == "make it a movie poster" })
+    }
+
+    func testAutoModeVLMRequestIncludesPriorGeneratedMusicContext() async {
+        resetPromptConfigurationDefaults()
+        let generatedURL = URL(fileURLWithPath: "/tmp/generated-track.wav")
+        let chatId = UUID()
+        let existingChat = Chat(
+            id: chatId,
+            title: "Music",
+            messages: [
+                Message(
+                    content: "make a moody cyberpunk track",
+                    isUser: true,
+                    timestamp: Date(timeIntervalSince1970: 1)
+                ),
+                Message(
+                    content: "",
+                    isUser: false,
+                    timestamp: Date(timeIntervalSince1970: 2),
+                    toolCall: ToolCall(
+                        toolName: "Music generation",
+                        status: "make a moody cyberpunk track",
+                        icon: "music.note",
+                        details: [
+                            ToolCallDetail(label: "Duration", value: "30"),
+                            ToolCallDetail(label: "Instrumental", value: "true")
+                        ]
+                    ),
+                    audioURLs: [generatedURL]
+                )
+            ],
+            timestamp: Date(),
+            icon: "music.note"
+        )
+        let executor = MockChatModelExecutor(events: [
+            .complete("I can use the prior music context.", usage: TokenUsage(promptTokens: 1, completionTokens: 2))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
+        let persistence = MockChatPersistenceService(chatsToLoad: [existingChat], selectedChatIdToLoad: chatId)
+        let viewModel = ChatViewModel(
+            chatPersistence: persistence,
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.auto)
+        viewModel.inputText = "make it longer"
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+
+        let request = executor.receivedRequests[0]
+        XCTAssertNil(request.images)
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("make a moody cyberpunk track") == true })
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("Music generation: make a moody cyberpunk track") == true })
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("Duration: 30") == true })
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("Instrumental: true") == true })
+        XCTAssertTrue(request.messages.contains { $0.content?.contains("Generated 1 audio asset in this message.") == true })
+        XCTAssertTrue(request.messages.contains { $0.content == "make it longer" })
     }
 
     func testDirectIdeogramPromptPreparationCannotBeDisabled() async throws {
@@ -989,6 +1170,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests[0].messages.first?.content, "Superman is here")
         XCTAssertEqual(viewModel.chats.first?.messages.last?.audioURLs, [assetURL])
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
+        XCTAssertEqual(viewModel.selectedTool, .auto)
     }
 
     func testChatModeSendsPlainVLMRequestWithoutTools() async {
@@ -1543,6 +1725,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.sendMessage()
 
         await waitUntil { toolExecutor.mediaPlans.count == 1 }
+        await waitUntil { viewModel.selectedTool == .auto }
 
         XCTAssertEqual(executor.receivedRequests.count, 0)
         let userMessages = viewModel.chats.first?.messages.filter(\.isUser) ?? []
@@ -1556,6 +1739,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let parameters = toolExecutor.mediaPlans[0].request.parameters ?? [:]
         XCTAssertEqual(parameters["instrumental"] as? Bool, true)
         XCTAssertEqual(parameters["lyrics"] as? String, "[Instrumental]")
+        XCTAssertEqual(viewModel.selectedTool, .auto)
     }
 
     func testApprovedMusicLyricsOverrideToolCallParameters() async {
@@ -1816,7 +2000,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(parameters["lyrics"] as? String, "[Instrumental]")
     }
 
-    func testAutoModeMissingVocalLyricsContinuesToLyricsDraft() async {
+    func testAutoModeMissingVocalLyricsAsksUserInsteadOfDraftingLyrics() async {
         resetPromptConfigurationDefaults()
         let toolCall = ExecutionToolCall(
             id: "music-missing-lyrics",
@@ -1825,16 +2009,11 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 arguments: #"{"caption":"pop song about Oxford with vocals","instrumental":false}"#
             )
         )
-        let lyrics = """
-        [verse]
-        Spires in the morning, bells over stone
-        [chorus]
-        Oxford, carry my heart back home
-        """
+        let followUp = "Please provide the lyrics you want me to use, or choose instrumental music."
         let rawToolJSON = #"{"name":"generate_music","parameters":{"caption":"pop song about Oxford with vocals","instrumental":false}}"#
         let executor = MockChatModelExecutor(eventBatches: [
             [.token(rawToolJSON), .toolCalls([toolCall])],
-            [.complete(lyrics, usage: TokenUsage(promptTokens: 1, completionTokens: 2))]
+            [.complete(followUp, usage: TokenUsage(promptTokens: 1, completionTokens: 2))]
         ])
         let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [Self.defaultChatModelId])
         let toolExecutor = MockChatToolExecutionService()
@@ -1854,12 +2033,11 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
         let messages = viewModel.chats.first?.messages ?? []
         XCTAssertTrue(toolExecutor.mediaPlans.isEmpty)
-        XCTAssertEqual(messages.last?.content, lyrics)
+        XCTAssertEqual(messages.last?.content, followUp)
         XCTAssertFalse(messages.last?.content.contains(rawToolJSON) ?? true)
-        XCTAssertFalse(messages.contains { $0.content.contains("Do not call generate_music") })
         XCTAssertTrue(
             executor.receivedRequests[1].messages.contains {
-                $0.role == .tool && ($0.content?.contains("Draft concise lyrics") ?? false)
+                $0.role == .tool && ($0.content?.contains("explicitly asked you to write lyrics") ?? false)
             }
         )
     }

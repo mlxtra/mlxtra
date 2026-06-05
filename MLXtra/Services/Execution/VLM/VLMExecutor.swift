@@ -24,11 +24,14 @@ private enum VLMBridgeDiagnostics {
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["MLXTRA_BRIDGE_DEBUG"] == "1"
             || UserDefaults.standard.bool(forKey: "MLXtra.bridgeDebug")
+            || DiagnosticsLogStore.isVerboseBridgeLoggingEnabled
     }
 
     static func log(_ message: @autoclosure () -> String) {
         guard isEnabled else { return }
-        print(message())
+        let text = message()
+        print(text)
+        DiagnosticsLogStore.log(text, category: .bridge, level: .debug)
     }
 }
 
@@ -54,7 +57,7 @@ class VLMExecutor: NSObject, ModelExecutor {
         log: { message in
 #if DEBUG
             if VLMStreamDiagnostics.isEnabled {
-                VLMBridgeDiagnostics.log(message)
+                print(message)
             }
 #else
             _ = message
@@ -131,18 +134,36 @@ class VLMExecutor: NSObject, ModelExecutor {
                 guard shouldRetry(error: error, retryCount: requestRetryCount) else {
                     retryCount = 0
                     delegate?.executionDidFail(error: error)
+                    DiagnosticsLogStore.log(
+                        "Local bridge request failed",
+                        category: .bridge,
+                        level: .error,
+                        details: error.localizedDescription
+                    )
                     throw error
                 }
 
                 requestRetryCount += 1
                 retryCount = requestRetryCount
                 delegate?.executionWillRetry(attempt: requestRetryCount)
+                DiagnosticsLogStore.log(
+                    "Retrying local bridge request",
+                    category: .bridge,
+                    level: .warning,
+                    details: "Attempt \(requestRetryCount + 1): \(error.localizedDescription)"
+                )
 
                 do {
                     try await restartBridge()
                 } catch {
                     retryCount = 0
                     delegate?.executionDidFail(error: error)
+                    DiagnosticsLogStore.log(
+                        "Local bridge restart failed",
+                        category: .bridge,
+                        level: .error,
+                        details: error.localizedDescription
+                    )
                     throw error
                 }
             }
@@ -228,6 +249,12 @@ class VLMExecutor: NSObject, ModelExecutor {
 
         VLMBridgeDiagnostics.log("[VLMExecutor] Starting Python bridge at \(pythonPath.path)")
         VLMBridgeDiagnostics.log("[VLMExecutor] Bridge script at \(bridgePath.path)")
+        DiagnosticsLogStore.log(
+            "Starting local Python bridge",
+            category: .bridge,
+            level: .info,
+            details: "Python: \(pythonPath.path)\nBridge: \(bridgePath.path)"
+        )
 
         stdinPipe = Pipe()
         stdoutPipe = Pipe()
@@ -279,10 +306,17 @@ class VLMExecutor: NSObject, ModelExecutor {
                 guard let type = json["type"] as? String else { return }
                 if type == "system.ready" {
                     VLMBridgeDiagnostics.log("[VLMExecutor] Bridge is ready")
+                    DiagnosticsLogStore.log("Local Python bridge is ready", category: .bridge, level: .info)
                     readyState?.setReady()
                 } else if type == "error" {
                     let message = json["message"] as? String ?? "Unknown error"
                     VLMBridgeDiagnostics.log("[VLMExecutor] Bridge initialization error: \(message)")
+                    DiagnosticsLogStore.log(
+                        "Local Python bridge initialization failed",
+                        category: .bridge,
+                        level: .error,
+                        details: message
+                    )
                     readyState?.setError(message)
                 }
             }
@@ -348,6 +382,12 @@ class VLMExecutor: NSObject, ModelExecutor {
         parameters: [String: Any]? = nil
     ) async throws {
         delegate?.modelLoadingStarted(modelId: modelId)
+        DiagnosticsLogStore.log(
+            "Loading local model",
+            category: .runtime,
+            level: .info,
+            details: "\(backend.rawValue): \(modelId)"
+        )
         delegate?.modelLoadingProgress(
             ModelLoadProgress(
                 modelId: modelId,
@@ -372,9 +412,21 @@ class VLMExecutor: NSObject, ModelExecutor {
             try await waitForModelLoaded(waiter)
             isModelLoaded = true
             delegate?.modelLoadingCompleted(modelId: modelId)
+            DiagnosticsLogStore.log(
+                "Local model loaded",
+                category: .runtime,
+                level: .info,
+                details: "\(backend.rawValue): \(modelId)"
+            )
         } catch {
             stdoutDispatcher.unregister(waiter.handlerID)
             delegate?.modelLoadingFailed(modelId: modelId, error: error)
+            DiagnosticsLogStore.log(
+                "Local model failed to load",
+                category: .runtime,
+                level: .error,
+                details: "\(backend.rawValue): \(modelId)\n\(error.localizedDescription)"
+            )
             throw error
         }
     }
@@ -513,6 +565,12 @@ class VLMExecutor: NSObject, ModelExecutor {
                     } else if type == "error" {
                         let errorMessage = json["message"] as? String ?? "Unknown Python error"
                         VLMBridgeDiagnostics.log("[Python Error] \(errorMessage)")
+                        DiagnosticsLogStore.log(
+                            "Python bridge returned an error",
+                            category: .bridge,
+                            level: .error,
+                            details: errorMessage
+                        )
                     }
 
 #if DEBUG

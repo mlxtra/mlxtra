@@ -87,6 +87,9 @@ final class ChatViewModelLogicTests: XCTestCase {
 
     func testMusicIntentNeedsLyricsForVocalPrompt() {
         XCTAssertEqual(MusicIntentState.forPrompt("Create a pop song with vocals"), .needsLyrics)
+        XCTAssertTrue(MusicIntentState.needsLyrics.systemInstruction.contains("explicitly asks you to write lyrics"))
+        XCTAssertTrue(MusicIntentState.needsLyrics.systemInstruction.contains("wait for approval"))
+        XCTAssertFalse(MusicIntentState.needsLyrics.systemInstruction.contains("Draft concise lyrics yourself"))
     }
 
     func testMusicIntentNeedsInstrumentalOrVocalsWhenAmbiguous() {
@@ -115,7 +118,7 @@ final class ChatViewModelLogicTests: XCTestCase {
         XCTAssertEqual(state, .awaitingLyricsApproval)
         XCTAssertEqual(
             state.blockedToolMessage,
-            "Do not call generate_music yet. You drafted lyrics, but the user has not explicitly approved them. Ask whether the lyrics look good or need changes."
+            "Do not call generate_music yet. Lyrics are present but not clearly user-provided or approved. Ask the user to approve those exact lyrics or provide different lyrics."
         )
     }
 

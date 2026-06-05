@@ -286,6 +286,8 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             PerformanceSettingsSection(preloadLocalChatModelOnLaunch: $preloadLocalChatModelOnLaunch)
 
+            DiagnosticsSettingsSection()
+
             AdvancedQuickControls(
                 systemPrompt: $systemPrompt,
                 deepResearchSystemPrompt: $deepResearchSystemPrompt,

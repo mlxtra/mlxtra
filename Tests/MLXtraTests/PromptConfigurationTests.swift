@@ -193,8 +193,14 @@ final class PromptConfigurationTests: XCTestCase {
         let function = PromptConfiguration.musicGenerationTool["function"] as? [String: Any]
         let parameters = function?["parameters"] as? [String: Any]
         let required = parameters?["required"] as? [String]
+        let properties = parameters?["properties"] as? [String: Any]
+        let lyrics = properties?["lyrics"] as? [String: Any]
+        let instrumental = properties?["instrumental"] as? [String: Any]
 
         XCTAssertEqual(required, ["caption", "instrumental"])
+        XCTAssertTrue((function?["description"] as? String)?.contains("Do not invent, draft, or write lyrics") ?? false)
+        XCTAssertTrue((lyrics?["description"] as? String)?.contains("Use only lyrics explicitly provided or approved by the user") ?? false)
+        XCTAssertTrue((instrumental?["description"] as? String)?.contains("Set true") ?? false)
     }
 
     func testImageGenerationToolRemainsGeneric() {
