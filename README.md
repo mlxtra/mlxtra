@@ -1,6 +1,6 @@
 # MLXtra
 
-**Local AI creation for Mac, beyond chat.**
+**Local AI creation for Mac, beyond chat**
 
 MLXtra is a native Apple Silicon app for local AI creation. It runs chat,
 vision, image, speech, and music models on your Mac with
