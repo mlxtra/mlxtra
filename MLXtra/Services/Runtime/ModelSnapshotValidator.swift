@@ -17,9 +17,13 @@ extension RuntimeManager {
             snapshotsPath: snapshotsPath,
             revision: revision
         ) {
-            if let nativeStatus = nativeSnapshotStorageStatus(snapshotPath),
-               nativeStatus == .downloaded {
-                return snapshotPath
+            if let nativeStatus = nativeSnapshotStorageStatus(snapshotPath) {
+                switch nativeStatus {
+                case .downloaded:
+                    return snapshotPath
+                case .incomplete, .missing:
+                    continue
+                }
             }
             if snapshotContainsModelFiles(snapshotPath) {
                 return snapshotPath

@@ -555,6 +555,27 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertTrue(message.contains("Native model download is still incomplete"))
     }
 
+    func testDownloadedSnapshotPathRejectsInProgressNativeSnapshotWithWeights() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: cacheRoot) }
+
+        let modelId = "org/native-partial-path-model"
+        let snapshotPath = try makeNativeSnapshotDirectory(modelId: modelId, cacheRoot: cacheRoot)
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+        try Data("in-progress".utf8).write(
+            to: snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        )
+
+        XCTAssertNil(
+            RuntimeManager.downloadedSnapshotPath(
+                modelId: modelId,
+                revision: "main",
+                huggingFaceCacheRoot: cacheRoot
+            )
+        )
+    }
+
     func testHuggingFaceStorageStatusValidatesNativeCompletionManifest() throws {
         let cacheRoot = try makeTemporaryDirectory()
         let defaultCheckpoints = try makeTemporaryDirectory()

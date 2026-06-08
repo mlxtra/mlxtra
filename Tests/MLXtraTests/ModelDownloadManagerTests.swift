@@ -1214,6 +1214,61 @@ final class ModelDownloadManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testRepairDownloadDoesNotSkipIncompleteNativeSnapshotWithWeights() async throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        let checkpointsPath = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+            try? FileManager.default.removeItem(at: checkpointsPath)
+        }
+
+        let modelId = "org/repairable-partial-model"
+        let modelCachePath = RuntimeManager.modelCachePath(
+            modelId: modelId,
+            huggingFaceCacheRoot: cacheRoot
+        )
+        let snapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("revision")
+        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: modelCachePath.appendingPathComponent("refs"),
+            withIntermediateDirectories: true
+        )
+        try Data("revision".utf8).write(to: modelCachePath.appendingPathComponent("refs/main"))
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+        try Data("in-progress".utf8).write(
+            to: snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        )
+
+        let downloader = RecordingNativeDownloader()
+        let manager = ModelDownloadManager(
+            refreshStatusesOnInit: false,
+            checkpointsPathOverride: checkpointsPath,
+            huggingFaceCacheRootOverride: cacheRoot,
+            nativeDownloader: downloader,
+            modelStorageStatusProvider: { _, _, _ in .downloaded }
+        )
+        let model = DownloadableModel(
+            id: modelId,
+            name: "Repairable Partial Model",
+            subtitle: "Test model",
+            modelId: modelId,
+            modality: .vision,
+            downloadSizeGB: 1.0,
+            source: ModelSource(type: .huggingFaceSnapshot, repo: modelId, revision: "main")
+        )
+
+        manager.download(model)
+        await waitUntil { !manager.hasTrackedTask(for: model) }
+
+        let downloadedRepoIDs = await downloader.recordedRepoIDs()
+        XCTAssertEqual(downloadedRepoIDs, [modelId])
+        XCTAssertEqual(manager.state(for: model), .downloaded)
+    }
+
+    @MainActor
     func testRefreshStatusesDoesNotRestoreStatusWhileCancelledDownloadIsStopping() async throws {
         let cacheRoot = try makeTemporaryDirectory()
         let checkpointsPath = try makeTemporaryDirectory()
@@ -1674,6 +1729,50 @@ private final class SequencedNativeDownloader: NativeModelDownloading, @unchecke
     func markAceStepContractComplete(plan: AceStepDownloadPlan) throws {}
 
     func removePartialDownloads(at root: URL) throws {}
+}
+
+private actor RecordingNativeDownloader: NativeModelDownloading {
+    private var repoIDs: [String] = []
+
+    func recordedRepoIDs() -> [String] {
+        repoIDs
+    }
+
+    func downloadHuggingFaceSnapshot(
+        repoID: String,
+        revision: String,
+        cacheRoot: URL,
+        progress: @escaping NativeModelDownloadService.ProgressHandler
+    ) async throws {
+        repoIDs.append(repoID)
+        await progress(
+            NativeModelDownloadProgress(
+                status: "Downloading",
+                description: repoID,
+                downloadedBytes: nil,
+                totalBytes: nil,
+                percent: nil
+            )
+        )
+    }
+
+    func downloadAceStepMainSnapshot(
+        plan: AceStepDownloadPlan,
+        progress: @escaping NativeModelDownloadService.ProgressHandler
+    ) async throws {
+        throw SequencedNativeDownloadError.unexpectedAceStepDownload
+    }
+
+    func downloadComponentBundle(
+        plan: ComponentBundleDownloadPlan,
+        progress: @escaping NativeModelDownloadService.ProgressHandler
+    ) async throws {
+        throw SequencedNativeDownloadError.unexpectedAceStepDownload
+    }
+
+    nonisolated func markAceStepContractComplete(plan: AceStepDownloadPlan) throws {}
+
+    nonisolated func removePartialDownloads(at root: URL) throws {}
 }
 
 private enum SequencedNativeDownloadOutcome {
