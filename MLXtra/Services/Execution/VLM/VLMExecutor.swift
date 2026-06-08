@@ -180,6 +180,7 @@ class VLMExecutor: NSObject, ModelExecutor {
             return
         }
 
+        try await restartBridgeIfNeededBeforeLoading(backend: backend)
         isModelLoaded = false
         try await loadModel(modelId, backend: backend, parameters: parameters)
         currentModelCacheKey = modelCacheKey
@@ -348,6 +349,7 @@ class VLMExecutor: NSObject, ModelExecutor {
 
         let modelCacheKey = "\(request.backend.rawValue):\(request.modelId)"
         if currentModelCacheKey != modelCacheKey {
+            try await restartBridgeIfNeededBeforeLoading(backend: request.backend)
             isModelLoaded = false
             try await loadModel(
                 request.modelId,
@@ -374,6 +376,25 @@ class VLMExecutor: NSObject, ModelExecutor {
         }
 
         return responseStream.stream
+    }
+
+    private func restartBridgeIfNeededBeforeLoading(backend nextBackend: RuntimeBackend) async throws {
+        guard isReady,
+              let currentModelBackend,
+              currentModelBackend != nextBackend else {
+            return
+        }
+
+        VLMBridgeDiagnostics.log(
+            "[VLMExecutor] Restarting Python bridge before switching backend from \(currentModelBackend.rawValue) to \(nextBackend.rawValue)"
+        )
+        DiagnosticsLogStore.log(
+            "Restarting local Python bridge before backend switch",
+            category: .bridge,
+            level: .info,
+            details: "\(currentModelBackend.rawValue) -> \(nextBackend.rawValue)"
+        )
+        try await restartBridge()
     }
 
     private func loadModel(

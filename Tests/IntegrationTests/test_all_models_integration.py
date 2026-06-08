@@ -108,6 +108,10 @@ def hf_snapshot_candidates(model_id: str) -> list[Path]:
     ]
 
 
+def hf_snapshot_is_in_progress(snapshot: Path) -> bool:
+    return (snapshot / ".mlxtra_snapshot_in_progress").exists()
+
+
 def hf_snapshot_has_metadata(snapshot: Path) -> bool:
     metadata_names = {
         "config.json",
@@ -162,6 +166,8 @@ def declared_weight_files_are_complete(index_path: Path, snapshot: Path) -> bool
 
 def hf_snapshot_is_complete(model_id: str) -> bool:
     for snapshot in hf_snapshot_candidates(model_id):
+        if hf_snapshot_is_in_progress(snapshot):
+            continue
         if not hf_snapshot_has_metadata(snapshot):
             continue
 
@@ -286,6 +292,37 @@ def bundled_runtime_options(model_id: str) -> dict:
         return {}
     runtime_options = model.get("runtimeOptions")
     return runtime_options if isinstance(runtime_options, dict) else {}
+
+
+def bundled_parameter_defaults(model_id: str) -> dict:
+    model = bundled_catalog_model(model_id)
+    if not isinstance(model, dict):
+        return {}
+
+    defaults = {}
+    for definition in model.get("parameters", []):
+        if not isinstance(definition, dict):
+            continue
+        key = definition.get("key")
+        value = definition.get("defaultValue")
+        parameter_type = definition.get("type")
+        if not key or value is None:
+            continue
+        if parameter_type == "integer":
+            try:
+                defaults[key] = int(float(value))
+            except (TypeError, ValueError):
+                continue
+        elif parameter_type == "decimal":
+            try:
+                defaults[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+        elif parameter_type == "boolean":
+            defaults[key] = str(value).strip().lower() in ("true", "yes", "1")
+        else:
+            defaults[key] = str(value)
+    return defaults
 
 
 class MLXtraIntegrationTest:
@@ -1101,10 +1138,90 @@ class MLXtraIntegrationTest:
         self.generated_files.append(path)
         return self.validate_png(path, expected_width=512, expected_height=512)
 
+    def test_ideogram_generation(self) -> bool:
+        """Test image generation with Ideogram 4 and a structured caption."""
+        self.log("\n" + "=" * 70)
+        self.log("TEST 5: Image Generation (Ideogram 4)")
+        self.log("=" * 70)
+
+        test_name = "Image Generation (Ideogram 4)"
+        model_id = "ideogram-ai/ideogram-4-fp8"
+        preflight = self.require_hf_model(test_name, model_id)
+        if preflight is not True:
+            return preflight is None
+
+        request_id = "integration-ideogram-generate"
+        runtime_options = bundled_runtime_options(model_id)
+        if not runtime_options:
+            self.log(f"✗ FAILED: {model_id} has no catalog runtimeOptions", "ERROR")
+            return False
+        parameters = bundled_parameter_defaults(model_id)
+        if not parameters:
+            self.log(f"✗ FAILED: {model_id} has no catalog parameters", "ERROR")
+            return False
+        parameters["seed"] = 42
+        parameters["runtimeOptions"] = runtime_options
+        expected_width = int(parameters.get("width", 1024))
+        expected_height = int(parameters.get("height", 1024))
+
+        caption = {
+            "high_level_description": "A minimal poster showing one red circle on a white background.",
+            "style_description": {
+                "aesthetics": "minimal, clean, high contrast",
+                "lighting": "flat even lighting",
+                "medium": "vector poster",
+                "art_style": "modern geometric graphic design",
+                "color_palette": ["#FFFFFF", "#D71920"],
+            },
+            "compositional_deconstruction": {
+                "background": "plain white background",
+                "elements": [
+                    {
+                        "type": "obj",
+                        "bbox": [300, 300, 700, 700],
+                        "desc": "single centered bright red circle with smooth edges",
+                        "color_palette": ["#D71920"],
+                    }
+                ],
+            },
+        }
+
+        request = {
+            "type": "image.generate",
+            "model": model_id,
+            "request_id": request_id,
+            "prompt": caption,
+            "messages": [{"role": "user", "content": "A red circle poster"}],
+            "output_dir": str(GENERATED_IMAGES_DIR),
+            "parameters": parameters,
+        }
+
+        self.log(f"Request: {json.dumps(request, indent=2)}")
+        self.log("Generating Ideogram image with catalog defaults (this may take several minutes)...")
+
+        messages, success = self.send_request_to_bridge(request, timeout=7200)
+
+        if not success or not self.require_no_error(messages):
+            return False
+
+        image_message = self.require_message(messages, "image.generated", request_id)
+        if not image_message or not self.require_completion(messages, request_id):
+            return False
+
+        path = image_message.get("path")
+        if not path:
+            self.log("✗ FAILED: image.generated did not include a path", "ERROR")
+            return False
+
+        self.generated_files.append(path)
+        return self.validate_png(
+            path, expected_width=expected_width, expected_height=expected_height
+        )
+
     def test_image_missing_prompt_returns_error(self) -> bool:
         """Invalid image generation request returns JSON error without loading a model."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 5: Image Missing Prompt Error")
+        self.log("TEST 6: Image Missing Prompt Error")
         self.log("=" * 70)
 
         request_id = "integration-image-missing-prompt"
@@ -1132,7 +1249,7 @@ class MLXtraIntegrationTest:
     def test_audio_speech(self) -> bool:
         """Test text-to-speech with a locally available catalog audio model."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 6: Audio/Speech (TTS)")
+        self.log("TEST 7: Audio/Speech (TTS)")
         self.log("=" * 70)
 
         test_name = "Audio/Speech (TTS)"
@@ -1192,7 +1309,7 @@ class MLXtraIntegrationTest:
     def test_audio_persistent_session(self) -> bool:
         """Test two speech turns in one bridge process."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 7: Audio Persistent Session")
+        self.log("TEST 8: Audio Persistent Session")
         self.log("=" * 70)
 
         test_name = "Audio Persistent Session"
@@ -1254,7 +1371,7 @@ class MLXtraIntegrationTest:
     def test_audio_missing_text_returns_error(self) -> bool:
         """Invalid speech request returns JSON error without loading a model."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 8: Audio Missing Text Error")
+        self.log("TEST 9: Audio Missing Text Error")
         self.log("=" * 70)
 
         request_id = "integration-audio-missing-text"
@@ -1282,7 +1399,7 @@ class MLXtraIntegrationTest:
     def test_music_generation(self) -> bool:
         """Test music generation with ACE-Step."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 8: Music Generation (ACE-Step)")
+        self.log("TEST 10: Music Generation (ACE-Step)")
         self.log("=" * 70)
 
         test_name = "Music Generation (ACE-Step)"
@@ -1337,7 +1454,7 @@ class MLXtraIntegrationTest:
     def test_control_routes(self) -> bool:
         """Test lightweight bridge control routes."""
         self.log("\n" + "=" * 70)
-        self.log("TEST 9: Bridge Control Routes")
+        self.log("TEST 11: Bridge Control Routes")
         self.log("=" * 70)
 
         ping_id = "integration-ping"
@@ -1403,6 +1520,7 @@ class MLXtraIntegrationTest:
             ("Model Normalization", self.test_model_normalization, False),
             ("Chat/Completion (VLM)", self.test_chat_completion, True),
             ("Image Generation (FLUX)", self.test_image_generation, True),
+            ("Image Generation (Ideogram 4)", self.test_ideogram_generation, True),
             (
                 "Image Missing Prompt Error",
                 self.test_image_missing_prompt_returns_error,

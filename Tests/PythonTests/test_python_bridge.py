@@ -2179,7 +2179,10 @@ class TestAudioModelGeneration(unittest.TestCase):
 
 
 class TestImageModelLoading(unittest.TestCase):
-    def test_passes_model_path_to_mflux(self):
+    def setUp(self):
+        python_bridge.IMAGE_MODEL_REGISTRY.clear()
+
+    def test_falls_back_to_model_id_when_local_hf_snapshot_is_absent(self):
         model_id = "black-forest-labs/FLUX.2-klein-4B"
         mock_model_instance = MagicMock()
         mock_flux_class = MagicMock(return_value=mock_model_instance)
@@ -2214,7 +2217,9 @@ class TestImageModelLoading(unittest.TestCase):
             }
         }
 
-        with patch.dict(sys.modules, stubbed_modules):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ, {"HF_HUB_CACHE": temp_dir}
+        ), patch.dict(sys.modules, stubbed_modules):
             result = python_bridge.load_image_model_if_needed(model_id, request=request)
 
             config_module.ModelConfig.from_name.assert_called_once_with(model_name="flux2-klein-4b")
@@ -2222,6 +2227,62 @@ class TestImageModelLoading(unittest.TestCase):
             assert kwargs["model_path"] == model_id
             assert kwargs["model_config"] == fake_config
             assert result == mock_model_instance
+
+    def test_passes_completed_local_hf_snapshot_path_to_mflux(self):
+        model_id = "ideogram-ai/ideogram-4-fp8"
+        mock_model_instance = MagicMock()
+        mock_ideogram_class = MagicMock(return_value=mock_model_instance)
+        fake_config = types.SimpleNamespace(model_name=model_id)
+
+        config_module = types.ModuleType("mflux.models.common.config")
+        config_module.ModelConfig = types.SimpleNamespace(
+            from_name=MagicMock(return_value=fake_config)
+        )
+
+        ideogram_module = types.ModuleType("mflux.models.ideogram4")
+        ideogram_module.Ideogram4 = mock_ideogram_class
+
+        request = {
+            "parameters": {
+                "runtimeOptions": {
+                    "mflux": {
+                        "config": "ideogram-4-fp8",
+                        "textToImageClass": "Ideogram4",
+                    }
+                }
+            }
+        }
+        stubbed_modules = {
+            "mflux": types.ModuleType("mflux"),
+            "mflux.models": types.ModuleType("mflux.models"),
+            "mflux.models.common": types.ModuleType("mflux.models.common"),
+            "mflux.models.common.config": config_module,
+            "mflux.models.ideogram4": ideogram_module,
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            hub_cache = Path(temp_dir)
+            model_cache = hub_cache / "models--ideogram-ai--ideogram-4-fp8"
+            snapshot = model_cache / "snapshots" / "abc123"
+            refs = model_cache / "refs"
+            snapshot.mkdir(parents=True)
+            refs.mkdir(parents=True)
+            (refs / "main").write_text("abc123", encoding="utf-8")
+            (snapshot / ".mlxtra_snapshot_complete.json").write_text("{}", encoding="utf-8")
+
+            with patch.dict(os.environ, {"HF_HUB_CACHE": str(hub_cache)}), patch.dict(
+                sys.modules, stubbed_modules
+            ):
+                result = python_bridge.load_image_model_if_needed(model_id, request=request)
+
+        config_module.ModelConfig.from_name.assert_called_once_with(
+            model_name="ideogram-4-fp8"
+        )
+        args, kwargs = mock_ideogram_class.call_args
+        assert kwargs["model_path"] == str(snapshot)
+        assert kwargs["model_config"] == fake_config
+        assert kwargs["quantize"] is None
+        assert result == mock_model_instance
 
     def test_image_model_requires_runtime_options_config(self):
         with self.assertRaisesRegex(ValueError, "runtimeOptions.mflux.config"):
@@ -2262,7 +2323,9 @@ class TestImageModelLoading(unittest.TestCase):
             "mflux.models.z_image": z_image_module,
         }
 
-        with patch.dict(sys.modules, stubbed_modules):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ, {"HF_HUB_CACHE": temp_dir}
+        ), patch.dict(sys.modules, stubbed_modules):
             result = python_bridge.load_image_model_if_needed(model_id, request=request)
 
             config_module.ModelConfig.from_name.assert_called_once_with(model_name="z-image-turbo")
@@ -2304,7 +2367,9 @@ class TestImageModelLoading(unittest.TestCase):
             "mflux.models.ideogram4": ideogram_module,
         }
 
-        with patch.dict(sys.modules, stubbed_modules):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ, {"HF_HUB_CACHE": temp_dir}
+        ), patch.dict(sys.modules, stubbed_modules):
             result = python_bridge.load_image_model_if_needed(model_id, request=request)
 
             config_module.ModelConfig.from_name.assert_called_once_with(

@@ -779,6 +779,71 @@ def _normalize_ideogram4_caption(prompt: Any) -> Any:
     return caption
 
 
+def _hf_hub_cache_root() -> Path:
+    explicit_cache = os.environ.get("HF_HUB_CACHE")
+    if explicit_cache:
+        return Path(explicit_cache).expanduser()
+
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        return Path(hf_home).expanduser() / "hub"
+
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _hf_model_cache_path(model_id: str) -> Path:
+    return _hf_hub_cache_root() / f"models--{model_id.replace('/', '--')}"
+
+
+def _snapshot_is_in_progress(snapshot_path: Path) -> bool:
+    return (snapshot_path / ".mlxtra_snapshot_in_progress").exists()
+
+
+def _completed_snapshot_candidates(snapshots_path: Path) -> list[Path]:
+    if not snapshots_path.exists():
+        return []
+
+    snapshots = [path for path in snapshots_path.iterdir() if path.is_dir()]
+    completed = [
+        path
+        for path in snapshots
+        if (path / ".mlxtra_snapshot_complete.json").exists()
+        and not _snapshot_is_in_progress(path)
+    ]
+    if completed:
+        return sorted(completed, key=lambda path: path.stat().st_mtime, reverse=True)
+
+    return sorted(
+        [path for path in snapshots if not _snapshot_is_in_progress(path)],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def _local_hf_snapshot_path(model_id: str, revision: str = "main") -> Optional[str]:
+    direct_path = Path(model_id).expanduser()
+    if direct_path.is_absolute() and direct_path.exists():
+        return str(direct_path)
+
+    model_cache_path = _hf_model_cache_path(model_id)
+    snapshots_path = model_cache_path / "snapshots"
+    if not snapshots_path.exists():
+        return None
+
+    ref_path = model_cache_path / "refs" / revision
+    if ref_path.exists():
+        snapshot_ref = ref_path.read_text(encoding="utf-8").strip()
+        if snapshot_ref:
+            snapshot_path = snapshots_path / snapshot_ref
+            if snapshot_path.exists() and not _snapshot_is_in_progress(snapshot_path):
+                return str(snapshot_path)
+
+    for snapshot_path in _completed_snapshot_candidates(snapshots_path):
+        return str(snapshot_path)
+
+    return None
+
+
 def load_image_model_if_needed(
     model_id: str, edit: bool = False, request: Optional[dict] = None
 ):
@@ -807,7 +872,14 @@ def load_image_model_if_needed(
         unload_models()
         log_debug(f"[Python Bridge] Loading image model: {model_id}")
 
-        model = model_class(model_path=model_id, model_config=model_config, quantize=quantize)
+        model_path = _local_hf_snapshot_path(model_id) or model_id
+        log_debug(f"[Python Bridge] Resolved image model path: {model_path}")
+        with contextlib.redirect_stdout(sys.stderr):
+            model = model_class(
+                model_path=model_path,
+                model_config=model_config,
+                quantize=quantize,
+            )
 
         IMAGE_MODEL_REGISTRY[cache_key] = model
 
@@ -1533,12 +1605,19 @@ def _safe_len(value: Any) -> Optional[int]:
 
 
 class _MFluxGenerationProgressCallback:
-    def __init__(self, model_id: str, request: dict, total_steps: int):
+    def __init__(
+        self,
+        model_id: str,
+        request: dict,
+        total_steps: int,
+        stream: Optional[Any] = None,
+    ):
         self.model_id = model_id
         self.request = request
         self.total_steps = max(int(total_steps), 1)
         self.step_count = 0
         self.last_percent = -1
+        self.stream = stream
 
     def reset(self) -> None:
         self.step_count = 0
@@ -1566,6 +1645,7 @@ class _MFluxGenerationProgressCallback:
             message=f"Denoising image ({self.step_count}/{total_steps})",
             fraction=overall_fraction,
             estimated=False,
+            stream=self.stream,
         )
 
 
@@ -1782,25 +1862,34 @@ def handle_image_generation(request: dict) -> None:
                 True,
             )
 
-        progress_callback = _MFluxGenerationProgressCallback(model_id, request, steps)
+        json_stdout = sys.stdout
+        progress_callback = _MFluxGenerationProgressCallback(
+            model_id,
+            request,
+            steps,
+            stream=json_stdout,
+        )
         unregister_progress_callback = _register_mflux_progress_callback(
             model, progress_callback
         )
         try:
             try:
                 progress_callback.reset()
-                image = model.generate_image(**generation_kwargs)
+                with contextlib.redirect_stdout(sys.stderr):
+                    image = model.generate_image(**generation_kwargs)
             except TypeError:
                 generation_kwargs.pop("image_paths", None)
                 if image_paths:
                     generation_kwargs["image_path"] = image_paths[0]
                 try:
                     progress_callback.reset()
-                    image = model.generate_image(**generation_kwargs)
+                    with contextlib.redirect_stdout(sys.stderr):
+                        image = model.generate_image(**generation_kwargs)
                 except TypeError:
                     generation_kwargs.pop("guidance", None)
                     progress_callback.reset()
-                    image = model.generate_image(**generation_kwargs)
+                    with contextlib.redirect_stdout(sys.stderr):
+                        image = model.generate_image(**generation_kwargs)
         finally:
             unregister_progress_callback()
 

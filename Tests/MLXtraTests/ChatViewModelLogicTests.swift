@@ -1510,6 +1510,82 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testDirectImageGenerationUsesExtendedMediaTimeout() async {
+        let originalGenerationTimeout = ChatViewModel.generationTimeout
+        let originalMediaGenerationTimeout = ChatViewModel.mediaGenerationTimeout
+        ChatViewModel.generationTimeout = 0.05
+        ChatViewModel.mediaGenerationTimeout = 0.5
+        defer {
+            ChatViewModel.generationTimeout = originalGenerationTimeout
+            ChatViewModel.mediaGenerationTimeout = originalMediaGenerationTimeout
+        }
+
+        let executor = QuickPromptTestExecutor()
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: executor,
+            runtimeManager: QuickPromptRuntimeManager(),
+            toolExecutor: QuickPromptToolExecutionService()
+        )
+        let generationID = UUID()
+        let messageID = UUID()
+        let imageURL = URL(fileURLWithPath: "/tmp/slow-image.png")
+
+        guard let chatID = viewModel.selectedChatId,
+              let chatIndex = viewModel.chats.firstIndex(where: { $0.id == chatID }) else {
+            XCTFail("Expected an initial selected chat")
+            return
+        }
+
+        viewModel.chats[chatIndex].messages.append(Message(
+            id: messageID,
+            content: "",
+            isUser: false,
+            timestamp: Date(),
+            isStreaming: true
+        ))
+        _ = viewModel.streamingContentStore.begin(messageId: messageID)
+        viewModel.activeGenerationID = generationID
+        viewModel.generationTask = Task {}
+        viewModel.isGenerating = true
+        viewModel.streamingMessageId = messageID
+
+        let stream = AsyncStream<ExecutionEvent> { continuation in
+            Task {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                continuation.yield(.image(imageURL))
+                continuation.yield(.complete("Generated image.", usage: TokenUsage(promptTokens: 1, completionTokens: 0)))
+                continuation.finish()
+            }
+        }
+        let request = ChatGenerationRequest(
+            chatId: chatID,
+            prompt: "Draw a slow image",
+            images: [],
+            tool: .image,
+            profilesByModality: [:],
+            parametersByModelId: [:],
+            selectionDownloadRequirement: nil,
+            selectionOperationName: "Image generation"
+        )
+
+        await viewModel.processStream(
+            stream,
+            forMessage: messageID,
+            request: request,
+            isImageGeneration: true,
+            generationID: generationID
+        )
+
+        XCTAssertEqual(executor.terminateCount, 0)
+        XCTAssertNil(viewModel.activeGenerationID)
+        XCTAssertNil(viewModel.generationTask)
+        XCTAssertFalse(viewModel.isGenerating)
+        XCTAssertEqual(viewModel.chats[chatIndex].messages.last?.imageURLs, [imageURL])
+        XCTAssertEqual(viewModel.chats[chatIndex].messages.last?.isStreaming, false)
+    }
+
+    @MainActor
     func testStreamEndingAfterTokensPreservesPartialResponseAndMarksEngineError() async {
         let viewModel = makeQuickPromptViewModel()
         let generationID = UUID()

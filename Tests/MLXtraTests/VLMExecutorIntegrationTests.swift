@@ -338,6 +338,105 @@ final class VLMExecutorIntegrationTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testBackendSwitchRestartsBridgeBeforeLoadingImageModel() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: tempDirectory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+
+        let scriptURL = tempDirectory.appendingPathComponent("mock_bridge.sh")
+        let startupLogURL = tempDirectory.appendingPathComponent("bridge-startups.txt")
+        let script = """
+        echo $$ >> "\(startupLogURL.path)"
+        printf '%s\\n' '{"type":"system.ready"}'
+
+        while IFS= read -r line; do
+            request_id="$(printf '%s' "$line" | sed -n 's/.*"request_id":"\\([^"]*\\)".*/\\1/p')"
+            model_id="$(printf '%s' "$line" | sed -n 's/.*"model_id":"\\([^"]*\\)".*/\\1/p')"
+            case "$line" in
+                *'"type":"init"'*)
+                    printf '{"type":"model.loaded","request_id":"%s","model":"%s"}\\n' "$request_id" "$model_id"
+                    ;;
+                *'"type":"image.generate"'*)
+                    printf '{"type":"image.generated","request_id":"%s","path":"/tmp/generated.png"}\\n' "$request_id"
+                    printf '{"type":"chat.completion.complete","request_id":"%s","choices":[{"message":{"content":"done"}}],"usage":{"prompt_tokens":0,"completion_tokens":0}}\\n' "$request_id"
+                    ;;
+            esac
+        done
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
+        )
+
+        let runtimeProvider = MockBridgeRuntimeProvider(
+            executablePath: URL(fileURLWithPath: "/bin/sh"),
+            scriptPath: scriptURL,
+            pythonHome: tempDirectory,
+            checkpointsPath: tempDirectory,
+            aceStepPython: URL(fileURLWithPath: "/bin/sh")
+        )
+        let executor = VLMExecutor(runtimeProvider: runtimeProvider)
+        defer {
+            Task { @MainActor in
+                await executor.terminate()
+            }
+        }
+
+        try await executor.initialize()
+        try await executor.preload(modelId: "chat-model", backend: .vlm)
+
+        let stream = try await executor.execute(request: ExecutionRequest(
+            requestID: "image-request",
+            backend: .image,
+            modelId: "image-model",
+            messages: [ExecutionMessage(role: .user, content: "draw")],
+            imageCaption: [
+                "compositional_deconstruction": [
+                    "background": "white",
+                    "elements": []
+                ]
+            ],
+            parameters: ["runtimeOptions": ["mflux": ["config": "ideogram-4-fp8"]]]
+        ))
+
+        var sawImage = false
+        var sawComplete = false
+        for await event in stream {
+            switch event {
+            case .image:
+                sawImage = true
+            case .complete:
+                sawComplete = true
+            case .error(let error):
+                XCTFail("Unexpected bridge error: \(error)")
+            default:
+                break
+            }
+            if sawComplete {
+                break
+            }
+        }
+
+        await executor.terminate()
+
+        let startupLog = try String(contentsOf: startupLogURL, encoding: .utf8)
+        let processIDs = startupLog
+            .split(separator: "\n")
+            .map(String.init)
+
+        XCTAssertTrue(sawImage)
+        XCTAssertTrue(sawComplete)
+        XCTAssertEqual(processIDs.count, 2)
+    }
+
     private func waitForProcessID(at url: URL, timeout: TimeInterval = 2.0) async -> pid_t? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

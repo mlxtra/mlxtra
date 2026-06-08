@@ -2,6 +2,17 @@ import Foundation
 
 @MainActor
 extension ChatViewModel {
+    static func streamTimeout(
+        isImageGeneration: Bool,
+        isSpeechGeneration: Bool,
+        isMusicGeneration: Bool
+    ) -> TimeInterval {
+        if isImageGeneration || isSpeechGeneration || isMusicGeneration {
+            return max(generationTimeout, mediaGenerationTimeout)
+        }
+        return generationTimeout
+    }
+
     func loadModel(_ modelId: String, backend: RuntimeBackend, parameters: [String: Any]? = nil) async throws {
         try await vlmExecutor.preload(modelId: modelId, backend: backend, parameters: parameters)
     }
@@ -330,7 +341,11 @@ extension ChatViewModel {
         var lastRenderTime = Date.distantPast
         let minimumRenderInterval: TimeInterval = 1.0 / 60.0
         var performanceTracker = ChatStreamPerformanceTracker()
-        let overallTimeout = Self.generationTimeout
+        let overallTimeout = Self.streamTimeout(
+            isImageGeneration: isImageGeneration,
+            isSpeechGeneration: isSpeechGeneration,
+            isMusicGeneration: isMusicGeneration
+        )
         var timeoutTask: Task<Void, Never>?
 #if DEBUG
         var tokenIndex = 0

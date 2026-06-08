@@ -22,6 +22,7 @@ enum ChatStreamDiagnostics {
 @MainActor
 class ChatViewModel: ObservableObject {
     static var generationTimeout: TimeInterval = 300.0
+    static var mediaGenerationTimeout: TimeInterval = 7_200.0
     static let launchModelPreloadEnabledKey = "MLXtra.preloadLocalVLMOnLaunch"
     static let defaultLaunchModelPreloadDelayNanoseconds: UInt64 = 2_500_000_000
 
