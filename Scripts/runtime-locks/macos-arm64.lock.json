@@ -1,7 +1,7 @@
 {
   "lockVersion": 1,
   "runtime": {
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pythonVersion": "3.12.8",
     "mlxWheelPlatform": "macosx_14_0_arm64"
   },
