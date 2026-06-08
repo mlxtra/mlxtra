@@ -21,7 +21,36 @@ struct ChatGenerationRequest {
     var isDeepResearch: Bool { tool == .research }
     var shouldPrepareDirectImagePrompt: Bool {
         let imageProfile = profile(for: .image)
-        return isImageGeneration && shouldPrepareImagePrompt(for: imageProfile)
+        guard isImageGeneration else { return false }
+        if imageProfile.imagePromptAdapter == .ideogram4JSON,
+           directIdeogramCaption != nil {
+            return false
+        }
+        return shouldPrepareImagePrompt(for: imageProfile)
+    }
+
+    var directIdeogramCaption: [String: Any]? {
+        let imageProfile = profile(for: .image)
+        guard isImageGeneration,
+              imageProfile.imagePromptAdapter == .ideogram4JSON else {
+            return nil
+        }
+        if case .caption(let caption) = ChatMediaToolPlanBuilder.ideogramCaptionInput(from: prompt) {
+            return caption
+        }
+        return nil
+    }
+
+    var ideogramCaptionFallbackReason: String? {
+        let imageProfile = profile(for: .image)
+        guard isImageGeneration,
+              imageProfile.imagePromptAdapter == .ideogram4JSON else {
+            return nil
+        }
+        if case .invalid(let reason) = ChatMediaToolPlanBuilder.ideogramCaptionInput(from: prompt) {
+            return reason
+        }
+        return nil
     }
 
     func profile(for tool: Tool) -> ModelCapabilityProfile {

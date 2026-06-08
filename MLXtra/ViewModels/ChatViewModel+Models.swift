@@ -20,6 +20,7 @@ extension ChatViewModel {
             activeModelRole: loadedEngineModelRole ?? activeEngineModelRole,
             pendingDownloadModelId: pendingEngineDownloadModel?.modelId,
             pendingDownloadModelName: pendingEngineDownloadModel?.name,
+            pendingDownloadDetail: pendingEngineDownloadDetail,
             freedModelName: freedEngineModelName,
             lastErrorMessage: localEngineErrorMessage
         )
@@ -322,6 +323,7 @@ extension ChatViewModel {
 
         if pendingEngineDownloadModel?.modelId != requirement.modelId || pendingEngineDownloadReason != .preflight {
             pendingEngineDownloadModel = requirement
+            pendingEngineDownloadDetail = nil
             pendingEngineDownloadReason = .preflight
             startPendingDownloadMonitor(for: requirement)
         }
@@ -421,14 +423,16 @@ extension ChatViewModel {
 
     func clearPendingEngineDownloadModel() {
         pendingEngineDownloadModel = nil
+        pendingEngineDownloadDetail = nil
         pendingEngineDownloadReason = nil
         pendingDownloadMonitorTask?.cancel()
         pendingDownloadMonitorTask = nil
     }
 
-    func requestDownloadBeforeUse(model: DownloadableModel) {
+    func requestDownloadBeforeUse(model: DownloadableModel, detail: String? = nil) {
         modelDownloadRequest = model
         pendingEngineDownloadModel = model
+        pendingEngineDownloadDetail = detail
         pendingEngineDownloadReason = .generation
         startPendingDownloadMonitor(for: model)
         loadingMessage = ""
@@ -448,13 +452,17 @@ extension ChatViewModel {
         await runtimeManager.isModelDownloadedOffMain(model: model)
     }
 
-    func requireDownloadedModel(model: DownloadableModel, operation: String) async -> Bool {
+    func requireDownloadedModel(
+        model: DownloadableModel,
+        operation: String,
+        detail: String? = nil
+    ) async -> Bool {
         guard !(await isModelDownloadedOffMain(model: model)) else {
             clearPendingEngineDownloadModel(matching: model.modelId)
             return true
         }
 
-        requestDownloadBeforeUse(model: model)
+        requestDownloadBeforeUse(model: model, detail: detail)
         isGenerating = false
         isModelLoading = false
         streamingMessageId = nil

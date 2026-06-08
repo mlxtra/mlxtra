@@ -74,6 +74,7 @@ class ChatViewModel: ObservableObject {
     @Published var streamingMessageId: UUID?
     @Published var modelDownloadRequest: DownloadableModel?
     @Published var pendingEngineDownloadModel: DownloadableModel?
+    @Published var pendingEngineDownloadDetail: String?
     @Published var musicIntentState: MusicIntentState = .needsInstrumentalOrVocals
     @Published var musicVocalMode: MusicVocalMode = .auto
     @Published var musicLyricsText: String = "" {

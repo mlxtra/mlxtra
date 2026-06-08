@@ -179,6 +179,65 @@ final class ChatMediaToolPlanBuilderTests: XCTestCase {
         XCTAssertTrue(plan.details.isEmpty)
     }
 
+    func testIdeogramCaptionInputAcceptsMinimalStructuredCaption() throws {
+        let prompt = """
+        {
+          "compositional_deconstruction": {
+            "background": "Dark blue",
+            "elements": []
+          }
+        }
+        """
+
+        let input = ChatMediaToolPlanBuilder.ideogramCaptionInput(from: prompt)
+
+        guard case .caption(let caption) = input else {
+            return XCTFail("Expected structured caption")
+        }
+        let composition = try XCTUnwrap(caption["compositional_deconstruction"] as? [String: Any])
+        XCTAssertEqual(composition["background"] as? String, "Dark blue")
+        XCTAssertEqual((composition["elements"] as? [Any])?.count, 0)
+    }
+
+    func testIdeogramCaptionInputAcceptsWrappedStructuredCaption() throws {
+        let prompt = """
+        {
+          "caption": {
+            "high_level_description": "A precise poster",
+            "compositional_deconstruction": {
+              "background": "Dark blue",
+              "elements": []
+            }
+          }
+        }
+        """
+
+        let input = ChatMediaToolPlanBuilder.ideogramCaptionInput(from: prompt)
+
+        guard case .caption(let caption) = input else {
+            return XCTFail("Expected structured caption")
+        }
+        XCTAssertEqual(caption["high_level_description"] as? String, "A precise poster")
+        XCTAssertNotNil(caption["compositional_deconstruction"] as? [String: Any])
+    }
+
+    func testIdeogramCaptionInputReportsMissingRequiredCaptionShape() {
+        let input = ChatMediaToolPlanBuilder.ideogramCaptionInput(from: #"{"high_level_description":"A precise poster"}"#)
+
+        guard case .invalid(let reason) = input else {
+            return XCTFail("Expected invalid structured caption")
+        }
+        XCTAssertEqual(reason, "Missing compositional_deconstruction.")
+    }
+
+    func testIdeogramCaptionInputTreatsPlainTextAsPlainPrompt() {
+        let input = ChatMediaToolPlanBuilder.ideogramCaptionInput(from: "Create a precise poster")
+
+        guard case .plainPrompt = input else {
+            return XCTFail("Expected plain prompt")
+        }
+    }
+
     func testSpeechPlanUsesDecodedTextAndPreservesAudioRuntimeOptions() throws {
         let speechProfile = makeProfile(
             id: "speech",

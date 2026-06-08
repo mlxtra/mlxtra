@@ -15,10 +15,13 @@ private struct ChatGenerationExecutionContext {
     let modelWillLoad: Bool
     let modelLoadParameters: [String: Any]?
     let requiredModel: DownloadableModel
+    let promptPreparationOperationName: String?
+    let promptPreparationStatus: String?
+    let requiredDownloadDetail: String?
 
     var requiredOperationName: String {
         if isImagePromptPreparation {
-            return "Image prompt preparation"
+            return promptPreparationOperationName ?? "Image prompt preparation"
         }
         return isImageGeneration ? "Image generation" : (isSpeechGeneration ? "Speech generation" : "Chat")
     }
@@ -163,6 +166,9 @@ extension ChatViewModel {
             ) else { return }
 
             isGenerating = true
+            if let promptPreparationStatus = context.promptPreparationStatus {
+                loadingMessage = promptPreparationStatus
+            }
             generationProgress = nil
 
             let aiMessage: Message
@@ -693,6 +699,7 @@ extension ChatViewModel {
         let isSpeechGeneration = request.isSpeechGeneration
         let selectedCapabilityProfile = request.profile(for: request.tool)
         let activeChatProfile = request.profile(for: .chat)
+        let imageProfile = request.profile(for: .image)
         let executionProfile = isImagePromptPreparation
             ? activeChatProfile
             : ((isImageGeneration || isSpeechGeneration) ? selectedCapabilityProfile : activeChatProfile)
@@ -701,6 +708,22 @@ extension ChatViewModel {
         let modelLoadParameters = (!isImagePromptPreparation && (isImageGeneration || isSpeechGeneration))
             ? request.executionParameters(for: executionProfile)
             : nil
+        let ideogramPromptPreparation = isImagePromptPreparation
+            && imageProfile.imagePromptAdapter == .ideogram4JSON
+        let promptPreparationStatus: String?
+        let requiredDownloadDetail: String?
+        if ideogramPromptPreparation {
+            if let reason = request.ideogramCaptionFallbackReason {
+                promptPreparationStatus = "Preparing Ideogram caption with \(activeChatProfile.name)..."
+                requiredDownloadDetail = "That does not look like a complete Ideogram JSON caption: \(reason) Download \(activeChatProfile.name) to prepare it automatically, or provide a valid Ideogram JSON caption to use Ideogram only."
+            } else {
+                promptPreparationStatus = nil
+                requiredDownloadDetail = "Ideogram uses \(activeChatProfile.name) to turn plain prompts into structured captions. Download it, or provide a valid Ideogram JSON caption to use Ideogram only."
+            }
+        } else {
+            promptPreparationStatus = nil
+            requiredDownloadDetail = nil
+        }
 
         return ChatGenerationExecutionContext(
             prompt: request.prompt,
@@ -716,7 +739,10 @@ extension ChatViewModel {
             activeBackend: activeBackend,
             modelWillLoad: !isLoadedEngineModel(modelId: resolvedModelId, backend: activeBackend),
             modelLoadParameters: modelLoadParameters,
-            requiredModel: executionProfile.downloadableModel
+            requiredModel: executionProfile.downloadableModel,
+            promptPreparationOperationName: ideogramPromptPreparation ? "Ideogram prompt preparation" : nil,
+            promptPreparationStatus: promptPreparationStatus,
+            requiredDownloadDetail: requiredDownloadDetail
         )
     }
 
@@ -739,7 +765,8 @@ extension ChatViewModel {
 
         guard await requireDownloadedModel(
             model: context.requiredModel,
-            operation: context.requiredOperationName
+            operation: context.requiredOperationName,
+            detail: context.requiredDownloadDetail
         ) else {
             finishActiveGeneration(isMusicGeneration: context.isMusicGeneration, generationID: generationID)
             return false

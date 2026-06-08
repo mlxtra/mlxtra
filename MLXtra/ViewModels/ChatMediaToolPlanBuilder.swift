@@ -1,6 +1,12 @@
 import Foundation
 
 enum ChatMediaToolPlanBuilder {
+    enum IdeogramCaptionInput {
+        case caption([String: Any])
+        case invalid(reason: String)
+        case plainPrompt
+    }
+
     static func makeImagePlan(
         decodedArguments: [String: Any]?,
         fallbackPrompt: String,
@@ -63,6 +69,31 @@ enum ChatMediaToolPlanBuilder {
             return nil
         }
         return caption
+    }
+
+    static func ideogramCaptionInput(from prompt: String) -> IdeogramCaptionInput {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPrompt.hasPrefix("{") else {
+            return .plainPrompt
+        }
+        guard let data = trimmedPrompt.data(using: .utf8),
+              var caption = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .invalid(reason: "JSON could not be parsed.")
+        }
+        if let wrappedCaption = structuredImageCaption(from: caption) {
+            caption = wrappedCaption
+        }
+        guard let composition = caption["compositional_deconstruction"] as? [String: Any] else {
+            return .invalid(reason: "Missing compositional_deconstruction.")
+        }
+        guard let background = composition["background"] as? String,
+              !background.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .invalid(reason: "compositional_deconstruction.background must be a non-empty string.")
+        }
+        guard composition["elements"] is [Any] else {
+            return .invalid(reason: "compositional_deconstruction.elements must be an array.")
+        }
+        return .caption(caption)
     }
 
     static func makeSpeechPlan(

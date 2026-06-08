@@ -432,6 +432,7 @@ struct LocalEngineStatus: Equatable {
         activeModelRole: LocalEngineModelRole,
         pendingDownloadModelId: String?,
         pendingDownloadModelName: String?,
+        pendingDownloadDetail: String? = nil,
         freedModelName: String?,
         lastErrorMessage: String?
     ) -> LocalEngineStatus {
@@ -538,7 +539,8 @@ struct LocalEngineStatus: Equatable {
             return LocalEngineStatus(
                 state: .needsDownload,
                 title: "Needs download",
-                detail: "\(pendingDownloadModelName) needs to be downloaded before use.",
+                detail: pendingDownloadDetail?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                    ?? "\(pendingDownloadModelName) needs to be downloaded before use.",
                 systemImage: "arrow.down.circle",
                 tone: .warning,
                 primaryAction: .openModels,

@@ -800,6 +800,89 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         )
     }
 
+    func testDirectIdeogramStructuredCaptionSkipsPromptPreparationWhenChatModelMissing() async throws {
+        resetPromptConfigurationDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
+        let assetURL = URL(fileURLWithPath: "/tmp/ideogram.png")
+        let executor = MockChatModelExecutor(events: [
+            .image(assetURL),
+            .complete("Generated image.", usage: TokenUsage(promptTokens: 0, completionTokens: 0))
+        ])
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [imageProfile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        let prompt = """
+        {"high_level_description":"A precise poster","compositional_deconstruction":{"background":"Dark blue","elements":[]}}
+        """
+        viewModel.selectTool(.image)
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.inputText = prompt
+
+        viewModel.sendMessage()
+        await waitUntil { executor.receivedRequests.count == 1 }
+        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+
+        let request = executor.receivedRequests[0]
+        XCTAssertEqual(request.backend, .image)
+        XCTAssertEqual(request.modelId, imageProfile.modelId)
+        XCTAssertEqual(request.imageCaption?["high_level_description"] as? String, "A precise poster")
+        let composition = try XCTUnwrap(request.imageCaption?["compositional_deconstruction"] as? [String: Any])
+        XCTAssertEqual(composition["background"] as? String, "Dark blue")
+        XCTAssertEqual(viewModel.chats.first?.messages.last?.imageURLs, [assetURL])
+    }
+
+    func testInvalidIdeogramStructuredCaptionRedirectsToPromptPreparationDownloadWhenChatModelMissing() async throws {
+        resetPromptConfigurationDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
+        let executor = MockChatModelExecutor()
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [imageProfile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.image)
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.inputText = #"{"high_level_description":"A precise poster"}"#
+
+        viewModel.sendMessage()
+        await waitUntil { viewModel.pendingEngineDownloadModel != nil }
+
+        XCTAssertEqual(viewModel.pendingEngineDownloadModel?.modelId, Self.defaultChatModelId)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+        XCTAssertTrue(viewModel.localEngineStatus.detail.contains("Missing compositional_deconstruction."))
+        XCTAssertTrue(viewModel.localEngineStatus.detail.contains("valid Ideogram JSON caption"))
+    }
+
+    func testPlainIdeogramPromptRedirectsToPromptPreparationDownloadWhenChatModelMissing() async throws {
+        resetPromptConfigurationDefaults()
+        let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
+        let executor = MockChatModelExecutor()
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [imageProfile.modelId])
+        let viewModel = ChatViewModel(
+            chatPersistence: MockChatPersistenceService(chatsToLoad: [], selectedChatIdToLoad: nil),
+            vlmExecutor: executor,
+            runtimeManager: runtimeManager,
+            toolExecutor: MockChatToolExecutionService()
+        )
+        viewModel.selectTool(.image)
+        viewModel.selectModelProfile(imageProfile)
+        viewModel.inputText = "Create a precise poster"
+
+        viewModel.sendMessage()
+        await waitUntil { viewModel.pendingEngineDownloadModel != nil }
+
+        XCTAssertEqual(viewModel.pendingEngineDownloadModel?.modelId, Self.defaultChatModelId)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+        XCTAssertTrue(viewModel.localEngineStatus.detail.contains("structured captions"))
+        XCTAssertTrue(viewModel.localEngineStatus.detail.contains("valid Ideogram JSON caption"))
+    }
+
     func testSendMessageUsesGenerationSnapshotWhenSelectionChangesAfterSend() async {
         let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
         let executor = MockChatModelExecutor(events: [

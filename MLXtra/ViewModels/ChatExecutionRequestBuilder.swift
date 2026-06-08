@@ -30,6 +30,9 @@ enum ChatExecutionRequestBuilder {
         )
             ? generation.chatTemplateKwargs(for: activeChatProfile)
             : nil
+        let imageCaption = executionProfile.backend == .image
+            ? generation.directIdeogramCaption
+            : nil
 
         let maxTokens = (chatExecutionParameters["max_tokens"] as? Int)
             ?? activeChatProfile.defaultMaxTokens
@@ -51,6 +54,7 @@ enum ChatExecutionRequestBuilder {
                 ? [ExecutionMessage(role: .user, content: generation.prompt)]
                 : messages,
             images: requestImages.isEmpty ? nil : requestImages,
+            imageCaption: imageCaption,
             outputDirectory: outputDirectory,
             maxTokens: isDirectMediaGeneration ? 0 : maxTokens,
             temperature: isDirectMediaGeneration ? 1.0 : temperature,
