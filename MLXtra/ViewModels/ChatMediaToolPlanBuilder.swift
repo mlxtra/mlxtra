@@ -18,8 +18,17 @@ enum ChatMediaToolPlanBuilder {
         let imageCaption = imageProfile.imagePromptAdapter == .ideogram4JSON
             ? structuredImageCaption(from: decodedArguments)
             : nil
-        let imagePrompt = nonEmptyStringArgument("prompt", from: decodedArguments)
+        let promptArgument = nonEmptyStringArgument("prompt", from: decodedArguments)
+        let promptArgumentIsCaption = imageProfile.imagePromptAdapter == .ideogram4JSON
+            && promptArgument.map { prompt in
+                if case .caption = ideogramCaptionInput(from: prompt) {
+                    return true
+                }
+                return false
+            } == true
+        let imagePrompt = (promptArgumentIsCaption ? nil : promptArgument)
             ?? nonEmptyStringArgument("high_level_description", from: imageCaption)
+            ?? promptArgument
             ?? fallbackPrompt
         let details = imageCaption.flatMap(structuredCaptionDetail).map { [$0] } ?? []
         let supportedImages = imageProfile.supportsImageEditing ? images : []
@@ -63,9 +72,13 @@ enum ChatMediaToolPlanBuilder {
         if let caption = arguments?["caption"] as? [String: Any] {
             return caption
         }
-        guard let captionText = arguments?["caption"] as? String,
-              let data = captionText.data(using: .utf8),
-              let caption = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        if let promptCaption = arguments?["prompt"] as? [String: Any] {
+            return promptCaption
+        }
+        let captionText = nonEmptyStringArgument("caption", from: arguments)
+            ?? nonEmptyStringArgument("prompt", from: arguments)
+        guard let captionText,
+              case .caption(let caption) = ideogramCaptionInput(from: captionText) else {
             return nil
         }
         return caption

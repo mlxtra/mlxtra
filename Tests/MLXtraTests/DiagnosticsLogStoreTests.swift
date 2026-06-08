@@ -36,6 +36,18 @@ final class DiagnosticsLogStoreTests: XCTestCase {
         XCTAssertTrue(text.contains("Retrying local engine"))
     }
 
+    func testForcedRecordCapturesInfoWhenDiagnosticsDisabled() async throws {
+        let store = makeStore(isEnabled: false)
+
+        store.record("Captured generated JSON", category: .generation, level: .info, force: true)
+        try await waitForLogWrite()
+
+        XCTAssertEqual(store.entries.map(\.message), ["Captured generated JSON"])
+
+        let text = await store.exportText()
+        XCTAssertTrue(text.contains("Captured generated JSON"))
+    }
+
     func testVerboseBridgeLoggingCapturesDebugWhenDiagnosticsDisabled() async throws {
         let store = makeStore(isEnabled: false, verboseBridgeLoggingEnabled: true)
 

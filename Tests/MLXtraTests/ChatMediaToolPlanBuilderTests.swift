@@ -145,6 +145,45 @@ final class ChatMediaToolPlanBuilderTests: XCTestCase {
         XCTAssertTrue(plan.details.first?.value.contains(#""high_level_description" : "A precise poster""#) == true)
     }
 
+    func testIdeogramImagePlanParsesStructuredCaptionFromPromptJSONString() throws {
+        let imageProfile = makeProfile(
+            id: "ideogram",
+            name: "Ideogram 4",
+            modelId: "ideogram-ai/ideogram-4-fp8",
+            modality: .image,
+            backend: .image,
+            runtimeOptions: ModelRuntimeOptions(
+                mflux: MFluxRuntimeOptions(
+                    config: "ideogram-4-fp8",
+                    textToImageClass: "Ideogram4"
+                )
+            ),
+            prompting: ModelPromptingOptions(imageAdapter: "ideogram4_json")
+        )
+        let generation = makeGenerationRequest(
+            tool: .image,
+            prompt: "fallback prompt",
+            profiles: [.image: imageProfile]
+        )
+        let prompt = """
+        {"high_level_description":"A precise poster","compositional_deconstruction":{"background":"Dark blue","elements":[]}}
+        """
+
+        let plan = ChatMediaToolPlanBuilder.makeImagePlan(
+            decodedArguments: ["prompt": prompt],
+            fallbackPrompt: generation.prompt,
+            images: [],
+            generation: generation,
+            outputDirectory: URL(fileURLWithPath: "/tmp/images")
+        )
+
+        let requestCaption = try XCTUnwrap(plan.request.imageCaption)
+        XCTAssertEqual(requestCaption["high_level_description"] as? String, "A precise poster")
+        XCTAssertEqual(plan.status, "A precise poster")
+        XCTAssertEqual(plan.request.messages.first?.content, "A precise poster")
+        XCTAssertEqual(plan.details.first?.label, "Structured caption")
+    }
+
     func testIdeogramImagePlanDoesNotInventStructuredCaptionFromPlainPrompt() {
         let imageProfile = makeProfile(
             id: "ideogram",

@@ -200,14 +200,26 @@ final class DiagnosticsLogStore: ObservableObject {
         }
     }
 
+    nonisolated static func capture(
+        _ message: String,
+        category: DiagnosticsLogCategory = .app,
+        level: DiagnosticsLogLevel = .info,
+        details: String? = nil
+    ) {
+        Task { @MainActor in
+            shared.record(message, category: category, level: level, details: details, force: true)
+        }
+    }
+
     func record(
         _ message: String,
         category: DiagnosticsLogCategory = .app,
         level: DiagnosticsLogLevel = .info,
         details: String? = nil,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        force: Bool = false
     ) {
-        guard level.isAlwaysCaptured || isEnabled || verboseBridgeLoggingEnabled else { return }
+        guard force || level.isAlwaysCaptured || isEnabled || verboseBridgeLoggingEnabled else { return }
 
         let entry = DiagnosticsLogEntry(
             id: UUID(),

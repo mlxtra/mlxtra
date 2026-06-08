@@ -606,18 +606,35 @@ extension ChatViewModel {
     ) throws -> [String: Any] {
         guard let data = response.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ExecutionError.pythonError("The VLM did not return valid JSON.")
+            logInvalidImagePromptPreparationResponse(
+                "Image prompt preparation returned invalid JSON",
+                response: response,
+                adapter: adapter
+            )
+            throw ExecutionError.pythonError("The VLM did not return valid JSON. See diagnostics log for the returned text.")
         }
+
+        logImagePromptPreparationJSON(object, adapter: adapter)
 
         switch adapter {
         case .plainText:
             guard let prompt = object["prompt"] as? String,
                   !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                logInvalidImagePromptPreparationResponse(
+                    "Image prompt preparation JSON is missing prompt",
+                    response: response,
+                    adapter: adapter
+                )
                 throw ExecutionError.pythonError("The VLM response is missing a non-empty prompt.")
             }
             return ["prompt": prompt]
         case .ideogram4JSON:
             guard object["compositional_deconstruction"] is [String: Any] else {
+                logInvalidImagePromptPreparationResponse(
+                    "Ideogram prompt preparation JSON is missing compositional_deconstruction",
+                    response: response,
+                    adapter: adapter
+                )
                 throw ExecutionError.pythonError(
                     "The Ideogram 4 caption is missing compositional_deconstruction."
                 )
@@ -627,6 +644,59 @@ extension ChatViewModel {
                 "caption": object
             ]
         }
+    }
+
+    private func logInvalidImagePromptPreparationResponse(
+        _ message: String,
+        response: String,
+        adapter: ImagePromptAdapter
+    ) {
+        DiagnosticsLogStore.log(
+            message,
+            category: .generation,
+            level: .warning,
+            details: """
+            Adapter: \(adapter.rawValue)
+            Returned text:
+            \(Self.truncatedDiagnosticsPreview(response))
+            """
+        )
+    }
+
+    private func logImagePromptPreparationJSON(
+        _ object: [String: Any],
+        adapter: ImagePromptAdapter
+    ) {
+        DiagnosticsLogStore.capture(
+            "Image prompt preparation JSON captured before generation",
+            category: .generation,
+            level: .info,
+            details: """
+            Adapter: \(adapter.rawValue)
+            Generated JSON:
+            \(Self.truncatedDiagnosticsPreview(Self.diagnosticsJSONString(object)))
+            """
+        )
+    }
+
+    private static func truncatedDiagnosticsPreview(_ text: String, limit: Int = 4_000) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else {
+            return trimmed.isEmpty ? "<empty>" : trimmed
+        }
+        return "\(trimmed.prefix(limit))\n… [truncated \(trimmed.count - limit) characters]"
+    }
+
+    private static func diagnosticsJSONString(_ object: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(
+                withJSONObject: object,
+                options: [.prettyPrinted, .sortedKeys]
+              ),
+              let text = String(data: data, encoding: .utf8) else {
+            return String(describing: object)
+        }
+        return text
     }
 
     private func executeSpeechGenerationToolCall(

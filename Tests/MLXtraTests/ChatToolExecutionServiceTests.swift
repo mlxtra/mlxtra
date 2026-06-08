@@ -800,6 +800,75 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         )
     }
 
+    func testInvalidImagePromptPreparationResponseIsLogged() async throws {
+        DiagnosticsLogStore.shared.clear()
+        defer { DiagnosticsLogStore.shared.clear() }
+
+        let viewModel = ChatViewModel(
+            vlmExecutor: MockChatModelExecutor(),
+            toolExecutor: MockChatToolExecutionService()
+        )
+        let invalidResponse = """
+        Here is the caption:
+        ```json
+        {"high_level_description":"A precise poster"}
+        ```
+        """
+
+        XCTAssertThrowsError(
+            try viewModel.imageToolArguments(
+                fromPreparedResponse: invalidResponse,
+                sourcePrompt: "Create a precise poster",
+                adapter: .ideogram4JSON
+            )
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("See diagnostics log"))
+        }
+
+        await waitUntil {
+            DiagnosticsLogStore.shared.entries.contains { entry in
+                entry.category == .generation
+                    && entry.message == "Image prompt preparation returned invalid JSON"
+                    && entry.details?.contains("Here is the caption:") == true
+                    && entry.details?.contains(#"{"high_level_description":"A precise poster"}"#) == true
+            }
+        }
+    }
+
+    func testImagePromptPreparationJSONIsCapturedBeforeGeneration() async throws {
+        DiagnosticsLogStore.shared.clear()
+        defer { DiagnosticsLogStore.shared.clear() }
+
+        let viewModel = ChatViewModel(
+            vlmExecutor: MockChatModelExecutor(),
+            toolExecutor: MockChatToolExecutionService()
+        )
+        let response = """
+        {"high_level_description":"A precise poster","compositional_deconstruction":{"background":"Dark blue","elements":[]}}
+        """
+
+        let arguments = try viewModel.imageToolArguments(
+            fromPreparedResponse: response,
+            sourcePrompt: "Create a precise poster",
+            adapter: .ideogram4JSON
+        )
+
+        XCTAssertEqual(arguments["prompt"] as? String, "Create a precise poster")
+        let caption = try XCTUnwrap(arguments["caption"] as? [String: Any])
+        XCTAssertEqual(caption["high_level_description"] as? String, "A precise poster")
+
+        await waitUntil {
+            DiagnosticsLogStore.shared.entries.contains { entry in
+                entry.category == .generation
+                    && entry.level == .info
+                    && entry.message == "Image prompt preparation JSON captured before generation"
+                    && entry.details?.contains("Adapter: ideogram4_json") == true
+                    && entry.details?.contains(#""high_level_description" : "A precise poster""#) == true
+                    && entry.details?.contains(#""background" : "Dark blue""#) == true
+            }
+        }
+    }
+
     func testDirectIdeogramStructuredCaptionSkipsPromptPreparationWhenChatModelMissing() async throws {
         resetPromptConfigurationDefaults()
         let imageProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
