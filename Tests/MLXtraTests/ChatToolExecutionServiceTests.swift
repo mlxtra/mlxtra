@@ -887,10 +887,13 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let prompt = """
         {"high_level_description":"A precise poster","compositional_deconstruction":{"background":"Dark blue","elements":[]}}
         """
-        viewModel.selectTool(.image)
-        viewModel.selectModelProfile(imageProfile)
         let chatId = try XCTUnwrap(viewModel.chats.first?.id)
-        let generation = viewModel.makeGenerationRequest(chatId: chatId, prompt: prompt, images: [])
+        let generation = generationRequest(
+            chatId: chatId,
+            prompt: prompt,
+            tool: .image,
+            imageProfile: imageProfile
+        )
 
         await viewModel.generateResponse(for: generation)
 
@@ -915,12 +918,15 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             runtimeManager: runtimeManager,
             toolExecutor: MockChatToolExecutionService()
         )
-        viewModel.selectTool(.image)
-        viewModel.selectModelProfile(imageProfile)
-        viewModel.inputText = #"{"high_level_description":"A precise poster"}"#
+        let chatId = try XCTUnwrap(viewModel.chats.first?.id)
+        let generation = generationRequest(
+            chatId: chatId,
+            prompt: #"{"high_level_description":"A precise poster"}"#,
+            tool: .image,
+            imageProfile: imageProfile
+        )
 
-        viewModel.sendMessage()
-        await waitUntil { viewModel.pendingEngineDownloadModel != nil }
+        await viewModel.generateResponse(for: generation)
 
         XCTAssertEqual(viewModel.pendingEngineDownloadModel?.modelId, Self.defaultChatModelId)
         XCTAssertEqual(executor.receivedRequests.count, 0)
@@ -939,12 +945,15 @@ final class ChatToolExecutionServiceTests: XCTestCase {
             runtimeManager: runtimeManager,
             toolExecutor: MockChatToolExecutionService()
         )
-        viewModel.selectTool(.image)
-        viewModel.selectModelProfile(imageProfile)
-        viewModel.inputText = "Create a precise poster"
+        let chatId = try XCTUnwrap(viewModel.chats.first?.id)
+        let generation = generationRequest(
+            chatId: chatId,
+            prompt: "Create a precise poster",
+            tool: .image,
+            imageProfile: imageProfile
+        )
 
-        viewModel.sendMessage()
-        await waitUntil { viewModel.pendingEngineDownloadModel != nil }
+        await viewModel.generateResponse(for: generation)
 
         XCTAssertEqual(viewModel.pendingEngineDownloadModel?.modelId, Self.defaultChatModelId)
         XCTAssertEqual(executor.receivedRequests.count, 0)
@@ -2472,6 +2481,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
     }
 
     private func generationRequest(
+        chatId: UUID = UUID(),
         prompt: String,
         tool: Tool,
         imageProfile: ModelCapabilityProfile,
@@ -2480,7 +2490,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let chatProfile = ModelCapabilityProfile.embeddedProfile(modelId: Self.defaultChatModelId)
             ?? ModelCapabilityProfile.fallbackProfile(for: .vision)
         return ChatGenerationRequest(
-            chatId: UUID(),
+            chatId: chatId,
             prompt: prompt,
             images: [],
             tool: tool,
