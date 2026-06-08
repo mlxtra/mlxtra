@@ -889,13 +889,13 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         """
         viewModel.selectTool(.image)
         viewModel.selectModelProfile(imageProfile)
-        viewModel.inputText = prompt
+        let chatId = try XCTUnwrap(viewModel.chats.first?.id)
+        let generation = viewModel.makeGenerationRequest(chatId: chatId, prompt: prompt, images: [])
 
-        viewModel.sendMessage()
-        await waitUntil { executor.receivedRequests.count == 1 }
-        await waitUntil { viewModel.chats.first?.messages.last?.isStreaming == false }
+        await viewModel.generateResponse(for: generation)
 
-        let request = executor.receivedRequests[0]
+        let request = try XCTUnwrap(executor.receivedRequests.first)
+        XCTAssertEqual(executor.receivedRequests.count, 1)
         XCTAssertEqual(request.backend, .image)
         XCTAssertEqual(request.modelId, imageProfile.modelId)
         XCTAssertEqual(request.imageCaption?["high_level_description"] as? String, "A precise poster")
