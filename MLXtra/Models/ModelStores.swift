@@ -35,8 +35,7 @@ struct ModelSelectionStore {
         guard let modelId = selectedModelId(for: modality),
               let profile = ModelCapabilityProfile.embeddedProfile(modelId: modelId),
               profile.modality == modality,
-              profile.isCatalogVisible,
-              profile.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) else {
+              profile.isCatalogVisible else {
             return nil
         }
 
@@ -155,7 +154,7 @@ struct ModelParameterStore {
 
     func values(for profile: ModelCapabilityProfile) -> [String: String] {
         let supportedKeys = Set(profile.parameters.map(\.key))
-        let saved = storedValues()[profile.modelId] ?? [:]
+        let saved = migratedValues(storedValues()[profile.modelId] ?? [:], for: profile)
         var resolved = Dictionary(uniqueKeysWithValues: profile.parameters.map { ($0.key, $0.defaultValue) })
 
         for (key, value) in saved where supportedKeys.contains(key) {
@@ -223,6 +222,34 @@ struct ModelParameterStore {
     private func save(_ values: [String: [String: String]]) {
         guard let data = try? JSONEncoder().encode(values) else { return }
         userDefaults.set(data, forKey: Self.storageKey)
+    }
+
+    private func migratedValues(_ saved: [String: String], for profile: ModelCapabilityProfile) -> [String: String] {
+        guard profile.modelId == "bosonai/higgs-audio-v3-tts-4b" else { return saved }
+
+        var migrated = saved
+        switch normalizeHiggsValue(saved["voice"]) {
+        case "bright", "calm", "serious", "sad":
+            if migrated["emotion"] == nil {
+                migrated["emotion"] = normalizeHiggsValue(saved["voice"])
+            }
+            migrated["voice"] = "default"
+        case "custom reference":
+            migrated["voice"] = "custom_reference"
+        default:
+            break
+        }
+        return migrated
+    }
+
+    private func normalizeHiggsValue(_ value: String?) -> String {
+        (value ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .joined(separator: " ")
     }
 }
 
@@ -309,6 +336,8 @@ struct DownloadableModel: Identifiable, Equatable {
     }
 
     func requiresRuntimeSetupBeforeDownload(manifest: RuntimeManifest? = nil) -> Bool {
-        !isRuntimeCompatible(with: manifest)
+        source.usesComponentBundle
+            && source.helper != nil
+            && !isRuntimeCompatible(with: manifest)
     }
 }

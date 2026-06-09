@@ -1,5 +1,5 @@
 {
-  "runtimeVersion": "0.1.8",
+  "runtimeVersion": "0.1.9",
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
@@ -14,7 +14,7 @@
   "packages": [
     "mlx==0.31.2",
     "mlx-vlm==0.6.1",
-    "mlx-audio==0.4.3",
+    "mlx-audio==0.4.4",
     "misaki[en]==0.9.4",
     "mflux==0.17.5",
     "transformers==5.8.0",
@@ -64,7 +64,8 @@
   "audioRuntimes": {
     "adapters": [
       "kugelaudio",
-      "kokoro"
+      "kokoro",
+      "higgs-audio-v3"
     ]
   }
 }

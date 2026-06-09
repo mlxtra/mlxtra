@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "2026.06.08.1",
+  "catalogVersion": "2026.06.08.2",
   "minAppVersion": "1.0.12",
   "models": [
     {
@@ -1092,6 +1092,191 @@
           "values": {
             "ddpm_steps": "16",
             "cfg_scale": "3.5"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bosonai/higgs-audio-v3-tts-4b",
+      "name": "Higgs Audio v3 TTS 4B",
+      "subtitle": "Expressive multilingual speech model (research/non-commercial)",
+      "modelId": "bosonai/higgs-audio-v3-tts-4b",
+      "modality": "audio",
+      "backend": "audio",
+      "icon": "waveform",
+      "capabilities": ["speech-generation"],
+      "maxContextWindow": 8192,
+      "defaultMaxTokens": 2048,
+      "downloadSizeGB": 18.64,
+      "estimatedMemoryGB": 20.0,
+      "source": {
+        "type": "hugging_face_snapshot",
+        "repo": "bosonai/higgs-audio-v3-tts-4b",
+        "revision": "main",
+        "components": []
+      },
+      "runtime": {
+        "minVersion": "0.1.9",
+        "compatibilityApi": 1
+      },
+      "runtimeOptions": {
+        "audio": {
+          "adapter": "higgs-audio-v3",
+          "defaultVoice": "default"
+        }
+      },
+      "ranking": {
+        "quality": 98,
+        "speed": 60,
+        "defaultForMemoryGB": 24
+      },
+      "parameters": [
+        {
+          "key": "voice",
+          "label": "Voice",
+          "type": "option",
+          "defaultValue": "default",
+          "step": 1,
+          "options": [
+            "default",
+            "female_bright",
+            "female_calm",
+            "female_story",
+            "male_clear",
+            "male_deep",
+            "male_soft",
+            "custom_reference"
+          ],
+          "isAdvanced": false
+        },
+        {
+          "key": "emotion",
+          "label": "Emotion",
+          "type": "option",
+          "defaultValue": "neutral",
+          "step": 1,
+          "options": ["neutral", "bright", "calm", "serious", "sad"],
+          "isAdvanced": false
+        },
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "type": "decimal",
+          "defaultValue": "1",
+          "range": { "min": 0.1, "max": 2 },
+          "step": 0.1,
+          "options": [],
+          "isAdvanced": false
+        },
+        {
+          "key": "max_new_tokens",
+          "label": "Max Audio Tokens",
+          "type": "integer",
+          "defaultValue": "2048",
+          "range": { "min": 256, "max": 4096 },
+          "step": 256,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "top_p",
+          "label": "Top P",
+          "type": "decimal",
+          "defaultValue": "0.9",
+          "range": { "min": 0, "max": 1 },
+          "step": 0.05,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "top_k",
+          "label": "Top K",
+          "type": "integer",
+          "defaultValue": "50",
+          "range": { "min": 0, "max": 100 },
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        },
+        {
+          "key": "ref_audio",
+          "label": "Reference Audio Path",
+          "type": "file_path",
+          "defaultValue": "",
+          "step": 1,
+          "options": [],
+          "allowedExtensions": ["wav", "mp3", "flac"],
+          "isAdvanced": true
+        },
+        {
+          "key": "ref_text",
+          "label": "Reference Transcript",
+          "type": "text",
+          "defaultValue": "",
+          "step": 1,
+          "options": [],
+          "isAdvanced": true
+        }
+      ],
+      "presets": [
+        {
+          "id": "af_bella",
+          "label": "Mira (Bright)",
+          "values": {
+            "voice": "female_bright",
+            "emotion": "bright",
+            "temperature": "0.9",
+            "top_p": "0.9"
+          }
+        },
+        {
+          "id": "af_sarah",
+          "label": "Lina (Calm)",
+          "values": {
+            "voice": "female_calm",
+            "emotion": "calm",
+            "temperature": "0.85",
+            "top_p": "0.9"
+          }
+        },
+        {
+          "id": "af_nicole",
+          "label": "Nora (Story)",
+          "values": {
+            "voice": "female_story",
+            "emotion": "neutral",
+            "temperature": "0.95",
+            "top_p": "0.92"
+          }
+        },
+        {
+          "id": "am_michael",
+          "label": "Orin (Clear)",
+          "values": {
+            "voice": "male_clear",
+            "emotion": "neutral",
+            "temperature": "0.9",
+            "top_p": "0.9"
+          }
+        },
+        {
+          "id": "am_adam",
+          "label": "Damon (Deep)",
+          "values": {
+            "voice": "male_deep",
+            "emotion": "serious",
+            "temperature": "0.85",
+            "top_p": "0.88"
+          }
+        },
+        {
+          "id": "bm_george",
+          "label": "Eren (Soft)",
+          "values": {
+            "voice": "male_soft",
+            "emotion": "calm",
+            "temperature": "0.85",
+            "top_p": "0.9"
           }
         }
       ]

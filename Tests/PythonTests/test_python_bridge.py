@@ -2096,6 +2096,43 @@ class TestRuntimeResolution(unittest.TestCase):
 
 
 class TestAudioModelGeneration(unittest.TestCase):
+    def test_higgs_audio_loader_uses_documented_load_entrypoint(self):
+        fake_model = object()
+        fake_mlx_audio = types.ModuleType("mlx_audio")
+        fake_tts = types.ModuleType("mlx_audio.tts")
+        fake_utils = types.ModuleType("mlx_audio.tts.utils")
+        fake_utils.load = MagicMock(return_value=fake_model)
+        fake_utils.load_model = MagicMock(return_value=object())
+
+        python_bridge.AUDIO_MODEL_REGISTRY.clear()
+        with patch.dict(
+            sys.modules,
+            {
+                "mlx_audio": fake_mlx_audio,
+                "mlx_audio.tts": fake_tts,
+                "mlx_audio.tts.utils": fake_utils,
+            },
+        ), patch.object(
+            python_bridge, "unload_models"
+        ), patch.object(
+            python_bridge, "_configure_espeak_runtime"
+        ), patch("sys.stdout", new_callable=io.StringIO):
+            loaded = python_bridge.load_audio_model_if_needed(
+                "bosonai/higgs-audio-v3-tts-4b",
+                request={
+                    "parameters": {
+                        "runtimeOptions": {
+                            "audio": {"adapter": "higgs-audio-v3"}
+                        }
+                    }
+                },
+            )
+
+        self.assertIs(loaded, fake_model)
+        fake_utils.load.assert_called_once_with("bosonai/higgs-audio-v3-tts-4b")
+        fake_utils.load_model.assert_not_called()
+        python_bridge.AUDIO_MODEL_REGISTRY.clear()
+
     def test_kokoro_generation_uses_voice_speed_and_language(self):
         generated = object()
 
@@ -2176,6 +2213,193 @@ class TestAudioModelGeneration(unittest.TestCase):
             model.calls[2],
             {"text": "hello", "cfg_scale": 3.5, "ddpm_steps": 16},
         )
+
+    def test_higgs_generation_forwards_sampling_and_reference_parameters(self):
+        generated = object()
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = []
+
+            def generate(self, **kwargs):
+                self.calls.append(kwargs)
+                return [generated]
+
+        model = FakeModel()
+
+        result = list(
+            python_bridge._generate_speech_segments(
+                model,
+                "higgs-audio-v3",
+                "hello",
+                cfg_scale=3.0,
+                ddpm_steps=10,
+                voice="default",
+                speed=1.0,
+                lang_code="",
+                max_new_tokens=1024,
+                temperature=0.8,
+                top_p=0.9,
+                top_k=50,
+                seed=123,
+                ref_audio="/tmp/reference.wav",
+                ref_text="Reference transcript.",
+            )
+        )
+
+        self.assertEqual(result, [generated])
+        self.assertEqual(
+            model.calls[0],
+            {
+                "text": "hello",
+                "max_new_tokens": 1024,
+                "temperature": 0.8,
+                "top_p": 0.9,
+                "top_k": 50,
+                "seed": 123,
+                "ref_audio": "/tmp/reference.wav",
+                "ref_text": "Reference transcript.",
+            },
+        )
+
+    def test_higgs_reference_voice_detection_accepts_menu_values(self):
+        self.assertFalse(python_bridge._higgs_voice_uses_reference("default"))
+        self.assertFalse(python_bridge._higgs_voice_uses_reference(""))
+        self.assertTrue(python_bridge._higgs_voice_uses_reference("custom reference"))
+        self.assertTrue(python_bridge._higgs_voice_uses_reference("custom_reference"))
+        self.assertTrue(python_bridge._higgs_voice_uses_reference("voice clone"))
+
+    def test_higgs_emotion_styles_apply_local_inline_controls(self):
+        self.assertEqual(
+            python_bridge._apply_higgs_emotion_style("Hello.", "neutral"),
+            "Hello.",
+        )
+        self.assertEqual(
+            python_bridge._apply_higgs_emotion_style("Hello.", "bright"),
+            "<|emotion:enthusiasm|><|prosody:expressive_high|>Hello.",
+        )
+        self.assertEqual(
+            python_bridge._apply_higgs_emotion_style("Hello.", "serious"),
+            "<|emotion:determination|><|prosody:pitch_low|>Hello.",
+        )
+
+    def test_higgs_preset_voice_resolves_local_reference(self):
+        reference = python_bridge._higgs_reference_voice("female_bright")
+
+        self.assertIsNotNone(reference)
+        self.assertTrue(reference["audio"].endswith("female_bright.wav"))
+        self.assertIn("Mira speaks brightly", reference["text"])
+
+    def test_higgs_handle_uses_preset_reference_and_independent_emotion(self):
+        class FakeAudio:
+            shape = (120,)
+
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+        result = types.SimpleNamespace(audio=FakeAudio(), sample_rate=24000)
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_audio_model_if_needed", return_value=object()
+        ), patch.object(
+            python_bridge, "_generate_speech_segments", return_value=[result]
+        ) as generate, patch.object(
+            python_bridge, "_write_wav"
+        ), patch("sys.stdout", new_callable=io.StringIO):
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "model": "bosonai/higgs-audio-v3-tts-4b",
+                    "input": "Hello.",
+                    "parameters": {
+                        "voice": "female_bright",
+                        "emotion": "serious",
+                        "runtimeOptions": {
+                            "audio": {"adapter": "higgs-audio-v3"}
+                        },
+                    },
+                    "output_dir": output_dir,
+                    "request_id": "req-higgs-preset",
+                }
+            )
+
+        args, kwargs = generate.call_args
+        self.assertEqual(args[2], "<|emotion:determination|><|prosody:pitch_low|>Hello.")
+        self.assertTrue(kwargs["ref_audio"].endswith("female_bright.wav"))
+        self.assertIn("Mira speaks brightly", kwargs["ref_text"])
+
+    def test_higgs_handle_default_voice_omits_reference_audio(self):
+        class FakeAudio:
+            shape = (120,)
+
+        fake_mx = types.ModuleType("mlx.core")
+        fake_mx.clear_cache = MagicMock()
+        mlx_module = types.ModuleType("mlx")
+        mlx_module.core = fake_mx
+        result = types.SimpleNamespace(audio=FakeAudio(), sample_rate=24000)
+
+        with tempfile.TemporaryDirectory() as output_dir, patch.dict(
+            sys.modules,
+            {"mlx": mlx_module, "mlx.core": fake_mx},
+        ), patch.object(
+            python_bridge, "load_audio_model_if_needed", return_value=object()
+        ), patch.object(
+            python_bridge, "_generate_speech_segments", return_value=[result]
+        ) as generate, patch.object(
+            python_bridge, "_write_wav"
+        ), patch("sys.stdout", new_callable=io.StringIO):
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "model": "bosonai/higgs-audio-v3-tts-4b",
+                    "input": "Hello.",
+                    "parameters": {
+                        "voice": "default",
+                        "emotion": "neutral",
+                        "runtimeOptions": {
+                            "audio": {"adapter": "higgs-audio-v3"}
+                        },
+                    },
+                    "output_dir": output_dir,
+                    "request_id": "req-higgs-default",
+                }
+            )
+
+        _, kwargs = generate.call_args
+        self.assertIsNone(kwargs["ref_audio"])
+        self.assertIsNone(kwargs["ref_text"])
+
+    def test_higgs_handle_custom_reference_requires_audio_path_before_loading(self):
+        with patch.object(
+            python_bridge, "load_audio_model_if_needed"
+        ) as load_model, patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "model": "bosonai/higgs-audio-v3-tts-4b",
+                    "input": "Hello.",
+                    "parameters": {
+                        "voice": "custom_reference",
+                        "runtimeOptions": {
+                            "audio": {"adapter": "higgs-audio-v3"}
+                        },
+                    },
+                    "request_id": "req-higgs-custom-missing",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertIn("requires a local reference audio file", messages[-1]["message"])
+        load_model.assert_not_called()
 
 
 class TestImageModelLoading(unittest.TestCase):

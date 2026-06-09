@@ -114,6 +114,12 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
     ) async throws -> ChatToolExecutionOutcome {
         do {
             try Task.checkCancellation()
+            if let preflightErrorMessage = plan.preflightErrorMessage {
+                return .failedToolMessage(
+                    "\(plan.unavailablePrefix): \(preflightErrorMessage)",
+                    localEngineErrorMessage: preflightErrorMessage
+                )
+            }
             if !modelExecutor.isReady {
                 try await modelExecutor.initialize()
             }

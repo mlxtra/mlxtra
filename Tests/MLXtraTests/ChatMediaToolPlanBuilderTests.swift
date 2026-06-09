@@ -367,6 +367,27 @@ final class ChatMediaToolPlanBuilderTests: XCTestCase {
         XCTAssertEqual(plan.request.messages.first?.content, "fallback narration")
     }
 
+    func testHiggsCustomReferenceSpeechPlanRequiresReferenceAudioBeforeExecution() throws {
+        let higgs = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "bosonai/higgs-audio-v3-tts-4b"))
+        let generation = makeGenerationRequest(
+            tool: .tts,
+            prompt: "Read this aloud",
+            profiles: [.audio: higgs],
+            parametersByModelId: [
+                higgs.modelId: ["voice": "custom_reference"]
+            ]
+        )
+
+        let plan = ChatMediaToolPlanBuilder.makeSpeechPlan(
+            decodedArguments: nil,
+            fallbackPrompt: generation.prompt,
+            generation: generation,
+            outputDirectory: URL(fileURLWithPath: "/tmp/speech")
+        )
+
+        XCTAssertEqual(plan.preflightErrorMessage, "Custom Reference voice requires a local reference audio file.")
+    }
+
     private func makeGenerationRequest(
         tool: Tool,
         prompt: String,

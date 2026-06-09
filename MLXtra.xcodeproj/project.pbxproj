@@ -67,6 +67,7 @@
 		8A010001000000000000001A /* bridge_utils.py in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000101A /* bridge_utils.py */; };
 		8A0100010000000000000030 /* model-catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102D /* model-catalog.json */; };
 		8A0100010000000000000031 /* stable-channel.json in Resources */ = {isa = PBXBuildFile; fileRef = 8A010001000000000000102E /* stable-channel.json */; };
+		8A0B00010000000000000001 /* ReferenceVoices in Resources */ = {isa = PBXBuildFile; fileRef = 8A0B00010000000000001001 /* ReferenceVoices */; };
 		8A0300010000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8A0300010000000000001001 /* Assets.xcassets */; };
 		8A0400010000000000000001 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 8A0400010000000000001001 /* LICENSE */; };
 		8A0400010000000000000002 /* NOTICE in Resources */ = {isa = PBXBuildFile; fileRef = 8A0400010000000000001002 /* NOTICE */; };
@@ -206,6 +207,7 @@
 		8A010001000000000000102C /* ReasoningContentFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningContentFilter.swift; sourceTree = "<group>"; };
 		8A010001000000000000102D /* model-catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "model-catalog.json"; sourceTree = "<group>"; };
 		8A010001000000000000102E /* stable-channel.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "stable-channel.json"; sourceTree = "<group>"; };
+		8A0B00010000000000001001 /* ReferenceVoices */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ReferenceVoices; sourceTree = "<group>"; };
 		8A010001000000000000102F /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		8A0300010000000000001001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		8A0400010000000000001001 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
@@ -440,6 +442,7 @@
 				8A010001000000000000101A /* bridge_utils.py */,
 				8A010001000000000000102D /* model-catalog.json */,
 				8A010001000000000000102E /* stable-channel.json */,
+				8A0B00010000000000001001 /* ReferenceVoices */,
 				8A0300010000000000001001 /* Assets.xcassets */,
 				8A0100010000000000001012 /* runtime */,
 			);
@@ -656,6 +659,7 @@
 				8A010001000000000000001A /* bridge_utils.py in Resources */,
 				8A0100010000000000000030 /* model-catalog.json in Resources */,
 				8A0100010000000000000031 /* stable-channel.json in Resources */,
+				8A0B00010000000000000001 /* ReferenceVoices in Resources */,
 				8A0900010000000000000002 /* runtime in Resources */,
 				8A0300010000000000000001 /* Assets.xcassets in Resources */,
 			);

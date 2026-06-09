@@ -77,14 +77,27 @@ extension RuntimeManager {
         bundledCandidates candidates: [URL],
         fileManager: FileManager = .default
     ) -> URL {
-        if isRuntimeBundleStructurallyValid(installed, fileManager: fileManager) {
-            RuntimeDiagnostics.log("[RuntimeManager] Using installed runtime bundle at: \(installed.path)")
-            return installed
+        let validRuntimes = ([installed] + candidates).compactMap { path -> (url: URL, manifest: RuntimeManifest, isInstalled: Bool)? in
+            guard isRuntimeBundleStructurallyValid(path, fileManager: fileManager),
+                  let manifest = runtimeManifest(at: path) else {
+                return nil
+            }
+            return (path, manifest, path == installed)
         }
 
-        for path in candidates where isRuntimeBundleStructurallyValid(path, fileManager: fileManager) {
-            RuntimeDiagnostics.log("[RuntimeManager] Found bundled runtime bundle at: \(path.path)")
-            return path
+        if let selected = validRuntimes.max(by: { lhs, rhs in
+            let versionOrder = VersionComparator.compare(lhs.manifest.runtimeVersion, rhs.manifest.runtimeVersion)
+            if versionOrder != .orderedSame {
+                return versionOrder == .orderedAscending
+            }
+            return !lhs.isInstalled && rhs.isInstalled
+        }) {
+            if selected.isInstalled {
+                RuntimeDiagnostics.log("[RuntimeManager] Using installed runtime bundle at: \(selected.url.path)")
+            } else {
+                RuntimeDiagnostics.log("[RuntimeManager] Found newer bundled runtime bundle at: \(selected.url.path)")
+            }
+            return selected.url
         }
 
         RuntimeDiagnostics.log("[RuntimeManager] Runtime bundle not found in expected locations, using default")

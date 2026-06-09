@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ComposerModelControl: View {
     @ObservedObject var viewModel: ChatViewModel
@@ -268,7 +269,10 @@ private struct ComposerModelPickerPopover: View {
     }
 
     private var compatibleProfiles: [ModelCapabilityProfile] {
-        viewModel.availableProfilesForCurrentMode.filter { $0.isRuntimeCompatible() }
+        ModelCapabilityProfile.selectableProfiles(
+            for: viewModel.modelModality(for: viewModel.selectedTool),
+            requireRuntimeCompatibility: false
+        )
     }
 
     private var hasResolvedModelStates: Bool {
@@ -373,6 +377,12 @@ private extension String {
             .replacingOccurrences(of: ".", with: "-")
             .replacingOccurrences(of: "_", with: "-")
     }
+
+    var displayNameForModelParameterOption: String {
+        let cleaned = replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "Auto" : cleaned.capitalized
+    }
 }
 
 extension LocalEngineStatus.Tone {
@@ -389,6 +399,12 @@ extension LocalEngineStatus.Tone {
         case .danger:
             return .red
         }
+    }
+}
+
+private extension ModelCapabilityProfile {
+    var isHiggsAudioV3: Bool {
+        modelId == "bosonai/higgs-audio-v3-tts-4b"
     }
 }
 
@@ -437,7 +453,13 @@ private struct ModelParameterPopover: View {
                 Spacer()
             }
 
-            if !basicParameters.isEmpty {
+            if profile.isHiggsAudioV3 {
+                HiggsAudioV3ParameterSection(
+                    viewModel: viewModel,
+                    profile: profile,
+                    showAdvanced: $showAdvanced
+                )
+            } else if !basicParameters.isEmpty {
                 VStack(spacing: 10) {
                     ForEach(basicParameters) { parameter in
                         ParameterControl(
@@ -451,7 +473,7 @@ private struct ModelParameterPopover: View {
                 }
             }
 
-            if !advancedParameters.isEmpty {
+            if !profile.isHiggsAudioV3, !advancedParameters.isEmpty {
                 ClickableDisclosureSection(isExpanded: $showAdvanced) {
                     VStack(spacing: 10) {
                         ForEach(advancedParameters) { parameter in
@@ -496,6 +518,255 @@ private struct ModelParameterPopover: View {
         }
         .padding(14)
         .designPanelSurface(cornerRadius: MLXtraDesignSystem.Radius.card)
+    }
+}
+
+private struct HiggsAudioV3ParameterSection: View {
+    @ObservedObject var viewModel: ChatViewModel
+    let profile: ModelCapabilityProfile
+    @Binding var showAdvanced: Bool
+
+    private var voiceDefinition: ModelParameterDefinition? {
+        profile.parameterDefinition(key: "voice")
+    }
+
+    private var emotionDefinition: ModelParameterDefinition? {
+        profile.parameterDefinition(key: "emotion")
+    }
+
+    private var referenceAudioDefinition: ModelParameterDefinition? {
+        profile.parameterDefinition(key: "ref_audio")
+    }
+
+    private var basicParameters: [ModelParameterDefinition] {
+        profile.parameters.filter { parameter in
+            !parameter.isAdvanced && parameter.key != "voice" && parameter.key != "emotion"
+        }
+    }
+
+    private var advancedParameters: [ModelParameterDefinition] {
+        profile.parameters.filter { parameter in
+            parameter.isAdvanced && parameter.key != "ref_audio"
+        }
+    }
+
+    private var selectedVoiceValue: String {
+        viewModel.parameterValue(for: profile, key: "voice")
+    }
+
+    private var selectedEmotionValue: String {
+        viewModel.parameterValue(for: profile, key: "emotion")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let voiceDefinition {
+                HiggsSettingBlock(title: "Voice") {
+                    HiggsVoiceMenu(
+                        selectedValue: selectedVoiceValue,
+                        onSelect: { value in
+                            viewModel.setParameterValue(value, for: voiceDefinition, profile: profile)
+                        }
+                    )
+
+                    if selectedVoiceValue == "custom_reference", let referenceAudioDefinition {
+                        FilePathParameterControl(
+                            definition: referenceAudioDefinition,
+                            value: viewModel.parameterValue(for: profile, key: referenceAudioDefinition.key),
+                            title: "Reference audio",
+                            onChange: { value in
+                                viewModel.setParameterValue(value, for: referenceAudioDefinition, profile: profile)
+                            }
+                        )
+                    }
+                }
+            }
+
+            if let emotionDefinition {
+                HiggsSettingBlock(title: "Emotion") {
+                    Picker("Emotion", selection: Binding(
+                        get: { selectedEmotionValue },
+                        set: { value in
+                            viewModel.setParameterValue(value, for: emotionDefinition, profile: profile)
+                        }
+                    )) {
+                        ForEach(emotionDefinition.options, id: \.self) { option in
+                            Text(option.displayNameForModelParameterOption).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+
+            if !basicParameters.isEmpty {
+                VStack(spacing: 10) {
+                    ForEach(basicParameters) { parameter in
+                        ParameterControl(
+                            definition: parameter,
+                            value: viewModel.parameterValue(for: profile, key: parameter.key),
+                            onChange: { value in
+                                viewModel.setParameterValue(value, for: parameter, profile: profile)
+                            }
+                        )
+                    }
+                }
+            }
+
+            if !advancedParameters.isEmpty {
+                ClickableDisclosureSection(isExpanded: $showAdvanced) {
+                    VStack(spacing: 10) {
+                        ForEach(advancedParameters) { parameter in
+                            ParameterControl(
+                                definition: parameter,
+                                value: viewModel.parameterValue(for: profile, key: parameter.key),
+                                onChange: { value in
+                                    viewModel.setParameterValue(value, for: parameter, profile: profile)
+                                }
+                            )
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Text("Advanced")
+                        .font(.caption.weight(.semibold))
+                }
+            }
+        }
+    }
+}
+
+private struct HiggsSettingBlock<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+            content
+        }
+    }
+}
+
+private struct HiggsVoiceMenu: View {
+    let selectedValue: String
+    let onSelect: (String) -> Void
+
+    private var selectedOption: HiggsAudioV3VoiceOption {
+        HiggsAudioV3VoiceOption.option(for: selectedValue)
+    }
+
+    var body: some View {
+        Menu {
+            Section("Female") {
+                ForEach(HiggsAudioV3VoiceOption.femalePresets) { option in
+                    voiceButton(option)
+                }
+            }
+
+            Section("Male") {
+                ForEach(HiggsAudioV3VoiceOption.malePresets) { option in
+                    voiceButton(option)
+                }
+            }
+
+            Section("Custom") {
+                voiceButton(.customReference)
+                voiceButton(.defaultVoice)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: selectedOption.systemImage)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 26, height: 26)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(selectedOption.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text(selectedOption.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(MLXtraDesignSystem.Surface.hoverFill.opacity(0.65))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("higgs.voice.menu")
+    }
+
+    @ViewBuilder
+    private func voiceButton(_ option: HiggsAudioV3VoiceOption) -> some View {
+        Button {
+            onSelect(option.id)
+        } label: {
+            Label(option.menuTitle(isSelected: selectedValue == option.id), systemImage: option.systemImage)
+        }
+    }
+}
+
+private struct HiggsAudioV3VoiceOption: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let systemImage: String
+
+    func menuTitle(isSelected: Bool) -> String {
+        isSelected ? "\(title) ✓" : title
+    }
+
+    static let defaultVoice = HiggsAudioV3VoiceOption(
+        id: "default",
+        title: "Default",
+        subtitle: "Model voice without reference audio",
+        systemImage: "waveform"
+    )
+
+    static let customReference = HiggsAudioV3VoiceOption(
+        id: "custom_reference",
+        title: "Custom Reference",
+        subtitle: "Use a local WAV, MP3, or FLAC file",
+        systemImage: "folder.badge.plus"
+    )
+
+    static let femalePresets: [HiggsAudioV3VoiceOption] = [
+        HiggsAudioV3VoiceOption(id: "female_bright", title: "Mira (Bright)", subtitle: "Bright female", systemImage: "person.wave.2"),
+        HiggsAudioV3VoiceOption(id: "female_calm", title: "Lina (Calm)", subtitle: "Calm female", systemImage: "person.wave.2"),
+        HiggsAudioV3VoiceOption(id: "female_story", title: "Nora (Story)", subtitle: "Storytelling female", systemImage: "person.wave.2")
+    ]
+
+    static let malePresets: [HiggsAudioV3VoiceOption] = [
+        HiggsAudioV3VoiceOption(id: "male_clear", title: "Orin (Clear)", subtitle: "Clear male", systemImage: "person.wave.2.fill"),
+        HiggsAudioV3VoiceOption(id: "male_deep", title: "Damon (Deep)", subtitle: "Deep male", systemImage: "person.wave.2.fill"),
+        HiggsAudioV3VoiceOption(id: "male_soft", title: "Eren (Soft)", subtitle: "Soft male", systemImage: "person.wave.2.fill")
+    ]
+
+    static var allOptions: [HiggsAudioV3VoiceOption] {
+        [defaultVoice] + femalePresets + malePresets + [customReference]
+    }
+
+    static func option(for value: String) -> HiggsAudioV3VoiceOption {
+        allOptions.first { $0.id == value } ?? defaultVoice
     }
 }
 
@@ -550,7 +821,7 @@ private struct ParameterControl: View {
                 set: { newValue in onChange(newValue) }
             )) {
                 ForEach(definition.options, id: \.self) { option in
-                    Text(option.isEmpty ? "Auto" : option.capitalized).tag(option)
+                    Text(option.displayNameForModelParameterOption).tag(option)
                 }
             }
             .pickerStyle(.menu)
@@ -560,11 +831,112 @@ private struct ParameterControl: View {
                 set: { newValue in onChange(newValue) }
             ))
                 .textFieldStyle(.roundedBorder)
+        case .filePath:
+            FilePathParameterControl(
+                definition: definition,
+                value: value,
+                title: definition.label,
+                onChange: onChange
+            )
         }
     }
 
     private var displayValue: String {
         value.isEmpty ? "Auto" : value
+    }
+}
+
+private struct FilePathParameterControl: View {
+    let definition: ModelParameterDefinition
+    let value: String
+    let title: String
+    let onChange: (String) -> Void
+
+    private var selectedFileName: String {
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "No file selected"
+        }
+        return URL(fileURLWithPath: value).lastPathComponent
+    }
+
+    private var allowedFormatText: String {
+        guard !definition.allowedExtensions.isEmpty else { return "Any local file" }
+        return definition.allowedExtensions.map { $0.uppercased() }.joined(separator: ", ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 9) {
+                Image(systemName: value.isEmpty ? "waveform.badge.plus" : "waveform")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 24, height: 24)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                    Text(selectedFileName)
+                        .font(.caption)
+                        .foregroundStyle(value.isEmpty ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    onChange("")
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Clear reference audio")
+                .opacity(value.isEmpty ? 0 : 1)
+                .disabled(value.isEmpty)
+
+                Button {
+                    chooseFile()
+                } label: {
+                    Image(systemName: "folder")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 24, height: 22)
+                }
+                .buttonStyle(.borderless)
+                .help("Choose reference audio")
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
+            .background(MLXtraDesignSystem.Surface.hoverFill.opacity(0.55))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Text("Accepted formats: \(allowedFormatText)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("parameter.filePath.\(definition.key)")
+    }
+
+    private func chooseFile() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = allowedContentTypes
+        panel.prompt = "Choose"
+        panel.message = "Choose a local reference audio file."
+        if panel.runModal() == .OK, let url = panel.url {
+            onChange(url.path)
+        }
+    }
+
+    private var allowedContentTypes: [UTType] {
+        let types = definition.allowedExtensions.compactMap { UTType(filenameExtension: $0) }
+        return types.isEmpty ? [.audio] : types
     }
 }
 

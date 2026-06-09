@@ -18,7 +18,7 @@ KNOWN_BACKENDS = {"vlm", "llm", "image", "audio", "music"}
 KNOWN_SOURCE_TYPES = {"hugging_face_snapshot", "component_bundle"}
 KNOWN_DOWNLOAD_HELPERS = {"ace_step"}
 KNOWN_RUNTIME_COMPONENTS = {"base", "music"}
-KNOWN_PARAMETER_TYPES = {"decimal", "integer", "boolean", "option", "text"}
+KNOWN_PARAMETER_TYPES = {"decimal", "integer", "boolean", "option", "text", "file_path"}
 KNOWN_AVAILABILITY = {"visible", "hidden", "requires_hf_access"}
 KNOWN_IMAGE_PROMPT_ADAPTERS = {"ideogram4_json"}
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:[-.][0-9A-Za-z]+)?$")
@@ -138,6 +138,7 @@ def validate_parameter(parameter: dict[str, Any], path: str, validator: Validato
 
     require_number(parameter.get("step", 1), f"{path}.step", validator, minimum=0)
     validator.require(isinstance(parameter.get("options", []), list), f"{path}.options must be an array")
+    validator.require(isinstance(parameter.get("allowedExtensions", []), list), f"{path}.allowedExtensions must be an array")
     validator.require(isinstance(parameter.get("isAdvanced", False), bool), f"{path}.isAdvanced must be a boolean")
 
     default_value = parameter.get("defaultValue")

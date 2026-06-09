@@ -99,14 +99,14 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
     }
 
-    func testPerModeSelectionFallsBackWhenRememberedModelIsTooLargeForHardware() {
+    func testPerModeSelectionKeepsRememberedHardwareHeavyModel() {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
         let store = ModelSelectionStore(userDefaults: defaults)
         store.setSelectedModelId("mlx-community/Qwen3.6-35B-A3B-4bit", for: .vision)
 
-        XCTAssertNotEqual(
+        XCTAssertEqual(
             store.selectedProfile(for: .vision, hardwareMemoryGB: 8.0)?.modelId,
             "mlx-community/Qwen3.6-35B-A3B-4bit"
         )
@@ -216,6 +216,59 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertTrue(largeCompatibleModelIds.isSubset(of: visibleModelIds))
     }
 
+    func testSelectableProfilesIncludeHardwareHeavyAudioModelsHiddenFromRecommendations() throws {
+        let hardwareMemoryGB = 16.0
+        let higgsModelId = "bosonai/higgs-audio-v3-tts-4b"
+        let higgsProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: higgsModelId))
+        XCTAssertFalse(higgsProfile.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB))
+
+        let visibleModelIds = Set(ModelCapabilityProfile
+            .visibleProfiles(for: .audio, hardwareMemoryGB: hardwareMemoryGB)
+            .map(\.modelId))
+        XCTAssertFalse(visibleModelIds.contains(higgsModelId))
+
+        let selectableModelIds = Set(ModelCapabilityProfile
+            .selectableProfiles(
+                for: .audio,
+                hardwareMemoryGB: hardwareMemoryGB,
+                runtimeManifestProvider: { _ in self.testRuntimeManifest }
+            )
+            .map(\.modelId))
+        XCTAssertTrue(selectableModelIds.contains(higgsModelId))
+    }
+
+    func testSelectableProfilesCanIncludeRuntimeIncompatibleDownloadedChoices() throws {
+        let hardwareMemoryGB = 16.0
+        let higgsModelId = "bosonai/higgs-audio-v3-tts-4b"
+        let oldRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.8",
+            compatibilityApi: 1,
+            supportedBackends: RuntimeBackend.allCases,
+            audioRuntimes: RuntimeAudioRuntimes(
+                adapters: ["kugelaudio", "kokoro", "higgs-audio-v3"]
+            )
+        )
+
+        let runtimeCompatibleModelIds = Set(ModelCapabilityProfile
+            .selectableProfiles(
+                for: .audio,
+                hardwareMemoryGB: hardwareMemoryGB,
+                runtimeManifestProvider: { _ in oldRuntime }
+            )
+            .map(\.modelId))
+        XCTAssertFalse(runtimeCompatibleModelIds.contains(higgsModelId))
+
+        let allSelectableModelIds = Set(ModelCapabilityProfile
+            .selectableProfiles(
+                for: .audio,
+                hardwareMemoryGB: hardwareMemoryGB,
+                requireRuntimeCompatibility: false,
+                runtimeManifestProvider: { _ in oldRuntime }
+            )
+            .map(\.modelId))
+        XCTAssertTrue(allSelectableModelIds.contains(higgsModelId))
+    }
+
     func testImageProfilesExposeCuratedMFluxRuntimeOptions() throws {
         let klein4B = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "black-forest-labs/FLUX.2-klein-4B"))
         let ideogram4 = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "ideogram-ai/ideogram-4-fp8"))
@@ -239,6 +292,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
     func testKokoroSpeechProfileUsesFastEnglishDefaults() throws {
         let kokoro = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "mlx-community/Kokoro-82M-4bit"))
         let kugelAudio = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "kugelaudio/kugelaudio-0-open"))
+        let higgs = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "bosonai/higgs-audio-v3-tts-4b"))
 
         XCTAssertEqual(kugelAudio.runtimeOptions?.audio?.adapter, "kugelaudio")
         XCTAssertEqual(kokoro.runtimeOptions?.audio?.adapter, "kokoro")
@@ -249,6 +303,30 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(kokoro.parameterDefinition(key: "voice")?.defaultValue, "af_heart")
         XCTAssertEqual(kokoro.parameterDefinition(key: "speed")?.defaultValue, "1")
         XCTAssertEqual(kokoro.fit(hardwareMemoryGB: 16.0), .recommended)
+        XCTAssertEqual(higgs.runtimeOptions?.audio?.adapter, "higgs-audio-v3")
+        XCTAssertEqual(higgs.parameterDefinition(key: "voice")?.defaultValue, "default")
+        XCTAssertEqual(
+            higgs.parameterDefinition(key: "voice")?.options,
+            [
+                "default",
+                "female_bright",
+                "female_calm",
+                "female_story",
+                "male_clear",
+                "male_deep",
+                "male_soft",
+                "custom_reference"
+            ]
+        )
+        XCTAssertEqual(higgs.parameterDefinition(key: "emotion")?.defaultValue, "neutral")
+        XCTAssertEqual(higgs.parameterDefinition(key: "emotion")?.options, ["neutral", "bright", "calm", "serious", "sad"])
+        XCTAssertEqual(higgs.parameterDefinition(key: "ref_audio")?.type, .filePath)
+        XCTAssertEqual(higgs.parameterDefinition(key: "ref_audio")?.allowedExtensions, ["wav", "mp3", "flac"])
+        XCTAssertEqual(higgs.parameterDefinition(key: "ref_text")?.type, .text)
+        XCTAssertEqual(higgs.presets.map(\.id), ["af_bella", "af_sarah", "af_nicole", "am_michael", "am_adam", "bm_george"])
+        XCTAssertEqual(higgs.presets.map(\.label), ["Mira (Bright)", "Lina (Calm)", "Nora (Story)", "Orin (Clear)", "Damon (Deep)", "Eren (Soft)"])
+        XCTAssertEqual(higgs.presets.first?.values["voice"], "female_bright")
+        XCTAssertEqual(higgs.presets.first?.values["emotion"], "bright")
         XCTAssertEqual(kugelAudio.fit(hardwareMemoryGB: 16.0), .heavy)
     }
 
@@ -425,6 +503,46 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(values["temperature"], "0.4")
         XCTAssertNil(values["future_parameter"])
         XCTAssertEqual(store.storedValues()[qwen.modelId]?["future_parameter"], "keep")
+    }
+
+    func testFilePathParameterValuesRequireAllowedExtensions() throws {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let higgs = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "bosonai/higgs-audio-v3-tts-4b"))
+        let encoded = try JSONEncoder().encode([
+            higgs.modelId: [
+                "ref_audio": "/tmp/reference.txt"
+            ]
+        ])
+        defaults.set(encoded, forKey: ModelParameterStore.storageKey)
+
+        let store = ModelParameterStore(userDefaults: defaults)
+        XCTAssertEqual(store.values(for: higgs)["ref_audio"], "")
+
+        store.setValue("/tmp/reference.wav", for: "ref_audio", modelId: higgs.modelId)
+        XCTAssertEqual(store.values(for: higgs)["ref_audio"], "/tmp/reference.wav")
+        XCTAssertEqual(store.executionParameters(for: higgs)["ref_audio"] as? String, "/tmp/reference.wav")
+    }
+
+    func testLegacyHiggsVoiceStyleValuesMapToEmotion() throws {
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
+
+        let higgs = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "bosonai/higgs-audio-v3-tts-4b"))
+        let encoded = try JSONEncoder().encode([
+            higgs.modelId: [
+                "voice": "serious"
+            ]
+        ])
+        defaults.set(encoded, forKey: ModelParameterStore.storageKey)
+
+        let store = ModelParameterStore(userDefaults: defaults)
+        let values = store.values(for: higgs)
+
+        XCTAssertEqual(values["voice"], "default")
+        XCTAssertEqual(values["emotion"], "serious")
+        XCTAssertEqual(store.storedValues()[higgs.modelId]?["voice"], "serious")
     }
 
     func testPersistedParameterValuesAreValidatedAndClampedBeforeExecution() throws {
@@ -1009,6 +1127,9 @@ final class ModelCapabilityProfileTests: XCTestCase {
                     classes: ["Flux2Klein", "Flux2KleinEdit", "ZImage", "ZImageTurbo"],
                     quantizeBits: [3, 4, 5, 6, 8]
                 )
+            ),
+            audioRuntimes: RuntimeAudioRuntimes(
+                adapters: ["kugelaudio", "kokoro", "higgs-audio-v3"]
             )
         )
     }

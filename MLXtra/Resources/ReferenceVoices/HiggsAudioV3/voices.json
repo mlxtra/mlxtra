@@ -1,0 +1,38 @@
+{
+  "female_bright": {
+    "label": "Mira",
+    "sourceVoice": "af_bella",
+    "audio": "female_bright.wav",
+    "text": "Mira speaks brightly with friendly, clear energy."
+  },
+  "female_calm": {
+    "label": "Lina",
+    "sourceVoice": "af_sarah",
+    "audio": "female_calm.wav",
+    "text": "Lina speaks calmly with steady, gentle warmth."
+  },
+  "female_story": {
+    "label": "Nora",
+    "sourceVoice": "af_nicole",
+    "audio": "female_story.wav",
+    "text": "Nora tells stories with warm, natural expression."
+  },
+  "male_clear": {
+    "label": "Orin",
+    "sourceVoice": "am_michael",
+    "audio": "male_clear.wav",
+    "text": "Orin speaks clearly with confident pacing."
+  },
+  "male_deep": {
+    "label": "Damon",
+    "sourceVoice": "am_adam",
+    "audio": "male_deep.wav",
+    "text": "Damon speaks with a deep, composed tone."
+  },
+  "male_soft": {
+    "label": "Eren",
+    "sourceVoice": "bm_george",
+    "audio": "male_soft.wav",
+    "text": "Eren speaks softly in a relaxed style."
+  }
+}

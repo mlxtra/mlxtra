@@ -491,13 +491,7 @@ struct SettingsView: View {
         case .downloaded:
             pendingDownloadModelId = ""
         case .notDownloaded, .failed:
-            guard !model.requiresRuntimeSetupBeforeDownload() else {
-                runtimeUpdateManager.bootstrapStableRuntimeInBackground(
-                    reportFailures: true,
-                    component: model.runtime.component
-                )
-                return
-            }
+            guard !model.requiresRuntimeSetupBeforeDownload() else { return }
             downloadManager.download(model)
         case .downloading, .paused:
             return

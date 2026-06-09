@@ -78,12 +78,45 @@ struct ChatMediaToolExecutionPlan {
     let details: [ToolCallDetail]
     let model: DownloadableModel
     let request: ExecutionRequest
+    let preflightErrorMessage: String?
     let loadingStatus: String
     let operationName: String
     let unavailablePrefix: String
     let noOutputMessage: String
     let completionHint: String
     let attachmentKind: ChatGeneratedAssetKind
+
+    init(
+        functionName: String,
+        toolName: String,
+        status: String,
+        icon: String,
+        details: [ToolCallDetail],
+        model: DownloadableModel,
+        request: ExecutionRequest,
+        preflightErrorMessage: String? = nil,
+        loadingStatus: String,
+        operationName: String,
+        unavailablePrefix: String,
+        noOutputMessage: String,
+        completionHint: String,
+        attachmentKind: ChatGeneratedAssetKind
+    ) {
+        self.functionName = functionName
+        self.toolName = toolName
+        self.status = status
+        self.icon = icon
+        self.details = details
+        self.model = model
+        self.request = request
+        self.preflightErrorMessage = preflightErrorMessage
+        self.loadingStatus = loadingStatus
+        self.operationName = operationName
+        self.unavailablePrefix = unavailablePrefix
+        self.noOutputMessage = noOutputMessage
+        self.completionHint = completionHint
+        self.attachmentKind = attachmentKind
+    }
 }
 
 enum ChatToolExecutionUpdate: Equatable {
