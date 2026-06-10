@@ -4,7 +4,7 @@
   "catalog": {
     "version": "2026.06.08.2",
     "url": "https://github.com/mlxtra/mlxtra/releases/download/catalog-2026.06.08.2/model-catalog.json",
-    "sha256": "6da2066dd32c9fe502714dc2487779e73793b3a68d0bb011cb9d7cae638b75ab",
+    "sha256": "5cd12b14ad260b488a2de98c5d9c7ce7378567178d00875ae63a1f778b49422f",
     "sizeBytes": 52856
   },
   "runtimes": [
@@ -17,7 +17,7 @@
       "sha256": "c172b1d854ff4ab38f8b6005667927907bdb0e18f44b6878c90ddcd50be6bf8f",
       "sizeBytes": 393144580,
       "compatibilityApi": 1,
-      "minAppVersion": "1.0.12"
+      "minAppVersion": "1.0.16"
     },
     {
       "version": "0.1.9",
@@ -28,7 +28,7 @@
       "sha256": "f5f4ae08ccb97669329bec2cd93c930c002665e8f20ad3c2a80f4accdd0b1953",
       "sizeBytes": 446163045,
       "compatibilityApi": 1,
-      "minAppVersion": "1.0.12"
+      "minAppVersion": "1.0.16"
     }
   ]
 }

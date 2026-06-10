@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "catalogVersion": "2026.06.08.2",
-  "minAppVersion": "1.0.12",
+  "minAppVersion": "1.0.16",
   "models": [
     {
       "id": "mlx-community/Qwen3.5-9B-MLX-4bit",

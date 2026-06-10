@@ -58,7 +58,7 @@ larger.
 ## Models
 
 MLXtra ships with a curated model catalog. The current bundled catalog is
-`2026.06.08.1` and requires MLXtra `1.0.12` or newer. Download sizes below are
+`2026.06.08.2` and requires MLXtra `1.0.16` or newer. Download sizes below are
 main model downloads; acceleration entries list the extra draft-model download
 size when one is included.
 
@@ -97,7 +97,7 @@ supports `flux2-klein-4b`, `ideogram-4-fp8`, and `z-image-turbo`.
 | --- | ---: | ---: | --- | --- |
 | Kokoro 82M 4-bit | 0.67 GB | 1.0 GB | 0.1.2+ | Fast lightweight speech generation |
 | KugelAudio 0 Open | 18.69 GB | 19.0 GB | 0.1.0+ | Higher-capability speech generation |
-| Higgs Audio v3 TTS 4B | 18.64 GB | 20.0 GB | 0.1.8+ | Expressive multilingual speech; research/non-commercial license |
+| Higgs Audio v3 TTS 4B | 18.64 GB | 20.0 GB | 0.1.9+ | Expressive multilingual speech; research/non-commercial license |
 
 ### Music
 
