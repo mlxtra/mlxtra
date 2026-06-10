@@ -1277,7 +1277,20 @@ final class ModelDownloadManagerTests: XCTestCase {
             try? FileManager.default.removeItem(at: checkpointsPath)
         }
 
-        let model = try XCTUnwrap(DownloadableModel.embedded.first)
+        let model = DownloadableModel(
+            id: "org/cancelled-refresh-model",
+            name: "Cancelled Refresh Model",
+            subtitle: "Test model",
+            modelId: "org/cancelled-refresh-model",
+            modality: .vision,
+            downloadSizeGB: 1.0,
+            estimatedMemoryGB: 1.0,
+            source: ModelSource(
+                type: .huggingFaceSnapshot,
+                repo: "org/cancelled-refresh-model",
+                revision: "main"
+            )
+        )
         let controller = SequencedNativeDownloadController()
         let manager = ModelDownloadManager(
             refreshStatusesOnInit: false,
