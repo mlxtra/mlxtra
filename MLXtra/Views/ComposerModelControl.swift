@@ -269,10 +269,7 @@ private struct ComposerModelPickerPopover: View {
     }
 
     private var compatibleProfiles: [ModelCapabilityProfile] {
-        ModelCapabilityProfile.selectableProfiles(
-            for: viewModel.modelModality(for: viewModel.selectedTool),
-            requireRuntimeCompatibility: false
-        )
+        viewModel.availableProfilesForCurrentMode.filter { $0.isRuntimeCompatible() }
     }
 
     private var hasResolvedModelStates: Bool {

@@ -99,14 +99,14 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertEqual(store.selectedProfile(for: .image, hardwareMemoryGB: 16.0)?.modelId, "black-forest-labs/FLUX.2-klein-4B")
     }
 
-    func testPerModeSelectionKeepsRememberedHardwareHeavyModel() {
+    func testPerModeSelectionFallsBackWhenRememberedModelIsTooLargeForHardware() {
         let defaults = makeDefaults()
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
         let store = ModelSelectionStore(userDefaults: defaults)
         store.setSelectedModelId("mlx-community/Qwen3.6-35B-A3B-4bit", for: .vision)
 
-        XCTAssertEqual(
+        XCTAssertNotEqual(
             store.selectedProfile(for: .vision, hardwareMemoryGB: 8.0)?.modelId,
             "mlx-community/Qwen3.6-35B-A3B-4bit"
         )
@@ -216,7 +216,7 @@ final class ModelCapabilityProfileTests: XCTestCase {
         XCTAssertTrue(largeCompatibleModelIds.isSubset(of: visibleModelIds))
     }
 
-    func testSelectableProfilesIncludeHardwareHeavyAudioModelsHiddenFromRecommendations() throws {
+    func testHiggsAudioIsHiddenAndNotRestoredAsSelectionOn16GBHardware() throws {
         let hardwareMemoryGB = 16.0
         let higgsModelId = "bosonai/higgs-audio-v3-tts-4b"
         let higgsProfile = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: higgsModelId))
@@ -227,46 +227,15 @@ final class ModelCapabilityProfileTests: XCTestCase {
             .map(\.modelId))
         XCTAssertFalse(visibleModelIds.contains(higgsModelId))
 
-        let selectableModelIds = Set(ModelCapabilityProfile
-            .selectableProfiles(
-                for: .audio,
-                hardwareMemoryGB: hardwareMemoryGB,
-                runtimeManifestProvider: { _ in self.testRuntimeManifest }
-            )
-            .map(\.modelId))
-        XCTAssertTrue(selectableModelIds.contains(higgsModelId))
-    }
+        let defaults = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
 
-    func testSelectableProfilesCanIncludeRuntimeIncompatibleDownloadedChoices() throws {
-        let hardwareMemoryGB = 16.0
-        let higgsModelId = "bosonai/higgs-audio-v3-tts-4b"
-        let oldRuntime = RuntimeManifest(
-            runtimeVersion: "0.1.8",
-            compatibilityApi: 1,
-            supportedBackends: RuntimeBackend.allCases,
-            audioRuntimes: RuntimeAudioRuntimes(
-                adapters: ["kugelaudio", "kokoro", "higgs-audio-v3"]
-            )
+        let store = ModelSelectionStore(userDefaults: defaults)
+        store.setSelectedModelId(higgsModelId, for: .audio)
+        XCTAssertNotEqual(
+            store.selectedProfile(for: .audio, hardwareMemoryGB: hardwareMemoryGB)?.modelId,
+            higgsModelId
         )
-
-        let runtimeCompatibleModelIds = Set(ModelCapabilityProfile
-            .selectableProfiles(
-                for: .audio,
-                hardwareMemoryGB: hardwareMemoryGB,
-                runtimeManifestProvider: { _ in oldRuntime }
-            )
-            .map(\.modelId))
-        XCTAssertFalse(runtimeCompatibleModelIds.contains(higgsModelId))
-
-        let allSelectableModelIds = Set(ModelCapabilityProfile
-            .selectableProfiles(
-                for: .audio,
-                hardwareMemoryGB: hardwareMemoryGB,
-                requireRuntimeCompatibility: false,
-                runtimeManifestProvider: { _ in oldRuntime }
-            )
-            .map(\.modelId))
-        XCTAssertTrue(allSelectableModelIds.contains(higgsModelId))
     }
 
     func testImageProfilesExposeCuratedMFluxRuntimeOptions() throws {

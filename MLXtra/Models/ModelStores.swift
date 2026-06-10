@@ -35,7 +35,8 @@ struct ModelSelectionStore {
         guard let modelId = selectedModelId(for: modality),
               let profile = ModelCapabilityProfile.embeddedProfile(modelId: modelId),
               profile.modality == modality,
-              profile.isCatalogVisible else {
+              profile.isCatalogVisible,
+              profile.isHardwareCompatible(hardwareMemoryGB: hardwareMemoryGB) else {
             return nil
         }
 

@@ -206,7 +206,7 @@ extension ModelFit {
         switch self {
         case .recommended: return "Works well"
         case .compatible: return "Works"
-        case .heavy: return "Heavy"
+        case .heavy: return "Too large"
         case .unknown: return "Unknown fit"
         }
     }

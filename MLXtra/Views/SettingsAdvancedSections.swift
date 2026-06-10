@@ -660,6 +660,7 @@ struct ModelDownloadRow: View {
     }
 
     private func requestDownload() {
+        guard modelFit != .heavy else { return }
         guard !model.requiresRuntimeSetupBeforeDownload() else {
             pendingDownloadModelId = model.modelId
             runtimeUpdateManager.bootstrapStableRuntimeInBackground(

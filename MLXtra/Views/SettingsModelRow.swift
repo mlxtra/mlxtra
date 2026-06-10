@@ -130,7 +130,13 @@ struct ModelManagerRow: View {
 
     @ViewBuilder
     private var actionView: some View {
-        if shouldShowRuntimeRequirement {
+        if modelFit == .heavy {
+            Label("Too large for this Mac", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("settings.modelState.hardwareUnsupported")
+        } else if shouldShowRuntimeRequirement {
             VStack(alignment: .trailing, spacing: 6) {
                 Label(runtimeRequirementTitle, systemImage: runtimeRequirementIcon)
                     .font(.callout.weight(.medium))

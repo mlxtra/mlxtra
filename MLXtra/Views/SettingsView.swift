@@ -455,6 +455,7 @@ struct SettingsView: View {
     }
 
     private func requestModelDownload(_ model: DownloadableModel) {
+        guard modelFit(for: model) != .heavy else { return }
         guard !model.requiresRuntimeSetupBeforeDownload() else {
             pendingDownloadModelId = model.modelId
             runtimeUpdateManager.bootstrapStableRuntimeInBackground(
@@ -491,6 +492,10 @@ struct SettingsView: View {
         case .downloaded:
             pendingDownloadModelId = ""
         case .notDownloaded, .failed:
+            guard modelFit(for: model) != .heavy else {
+                pendingDownloadModelId = ""
+                return
+            }
             guard !model.requiresRuntimeSetupBeforeDownload() else { return }
             downloadManager.download(model)
         case .downloading, .paused:
@@ -543,6 +548,7 @@ struct SettingsView: View {
     }
 
     private func setDefaultModel(_ model: DownloadableModel, for mode: SettingsModelMode) {
+        guard modelFit(for: model) != .heavy else { return }
         ModelSelectionStore().setSelectedModelId(model.modelId, for: mode.modality)
         modelSelectionRevision += 1
     }

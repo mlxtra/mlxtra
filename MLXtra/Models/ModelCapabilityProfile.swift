@@ -995,39 +995,6 @@ struct ModelCapabilityProfile: Identifiable, Equatable, Codable {
         }
     }
 
-    static func selectableProfiles(
-        for modality: ModelModality,
-        hardwareMemoryGB: Double = SystemHardware.currentMemoryGB,
-        hardwareChipName: String? = SystemHardware.currentChipName,
-        requireRuntimeCompatibility: Bool = true,
-        runtimeManifestProvider: ((ModelCapabilityProfile) -> RuntimeManifest?)? = nil
-    ) -> [ModelCapabilityProfile] {
-        let visibleProfiles = sortedProfiles(
-            for: modality,
-            hardwareMemoryGB: hardwareMemoryGB,
-            hardwareChipName: hardwareChipName
-        )
-        let visibleIds = Set(visibleProfiles.map(\.modelId))
-        let additionalProfiles = profiles(for: modality)
-            .filter { !visibleIds.contains($0.modelId) }
-            .sorted { lhs, rhs in
-                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-
-        let candidates = visibleProfiles + additionalProfiles
-        guard requireRuntimeCompatibility else {
-            return candidates
-        }
-
-        return candidates.filter { profile in
-            if let runtimeManifestProvider {
-                guard let manifest = runtimeManifestProvider(profile) else { return false }
-                return profile.isRuntimeCompatible(manifest: manifest)
-            }
-            return profile.isRuntimeCompatible()
-        }
-    }
-
     fileprivate static func chatParameters(
         defaults: ChatParameterDefaults = .qwen,
         maxContextWindow: Int? = nil
