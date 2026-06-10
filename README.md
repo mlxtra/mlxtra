@@ -58,7 +58,7 @@ larger.
 ## Models
 
 MLXtra ships with a curated model catalog. The current bundled catalog is
-`2026.06.08.2` and requires MLXtra `1.0.16` or newer. Download sizes below are
+`2026.06.10.1` and requires MLXtra `1.0.16` or newer. Download sizes below are
 main model downloads; acceleration entries list the extra draft-model download
 size when one is included.
 
