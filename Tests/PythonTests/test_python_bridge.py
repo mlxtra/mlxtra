@@ -10,6 +10,7 @@ import sys
 import tempfile
 import types
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -2399,6 +2400,36 @@ class TestAudioModelGeneration(unittest.TestCase):
         ]
         self.assertEqual(messages[-1]["type"], "error")
         self.assertIn("requires a local reference audio file", messages[-1]["message"])
+        load_model.assert_not_called()
+
+    def test_higgs_handle_custom_reference_rejects_missing_file_before_loading(self):
+        missing_reference = Path(tempfile.gettempdir()) / f"missing-{uuid.uuid4().hex}.wav"
+        with patch.object(
+            python_bridge, "load_audio_model_if_needed"
+        ) as load_model, patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_audio_speech(
+                {
+                    "type": "audio.speech",
+                    "model": "bosonai/higgs-audio-v3-tts-4b",
+                    "input": "Hello.",
+                    "parameters": {
+                        "voice": "custom_reference",
+                        "ref_audio": str(missing_reference),
+                        "runtimeOptions": {
+                            "audio": {"adapter": "higgs-audio-v3"}
+                        },
+                    },
+                    "request_id": "req-higgs-custom-missing-file",
+                }
+            )
+
+        messages = [
+            json.loads(line)
+            for line in captured.getvalue().splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(messages[-1]["type"], "error")
+        self.assertIn("reference audio file was not found", messages[-1]["message"])
         load_model.assert_not_called()
 
 

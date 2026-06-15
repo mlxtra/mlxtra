@@ -44,6 +44,7 @@ _HIGGS_EMOTION_STYLE_PREFIXES = {
     "serious": "<|emotion:determination|><|prosody:pitch_low|>",
     "sad": "<|emotion:sadness|><|prosody:speed_slow|>",
 }
+_HIGGS_REFERENCE_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
 _HIGGS_REFERENCE_VOICE_MANIFEST: Optional[Dict[str, Any]] = None
 
 
@@ -1674,6 +1675,27 @@ def _higgs_voice_uses_reference(voice: str) -> bool:
     }
 
 
+def _higgs_reference_audio_preflight_error(path: str) -> Optional[str]:
+    trimmed = str(path or "").strip()
+    if not trimmed:
+        return "Custom Reference voice requires a local reference audio file."
+
+    reference_path = Path(trimmed).expanduser()
+    if reference_path.suffix.lower() not in _HIGGS_REFERENCE_AUDIO_EXTENSIONS:
+        return "Custom Reference voice requires a WAV, MP3, or FLAC reference audio file."
+
+    if not reference_path.is_file():
+        return "Custom Reference voice reference audio file was not found."
+
+    try:
+        with reference_path.open("rb"):
+            pass
+    except OSError:
+        return "Custom Reference voice reference audio file is not readable."
+
+    return None
+
+
 def _load_higgs_reference_voices() -> Dict[str, Any]:
     global _HIGGS_REFERENCE_VOICE_MANIFEST
     if _HIGGS_REFERENCE_VOICE_MANIFEST is not None:
@@ -2173,11 +2195,12 @@ def handle_audio_speech(request: dict) -> None:
         if _higgs_voice_uses_reference(voice):
             ref_audio = str(ref_audio or "").strip()
             ref_text = str(ref_text or "").strip() or None
-            if not ref_audio:
+            reference_error = _higgs_reference_audio_preflight_error(ref_audio)
+            if reference_error:
                 send_json(
                     {
                         "type": "error",
-                        "message": "Custom Reference voice requires a local reference audio file.",
+                        "message": reference_error,
                     },
                     request=request,
                 )

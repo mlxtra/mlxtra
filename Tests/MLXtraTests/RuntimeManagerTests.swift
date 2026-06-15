@@ -765,6 +765,26 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertEqual(selected, bundled)
     }
 
+    func testPreferredRuntimeComponentUsesSiblingSplitMusicRuntime() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let resources = root.appendingPathComponent("Resources/runtime")
+        let baseRuntime = resources.appendingPathComponent("macos-arm64")
+        let musicRuntime = resources.appendingPathComponent("music-macos-arm64")
+        try makeBaseRuntimeBundle(at: baseRuntime, version: "0.1.9")
+        try makeSelfContainedMusicRuntimeComponent(at: musicRuntime, version: "0.1.9")
+
+        let selected = RuntimeManager.preferredRuntimeComponentURL(
+            .music,
+            baseRuntime: baseRuntime,
+            bundledCandidates: []
+        )
+
+        XCTAssertEqual(selected.standardizedFileURL.path, musicRuntime.standardizedFileURL.path)
+        XCTAssertTrue(RuntimeManager.isRuntimeComponentStructurallyValid(.music, at: musicRuntime))
+        XCTAssertEqual(RuntimeManager.runtimeManifest(at: selected, component: .music)?.component, .music)
+    }
+
     func testPreferredRuntimeFallsBackWhenInstalledRuntimeIsInvalid() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1899,6 +1919,49 @@ final class RuntimeManagerTests: XCTestCase {
             try FileManager.default.createSymbolicLink(
                 atPath: url.appendingPathComponent("magenta-venv/bin/python").path,
                 withDestinationPath: "../../python/Frameworks/Versions/3.12/bin/python3"
+            )
+        }
+        FileManager.default.createFile(atPath: url.appendingPathComponent("acestep_download_helper.py").path, contents: Data())
+        let manifest = RuntimeManifest(
+            runtimeVersion: version,
+            compatibilityApi: 1,
+            component: .music,
+            pythonPath: "acestep-venv/bin/python3",
+            executables: ["python": "acestep-venv/bin/python3"],
+            isolatedPackages: declaresRealtimeMusic ? ["ace-step", "magenta-rt[mlx]"] : ["ace-step"],
+            supportedBackends: [.music],
+            capabilities: declaresRealtimeMusic ? ["music-generation", "realtime-music"] : ["music-generation"]
+        )
+        let data = try JSONEncoder().encode(manifest)
+        try data.write(to: url.appendingPathComponent(RuntimeComponent.music.manifestFilename))
+    }
+
+    private func makeSelfContainedMusicRuntimeComponent(
+        at url: URL,
+        version: String,
+        includeMagentaRuntime: Bool = true,
+        declaresRealtimeMusic: Bool = true
+    ) throws {
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("acestep-venv/bin"), withIntermediateDirectories: true)
+        try writeExecutableFile(at: url.appendingPathComponent("acestep-venv/bin/python3.12"))
+        try FileManager.default.createSymbolicLink(
+            atPath: url.appendingPathComponent("acestep-venv/bin/python").path,
+            withDestinationPath: "python3.12"
+        )
+        try FileManager.default.createSymbolicLink(
+            atPath: url.appendingPathComponent("acestep-venv/bin/python3").path,
+            withDestinationPath: "python3.12"
+        )
+        if includeMagentaRuntime {
+            try FileManager.default.createDirectory(at: url.appendingPathComponent("magenta-venv/bin"), withIntermediateDirectories: true)
+            try writeExecutableFile(at: url.appendingPathComponent("magenta-venv/bin/python3.12"))
+            try FileManager.default.createSymbolicLink(
+                atPath: url.appendingPathComponent("magenta-venv/bin/python").path,
+                withDestinationPath: "python3.12"
+            )
+            try FileManager.default.createSymbolicLink(
+                atPath: url.appendingPathComponent("magenta-venv/bin/python3").path,
+                withDestinationPath: "python3.12"
             )
         }
         FileManager.default.createFile(atPath: url.appendingPathComponent("acestep_download_helper.py").path, contents: Data())

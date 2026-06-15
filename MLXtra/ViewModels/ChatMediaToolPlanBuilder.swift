@@ -165,10 +165,28 @@ enum ChatMediaToolPlanBuilder {
             .lowercased()
             .replacingOccurrences(of: " ", with: "_")
         guard voice == "custom_reference" else { return nil }
+        guard let referenceAudioDefinition = profile.parameterDefinition(key: "ref_audio") else {
+            return "Custom Reference voice requires a local reference audio file."
+        }
         let referenceAudio = String(describing: parameters["ref_audio"] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard referenceAudio.isEmpty else { return nil }
-        return "Custom Reference voice requires a local reference audio file."
+        guard !referenceAudio.isEmpty else {
+            return "Custom Reference voice requires a local reference audio file."
+        }
+        guard referenceAudioDefinition.normalizedString(from: referenceAudio) != nil else {
+            return "Custom Reference voice requires a WAV, MP3, or FLAC reference audio file."
+        }
+
+        let referenceAudioURL = URL(fileURLWithPath: referenceAudio)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: referenceAudioURL.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else {
+            return "Custom Reference voice reference audio file was not found."
+        }
+        guard FileManager.default.isReadableFile(atPath: referenceAudioURL.path) else {
+            return "Custom Reference voice reference audio file is not readable."
+        }
+        return nil
     }
 
     private static func structuredCaptionDetail(_ caption: [String: Any]) -> ToolCallDetail? {

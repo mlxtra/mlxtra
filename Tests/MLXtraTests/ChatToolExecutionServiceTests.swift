@@ -78,6 +78,34 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests.count, 0)
     }
 
+    func testExecuteMediaToolReturnsPreflightFailureBeforeDownloadCheck() async {
+        let executor = MockChatModelExecutor()
+        let runtimeManager = MockChatRuntimeManager(downloadedModelIds: [])
+        let webSearch = MockChatWebSearchService(result: .success(nil))
+        let service = DefaultChatToolExecutionService(
+            modelExecutor: executor,
+            runtimeManager: runtimeManager,
+            webSearchService: webSearch
+        )
+
+        let outcome = await service.executeMediaTool(
+            plan: makePlan(preflightErrorMessage: "Custom Reference voice requires a local reference audio file.")
+        ) { _ in }
+
+        guard case .failedToolMessage(let content, let engineMessage, let metrics) = outcome else {
+            XCTFail("Expected failed tool message outcome")
+            return
+        }
+        XCTAssertEqual(
+            content,
+            "Image generation unavailable: Custom Reference voice requires a local reference audio file."
+        )
+        XCTAssertEqual(engineMessage, "Custom Reference voice requires a local reference audio file.")
+        XCTAssertNil(metrics)
+        XCTAssertTrue(runtimeManager.checkedModelIds.isEmpty)
+        XCTAssertEqual(executor.receivedRequests.count, 0)
+    }
+
     func testExecuteMediaToolPublishesProgressAndAssetAndReturnsSummary() async {
         let assetURL = URL(fileURLWithPath: "/tmp/generated.png")
         let executor = MockChatModelExecutor(events: [
@@ -2431,7 +2459,8 @@ final class ChatToolExecutionServiceTests: XCTestCase {
 
     private func makePlan(
         model: DownloadableModel? = nil,
-        attachmentKind: ChatGeneratedAssetKind = .image
+        attachmentKind: ChatGeneratedAssetKind = .image,
+        preflightErrorMessage: String? = nil
     ) -> ChatMediaToolExecutionPlan {
         let resolvedModel = model ?? DownloadableModel(
             id: "image-model",
@@ -2457,6 +2486,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
                 maxTokens: 0,
                 temperature: 1.0
             ),
+            preflightErrorMessage: preflightErrorMessage,
             loadingStatus: "Generating image...",
             operationName: "Image generation",
             unavailablePrefix: "Image generation unavailable",
@@ -2651,6 +2681,7 @@ private final class ControlledMediaChatModelExecutor: ChatModelExecuting {
 private final class MockChatRuntimeManager: ChatRuntimeManaging {
     var state: RuntimeManager.RuntimeState = .ready
     var downloadedModelIds: Set<String>
+    private(set) var checkedModelIds: [String] = []
 
     init(downloadedModelIds: Set<String>) {
         self.downloadedModelIds = downloadedModelIds
@@ -2663,7 +2694,8 @@ private final class MockChatRuntimeManager: ChatRuntimeManaging {
     }
 
     func isModelDownloadedOffMain(model: DownloadableModel) async -> Bool {
-        downloadedModelIds.contains(model.modelId)
+        checkedModelIds.append(model.modelId)
+        return downloadedModelIds.contains(model.modelId)
     }
 }
 

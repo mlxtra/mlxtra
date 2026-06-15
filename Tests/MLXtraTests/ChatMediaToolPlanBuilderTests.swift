@@ -388,6 +388,87 @@ final class ChatMediaToolPlanBuilderTests: XCTestCase {
         XCTAssertEqual(plan.preflightErrorMessage, "Custom Reference voice requires a local reference audio file.")
     }
 
+    func testHiggsCustomReferenceSpeechPlanRejectsInvalidReferenceAudioExtension() throws {
+        let higgs = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "bosonai/higgs-audio-v3-tts-4b"))
+        let generation = makeGenerationRequest(
+            tool: .tts,
+            prompt: "Read this aloud",
+            profiles: [.audio: higgs],
+            parametersByModelId: [
+                higgs.modelId: [
+                    "voice": "custom_reference",
+                    "ref_audio": "/tmp/reference.txt"
+                ]
+            ]
+        )
+
+        let plan = ChatMediaToolPlanBuilder.makeSpeechPlan(
+            decodedArguments: nil,
+            fallbackPrompt: generation.prompt,
+            generation: generation,
+            outputDirectory: URL(fileURLWithPath: "/tmp/speech")
+        )
+
+        XCTAssertEqual(plan.preflightErrorMessage, "Custom Reference voice requires a WAV, MP3, or FLAC reference audio file.")
+    }
+
+    func testHiggsCustomReferenceSpeechPlanRejectsMissingReferenceAudioFile() throws {
+        let higgs = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "bosonai/higgs-audio-v3-tts-4b"))
+        let missingReference = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString)")
+            .appendingPathExtension("wav")
+        let generation = makeGenerationRequest(
+            tool: .tts,
+            prompt: "Read this aloud",
+            profiles: [.audio: higgs],
+            parametersByModelId: [
+                higgs.modelId: [
+                    "voice": "custom_reference",
+                    "ref_audio": missingReference.path
+                ]
+            ]
+        )
+
+        let plan = ChatMediaToolPlanBuilder.makeSpeechPlan(
+            decodedArguments: nil,
+            fallbackPrompt: generation.prompt,
+            generation: generation,
+            outputDirectory: URL(fileURLWithPath: "/tmp/speech")
+        )
+
+        XCTAssertEqual(plan.preflightErrorMessage, "Custom Reference voice reference audio file was not found.")
+    }
+
+    func testHiggsCustomReferenceSpeechPlanAcceptsReadableReferenceAudioFile() throws {
+        let higgs = try XCTUnwrap(ModelCapabilityProfile.embeddedProfile(modelId: "bosonai/higgs-audio-v3-tts-4b"))
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("higgs-reference-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let referenceAudio = directory.appendingPathComponent("reference.wav")
+        try Data([0, 1, 2, 3]).write(to: referenceAudio)
+        let generation = makeGenerationRequest(
+            tool: .tts,
+            prompt: "Read this aloud",
+            profiles: [.audio: higgs],
+            parametersByModelId: [
+                higgs.modelId: [
+                    "voice": "custom_reference",
+                    "ref_audio": referenceAudio.path
+                ]
+            ]
+        )
+
+        let plan = ChatMediaToolPlanBuilder.makeSpeechPlan(
+            decodedArguments: nil,
+            fallbackPrompt: generation.prompt,
+            generation: generation,
+            outputDirectory: URL(fileURLWithPath: "/tmp/speech")
+        )
+
+        XCTAssertNil(plan.preflightErrorMessage)
+    }
+
     private func makeGenerationRequest(
         tool: Tool,
         prompt: String,

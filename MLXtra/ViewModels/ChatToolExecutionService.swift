@@ -33,6 +33,9 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         onUpdate: @escaping @MainActor (ChatToolExecutionUpdate) -> Void
     ) async -> ChatToolExecutionOutcome {
         guard !Task.isCancelled else { return .cancelled }
+        if let preflightErrorMessage = plan.preflightErrorMessage {
+            return preflightFailureOutcome(plan: plan, message: preflightErrorMessage)
+        }
         guard await runtimeManager.isModelDownloadedOffMain(model: plan.model) else {
             DiagnosticsLogStore.log(
                 "\(plan.operationName) requires a model download",
@@ -80,6 +83,16 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         return failedMediaToolOutcome(plan: plan, error: lastError)
     }
 
+    private func preflightFailureOutcome(
+        plan: ChatMediaToolExecutionPlan,
+        message: String
+    ) -> ChatToolExecutionOutcome {
+        .failedToolMessage(
+            "\(plan.unavailablePrefix): \(message)",
+            localEngineErrorMessage: message
+        )
+    }
+
     private func shouldRetryMediaTool(_ error: Error) -> Bool {
         guard let execError = error as? ExecutionError else {
             return false
@@ -115,10 +128,7 @@ final class DefaultChatToolExecutionService: ChatToolExecutionServicing {
         do {
             try Task.checkCancellation()
             if let preflightErrorMessage = plan.preflightErrorMessage {
-                return .failedToolMessage(
-                    "\(plan.unavailablePrefix): \(preflightErrorMessage)",
-                    localEngineErrorMessage: preflightErrorMessage
-                )
+                return preflightFailureOutcome(plan: plan, message: preflightErrorMessage)
             }
             if !modelExecutor.isReady {
                 try await modelExecutor.initialize()

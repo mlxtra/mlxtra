@@ -51,7 +51,7 @@ extension RuntimeManager {
             throw NativeModelDownloadError.unsupportedComponentBundle(model.name)
         }
         guard Self.activeRuntimeManifest(component: .music) != nil else {
-            let componentPath = activeRuntimeURL.appendingPathComponent("acestep-venv/bin/python").path
+            let componentPath = activeMusicRuntimeURL.appendingPathComponent("acestep-venv/bin/python").path
             throw RuntimeError.runtimeComponentNotFound("Music runtime component", componentPath)
         }
 
@@ -185,15 +185,15 @@ extension RuntimeManager {
     }
 
     func acestepPythonExecutablePath() -> URL {
-        activeRuntimeURL.appendingPathComponent("acestep-venv/bin/python")
+        activeMusicRuntimeURL.appendingPathComponent("acestep-venv/bin/python")
     }
 
     func magentaPythonExecutablePath() -> URL {
-        activeRuntimeURL.appendingPathComponent("magenta-venv/bin/python")
+        activeMusicRuntimeURL.appendingPathComponent("magenta-venv/bin/python")
     }
 
     func acestepDownloadHelperPath() -> URL {
-        activeRuntimeURL.appendingPathComponent("acestep_download_helper.py")
+        activeMusicRuntimeURL.appendingPathComponent("acestep_download_helper.py")
     }
 
     func pythonSitePackagesPath() -> URL {
@@ -220,5 +220,9 @@ extension RuntimeManager {
 
     private var activeRuntimeURL: URL {
         Self.activeRuntimeBundleURL()
+    }
+
+    private var activeMusicRuntimeURL: URL {
+        Self.activeRuntimeComponentURL(component: .music)
     }
 }

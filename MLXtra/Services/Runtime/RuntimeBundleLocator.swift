@@ -60,6 +60,24 @@ extension RuntimeManager {
         ]
     }
 
+    nonisolated static func bundledRuntimeComponentCandidates(
+        component: RuntimeComponent,
+        bundle: Bundle = .main
+    ) -> [URL] {
+        switch component {
+        case .base:
+            return bundledRuntimeCandidates(bundle: bundle)
+        case .music:
+            return uniqueRuntimeURLs(
+                bundledRuntimeCandidates(bundle: bundle).map { baseCandidate in
+                    baseCandidate
+                        .deletingLastPathComponent()
+                        .appendingPathComponent("music-macos-arm64")
+                }
+            )
+        }
+    }
+
     nonisolated static func activeRuntimeBundleURL(
         bundle: Bundle = .main,
         fileManager: FileManager = .default
@@ -68,6 +86,20 @@ extension RuntimeManager {
         return preferredRuntimeBundleURL(
             installed: installed,
             bundledCandidates: bundledRuntimeCandidates(bundle: bundle),
+            fileManager: fileManager
+        )
+    }
+
+    nonisolated static func activeRuntimeComponentURL(
+        component: RuntimeComponent,
+        bundle: Bundle = .main,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let baseRuntime = activeRuntimeBundleURL(bundle: bundle, fileManager: fileManager)
+        return preferredRuntimeComponentURL(
+            component,
+            baseRuntime: baseRuntime,
+            bundledCandidates: bundledRuntimeComponentCandidates(component: component, bundle: bundle),
             fileManager: fileManager
         )
     }
@@ -104,24 +136,55 @@ extension RuntimeManager {
         return candidates[0]
     }
 
+    nonisolated static func preferredRuntimeComponentURL(
+        _ component: RuntimeComponent,
+        baseRuntime: URL,
+        bundledCandidates: [URL],
+        fileManager: FileManager = .default
+    ) -> URL {
+        guard component != .base else {
+            return baseRuntime
+        }
+
+        let siblingRuntime = baseRuntime
+            .deletingLastPathComponent()
+            .appendingPathComponent("music-macos-arm64")
+        let candidates = uniqueRuntimeURLs([baseRuntime, siblingRuntime] + bundledCandidates)
+
+        if let selected = candidates.first(where: {
+            isRuntimeComponentStructurallyValid(component, at: $0, fileManager: fileManager)
+        }) {
+            if selected == baseRuntime {
+                RuntimeDiagnostics.log("[RuntimeManager] Using \(component.rawValue) runtime component at: \(selected.path)")
+            } else {
+                RuntimeDiagnostics.log("[RuntimeManager] Found split \(component.rawValue) runtime component at: \(selected.path)")
+            }
+            return selected
+        }
+
+        RuntimeDiagnostics.log("[RuntimeManager] \(component.displayName) component not found, using base runtime path")
+        return baseRuntime
+    }
+
     nonisolated static func activeRuntimeManifest() -> RuntimeManifest? {
         activeRuntimeManifest(component: .base)
     }
 
     nonisolated static func activeRuntimeManifest(component: RuntimeComponent) -> RuntimeManifest? {
-        let runtimeURL = activeRuntimeBundleURL()
-        guard isRuntimeBundleStructurallyValid(runtimeURL) else {
+        let baseRuntimeURL = activeRuntimeBundleURL()
+        guard isRuntimeBundleStructurallyValid(baseRuntimeURL) else {
             return nil
         }
         switch component {
         case .base:
-            return runtimeManifest(at: runtimeURL)
+            return runtimeManifest(at: baseRuntimeURL)
         case .music:
-            if isRuntimeComponentStructurallyValid(.music, at: runtimeURL),
-               let manifest = runtimeManifest(at: runtimeURL, component: .music) {
+            let musicRuntimeURL = activeRuntimeComponentURL(component: .music)
+            if isRuntimeComponentStructurallyValid(.music, at: musicRuntimeURL),
+               let manifest = runtimeManifest(at: musicRuntimeURL, component: .music) {
                 return manifest
             }
-            return legacyMusicRuntimeManifest(at: runtimeURL)
+            return legacyMusicRuntimeManifest(at: baseRuntimeURL)
         }
     }
 
@@ -206,8 +269,7 @@ extension RuntimeManager {
         case .base:
             return isRuntimeBundleStructurallyValid(runtimeURL, fileManager: fileManager)
         case .music:
-            guard isRuntimeBundleStructurallyValid(runtimeURL, fileManager: fileManager),
-                  let manifest = runtimeManifest(at: runtimeURL, component: .music),
+            guard let manifest = runtimeManifest(at: runtimeURL, component: .music),
                   manifest.component == .music else {
                 return false
             }
@@ -232,6 +294,17 @@ extension RuntimeManager {
                 fileManager.isExecutableFile(atPath: runtimeURL.appendingPathComponent($0).path)
             }
         }
+    }
+
+    private nonisolated static func uniqueRuntimeURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        var unique: [URL] = []
+        for url in urls {
+            let key = url.standardizedFileURL.path
+            guard seen.insert(key).inserted else { continue }
+            unique.append(url)
+        }
+        return unique
     }
 
     private nonisolated static func legacyMusicRuntimeManifest(at runtimeURL: URL) -> RuntimeManifest? {
