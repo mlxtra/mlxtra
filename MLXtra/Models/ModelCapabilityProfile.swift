@@ -146,6 +146,7 @@ enum ModelParameterType: String, Equatable, Codable {
     case boolean
     case option
     case text
+    case filePath = "file_path"
 }
 
 enum ModelAvailability: String, Equatable, Codable {
@@ -162,6 +163,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
     let range: ClosedRange<Double>?
     let step: Double
     let options: [String]
+    let allowedExtensions: [String]
     let isAdvanced: Bool
 
     var id: String { key }
@@ -174,6 +176,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
         range: ClosedRange<Double>? = nil,
         step: Double = 1,
         options: [String] = [],
+        allowedExtensions: [String] = [],
         isAdvanced: Bool = false
     ) {
         self.key = key
@@ -183,6 +186,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
         self.range = range
         self.step = step
         self.options = options
+        self.allowedExtensions = allowedExtensions.map { $0.lowercased() }
         self.isAdvanced = isAdvanced
     }
 
@@ -200,7 +204,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
         case .option:
             guard options.isEmpty || options.contains(string) else { return nil }
             return string
-        case .text:
+        case .text, .filePath:
             return string
         }
     }
@@ -221,6 +225,13 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
             return string
         case .text:
             return string
+        case .filePath:
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return "" }
+            guard !allowedExtensions.isEmpty else { return trimmed }
+            let pathExtension = URL(fileURLWithPath: trimmed).pathExtension.lowercased()
+            guard allowedExtensions.contains(pathExtension) else { return nil }
+            return trimmed
         }
     }
 
@@ -232,7 +243,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
             return "\(Int(clamped))"
         case .decimal:
             return Self.decimalFormatter.string(from: NSNumber(value: clamped)) ?? "\(clamped)"
-        case .boolean, .option, .text:
+        case .boolean, .option, .text, .filePath:
             return defaultValue
         }
     }
@@ -278,6 +289,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
         case range
         case step
         case options
+        case allowedExtensions
         case isAdvanced
     }
 
@@ -297,6 +309,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
             range: range.map { $0.min...$0.max },
             step: try container.decodeIfPresent(Double.self, forKey: .step) ?? 1,
             options: try container.decodeIfPresent([String].self, forKey: .options) ?? [],
+            allowedExtensions: try container.decodeIfPresent([String].self, forKey: .allowedExtensions) ?? [],
             isAdvanced: try container.decodeIfPresent(Bool.self, forKey: .isAdvanced) ?? false
         )
     }
@@ -312,6 +325,7 @@ struct ModelParameterDefinition: Identifiable, Equatable, Codable {
         }
         try container.encode(step, forKey: .step)
         try container.encode(options, forKey: .options)
+        try container.encode(allowedExtensions, forKey: .allowedExtensions)
         try container.encode(isAdvanced, forKey: .isAdvanced)
     }
 }

@@ -130,7 +130,13 @@ struct ModelManagerRow: View {
 
     @ViewBuilder
     private var actionView: some View {
-        if shouldShowRuntimeRequirement {
+        if modelFit == .heavy {
+            Label("Too large for this Mac", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("settings.modelState.hardwareUnsupported")
+        } else if shouldShowRuntimeRequirement {
             VStack(alignment: .trailing, spacing: 6) {
                 Label(runtimeRequirementTitle, systemImage: runtimeRequirementIcon)
                     .font(.callout.weight(.medium))
@@ -166,6 +172,9 @@ struct ModelManagerRow: View {
         if case .requiresAppUpdate = runtimeUpdateManager.state {
             return "App update required"
         }
+        if !model.requiresRuntimeSetupBeforeDownload() {
+            return "Runtime update required"
+        }
         return "Setup required"
     }
 
@@ -177,60 +186,65 @@ struct ModelManagerRow: View {
     }
 
     private var runtimeRequirementDetail: String {
-        "Requires \(model.runtime.component.displayName) \(model.runtime.minVersion)+ before download."
+        let action = model.requiresRuntimeSetupBeforeDownload() ? "download" : "use"
+        return "Requires \(model.runtime.component.displayName) \(model.runtime.minVersion)+ before \(action)."
     }
 
     @ViewBuilder
     private var runtimeAction: some View {
-        switch runtimeUpdateManager.state {
-        case .available(let asset):
-            if asset.component == model.runtime.component {
+        if model.requiresRuntimeSetupBeforeDownload() {
+            switch runtimeUpdateManager.state {
+            case .available(let asset):
+                if asset.component == model.runtime.component {
+                    if isPendingDownload {
+                        queuedRuntimeAction
+                    } else {
+                        runtimeSetupStatus("Setting up")
+                    }
+                    Color.clear
+                        .frame(width: 0, height: 0)
+                        .task(id: asset.id) {
+                            runtimeUpdateManager.installRuntimeInBackground(asset)
+                        }
+                } else {
+                    queueDownloadButton
+                }
+            case .installing:
                 if isPendingDownload {
                     queuedRuntimeAction
                 } else {
-                    runtimeSetupStatus("Setting up")
+                    queueDownloadButton
                 }
-                Color.clear
-                    .frame(width: 0, height: 0)
-                    .task(id: asset.id) {
-                        runtimeUpdateManager.installRuntimeInBackground(asset)
-                    }
-            } else {
-                queueDownloadButton
+            case .checking:
+                if isPendingDownload {
+                    queuedRuntimeAction
+                } else {
+                    queueDownloadButton
+                }
+            case .failed:
+                Button {
+                    runtimeUpdateManager.bootstrapStableRuntimeInBackground(
+                        reportFailures: true,
+                        component: model.runtime.component
+                    )
+                } label: {
+                    Label("Retry Setup", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            case .requiresAppUpdate:
+                runtimeBlockedDownloadAction
+            case .idle, .installed:
+                Button {
+                    onDownload()
+                } label: {
+                    Label("Setup Runtime", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-        case .installing:
-            if isPendingDownload {
-                queuedRuntimeAction
-            } else {
-                queueDownloadButton
-            }
-        case .checking:
-            if isPendingDownload {
-                queuedRuntimeAction
-            } else {
-                queueDownloadButton
-            }
-        case .failed:
-            Button {
-                runtimeUpdateManager.bootstrapStableRuntimeInBackground(
-                    reportFailures: true,
-                    component: model.runtime.component
-                )
-            } label: {
-                Label("Retry Setup", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        case .requiresAppUpdate:
-            runtimeBlockedDownloadAction
-        case .idle, .installed:
-            Button {
-                onDownload()
-            } label: {
-                Label("Setup Runtime", systemImage: "arrow.triangle.2.circlepath")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+        } else {
+            stateAction
         }
     }
 

@@ -399,7 +399,7 @@ extension ChatViewModel {
         switch definition.type {
         case .decimal, .integer:
             resolvedValue = definition.clampedString(Double(value) ?? Double(definition.defaultValue) ?? 0)
-        case .boolean, .option, .text:
+        case .boolean, .option, .text, .filePath:
             resolvedValue = value
         }
 

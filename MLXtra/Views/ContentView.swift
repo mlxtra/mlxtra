@@ -161,13 +161,14 @@ struct ContentView: View {
         case .downloaded:
             pendingDownloadModelId = ""
         case .notDownloaded, .failed:
-            guard !model.requiresRuntimeSetupBeforeDownload() else {
-                runtimeUpdateManager.bootstrapStableRuntimeInBackground(
-                    reportFailures: true,
-                    component: model.runtime.component
-                )
+            guard ModelFit.classify(
+                estimatedMemoryGB: model.estimatedMemoryGB,
+                hardwareMemoryGB: SystemHardware.currentMemoryGB
+            ) != .heavy else {
+                pendingDownloadModelId = ""
                 return
             }
+            guard !model.requiresRuntimeSetupBeforeDownload() else { return }
             downloadManager.download(model)
         case .downloading, .paused:
             return

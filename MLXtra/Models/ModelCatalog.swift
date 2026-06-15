@@ -394,6 +394,12 @@ final class ModelCatalogService: ObservableObject, @unchecked Sendable {
                 }
             case .text:
                 break
+            case .filePath:
+                guard parameter.defaultValue.isEmpty
+                    || parameter.normalizedString(from: parameter.defaultValue) != nil else {
+                    throw ModelCatalogError.invalidParameter("\(profileId).\(key) has an invalid file path default")
+                }
+                break
             }
         }
     }

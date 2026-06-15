@@ -154,7 +154,7 @@ final class DownloadableModelTests: XCTestCase {
         XCTAssertNil(DownloadableModel.embeddedModel(modelId: "unknown/model"))
     }
 
-    func testRuntimeSetupRequirementUsesModelRuntimeVersion() {
+    func testSnapshotModelDoesNotRequireRuntimeSetupBeforeDownload() {
         let model = DownloadableModel(
             id: "future-model",
             name: "Future Model",
@@ -176,29 +176,71 @@ final class DownloadableModelTests: XCTestCase {
             supportedBackends: [.vlm]
         )
 
+        XCTAssertFalse(model.requiresRuntimeSetupBeforeDownload(manifest: oldRuntime))
+        XCTAssertFalse(model.requiresRuntimeSetupBeforeDownload(manifest: newRuntime))
+    }
+
+    func testComponentBundleWithHelperRequiresRuntimeSetupBeforeDownload() {
+        let model = DownloadableModel(
+            id: "music-model",
+            name: "Music Model",
+            subtitle: "Requires music helper",
+            modelId: "org/music-model",
+            modality: .music,
+            backend: .music,
+            downloadSizeGB: 1.0,
+            source: ModelSource(
+                type: .componentBundle,
+                repo: "org/music-model",
+                components: ["model"],
+                helper: .aceStep
+            ),
+            runtime: ModelRuntimeRequirement(minVersion: "0.1.6", compatibilityApi: 1, component: .music)
+        )
+        let oldRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.5",
+            compatibilityApi: 1,
+            component: .music,
+            supportedBackends: [.music]
+        )
+        let newRuntime = RuntimeManifest(
+            runtimeVersion: "0.1.6",
+            compatibilityApi: 1,
+            component: .music,
+            supportedBackends: [.music]
+        )
+
         XCTAssertTrue(model.requiresRuntimeSetupBeforeDownload(manifest: oldRuntime))
         XCTAssertFalse(model.requiresRuntimeSetupBeforeDownload(manifest: newRuntime))
     }
 
-    func testRuntimeSetupRequirementUsesCompatibilityApiAndBackend() {
+    func testComponentBundleRuntimeSetupRequirementUsesCompatibilityApiAndBackend() {
         let model = DownloadableModel(
-            id: "vlm-model",
-            name: "VLM Model",
-            subtitle: "Requires VLM backend",
-            modelId: "org/vlm-model",
-            modality: .vision,
-            backend: .vlm,
+            id: "music-model",
+            name: "Music Model",
+            subtitle: "Requires music helper",
+            modelId: "org/music-model",
+            modality: .music,
+            backend: .music,
             downloadSizeGB: 1.0,
-            runtime: ModelRuntimeRequirement(minVersion: "0.1.6", compatibilityApi: 1)
+            source: ModelSource(
+                type: .componentBundle,
+                repo: "org/music-model",
+                components: ["model"],
+                helper: .aceStep
+            ),
+            runtime: ModelRuntimeRequirement(minVersion: "0.1.6", compatibilityApi: 1, component: .music)
         )
         let wrongAPIRuntime = RuntimeManifest(
             runtimeVersion: "0.1.6",
             compatibilityApi: 2,
-            supportedBackends: [.vlm]
+            component: .music,
+            supportedBackends: [.music]
         )
         let wrongBackendRuntime = RuntimeManifest(
             runtimeVersion: "0.1.6",
             compatibilityApi: 1,
+            component: .music,
             supportedBackends: [.image]
         )
 

@@ -8,6 +8,7 @@ This repository references or bundles tooling for:
 - MLX and MLX-LM by Apple
 - mlx-vlm by Prince Canuma and contributors
 - mflux by Filip Strand and contributors
+- Higgs Audio v3 TTS by Boson AI
 - ACE-Step 1.5 by ACE-Step contributors
 - Magenta RealTime 2 by Google LLC
 - Hugging Face Hub tooling

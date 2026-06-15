@@ -404,6 +404,39 @@ final class RuntimeManagerTests: XCTestCase {
         XCTAssertTrue(message.contains("Native model download is still incomplete"))
     }
 
+    func testDownloadedSnapshotPathIgnoresNativeInProgressSnapshotWithWeights() throws {
+        let cacheRoot = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: cacheRoot)
+        }
+
+        let modelId = "org/partial-native-model"
+        let modelCachePath = RuntimeManager.modelCachePath(
+            modelId: modelId,
+            huggingFaceCacheRoot: cacheRoot
+        )
+        let snapshotPath = modelCachePath
+            .appendingPathComponent("snapshots")
+            .appendingPathComponent("partial-revision")
+        let refsPath = modelCachePath.appendingPathComponent("refs")
+
+        try FileManager.default.createDirectory(at: snapshotPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: refsPath, withIntermediateDirectories: true)
+        try Data("partial-revision".utf8).write(to: refsPath.appendingPathComponent("main"))
+        try Data("{}".utf8).write(to: snapshotPath.appendingPathComponent("config.json"))
+        try Data([1]).write(to: snapshotPath.appendingPathComponent("model.safetensors"))
+        try Data("in-progress".utf8).write(
+            to: snapshotPath.appendingPathComponent(NativeSnapshotCompletionManifest.inProgressFilename)
+        )
+
+        XCTAssertNil(
+            RuntimeManager.downloadedSnapshotPath(
+                modelId: modelId,
+                huggingFaceCacheRoot: cacheRoot
+            )
+        )
+    }
+
     func testModelStorageStatusForEmbeddedHuggingFaceModelDoesNotRecurse() throws {
         let cacheRoot = try makeTemporaryDirectory()
         let checkpointsPath = try makeTemporaryDirectory()
@@ -714,6 +747,22 @@ final class RuntimeManagerTests: XCTestCase {
         )
 
         XCTAssertEqual(selected, installed)
+    }
+
+    func testPreferredRuntimeUsesNewerBundledRuntimeOverOlderInstalledRuntime() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let installed = root.appendingPathComponent("installed")
+        let bundled = root.appendingPathComponent("bundled")
+        try makeRuntimeBundle(at: installed, version: "0.1.8")
+        try makeRuntimeBundle(at: bundled, version: "0.1.9")
+
+        let selected = RuntimeManager.preferredRuntimeBundleURL(
+            installed: installed,
+            bundledCandidates: [bundled]
+        )
+
+        XCTAssertEqual(selected, bundled)
     }
 
     func testPreferredRuntimeFallsBackWhenInstalledRuntimeIsInvalid() throws {

@@ -84,6 +84,8 @@ class RuntimeScriptTests(unittest.TestCase):
             "generate-runtime-lockfiles.sh",
             "build-runtime-bundle.sh",
             "validate-runtime-bundle.sh",
+            "prepare-release-assets.sh",
+            "publish-release-assets.sh",
         ):
             with self.subTest(script=script_name):
                 subprocess.run(

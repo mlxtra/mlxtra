@@ -67,26 +67,7 @@ extension ChatViewModel {
             markMessageStopped(messageId)
         }
 
-        if let toolContent = messages.last(where: { $0.role == .tool })?.content,
-           !isModelDownloadRequiredMessage(toolContent) {
-            switchDirectGenerationToolToAutoIfNeeded(after: requestTool)
-        }
-
         finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
-    }
-
-    func switchDirectGenerationToolToAutoIfNeeded(after requestTool: Tool?) {
-        guard let requestTool, selectedTool == requestTool else { return }
-        switch requestTool {
-        case .image, .tts, .music:
-            selectedTool = .auto
-            activeMusicGenerationDraft = nil
-            isMusicLyricsEditorVisible = false
-            isToolMenuOpen = false
-            refreshLocalEngineDownloadStatus()
-        case .auto, .chat, .research:
-            break
-        }
     }
 
     private func finishStreamWithMessage(
@@ -230,7 +211,6 @@ extension ChatViewModel {
             clearToolCall: isImageGeneration || isSpeechGeneration,
             performanceMetrics: performanceMetrics
         )
-        switchDirectGenerationToolToAutoIfNeeded(after: request.tool)
         finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
     }
 
@@ -508,7 +488,6 @@ extension ChatViewModel {
                     clearToolCall: isImageGeneration || isSpeechGeneration,
                     performanceMetrics: performanceMetrics
                 )
-                switchDirectGenerationToolToAutoIfNeeded(after: request.tool)
                 finishActiveGeneration(isMusicGeneration: isMusicGeneration, generationID: generationID)
                 return
 

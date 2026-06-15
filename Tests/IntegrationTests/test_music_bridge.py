@@ -13,6 +13,12 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from runtime_layout import (
+    prepared_music_runtime,
+    resolve_base_runtime,
+    resolve_music_runtime,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -67,9 +73,17 @@ def resolve_app_bundle() -> Path:
 
 APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
-RUNTIME = RESOURCES / "runtime/macos-arm64"
-VENV_PYTHON = RUNTIME / "acestep-venv/bin/python"
+APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
+RUNTIME = resolve_base_runtime(RESOURCES, APP_SUPPORT)
+MUSIC_RUNTIME = resolve_music_runtime(RUNTIME, RESOURCES)
+VENV_PYTHON = RUNTIME / "venv/bin/python"
+ACESTEP_PYTHON = MUSIC_RUNTIME / "acestep-venv/bin/python"
 BRIDGE_SCRIPT = RESOURCES / "python_bridge.py"
+ACESTEP_CHECKPOINTS_DIR = APP_SUPPORT / "checkpoints"
+REQUIRE_ALL_MODELS = (
+    os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
+    or "--strict" in sys.argv[1:]
+)
 
 
 def get_env():
@@ -86,13 +100,26 @@ def get_env():
 
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONHOME"] = str(RUNTIME / "python/Frameworks/Versions/3.12")
+    env["MLXTRA_RUNTIME_DIR"] = str(RUNTIME)
     env["HF_HOME"] = str(Path.home() / ".cache/huggingface")
     env["HF_HUB_CACHE"] = str(Path.home() / ".cache/huggingface/hub")
-    env["ACESTEP_CHECKPOINTS_DIR"] = str(
-        Path.home() / "Library/Application Support/MLXtra/checkpoints"
-    )
+    env["ACESTEP_CHECKPOINTS_DIR"] = str(ACESTEP_CHECKPOINTS_DIR)
+    env["ACESTEP_PYTHON"] = str(ACESTEP_PYTHON)
+    env["MTL_DEBUG_LAYER"] = "0"
+    env["MTL_SHADER_VALIDATION"] = "0"
 
     return env
+
+
+def music_model_is_complete() -> bool:
+    required_files = (
+        ACESTEP_CHECKPOINTS_DIR / "acestep-v15-turbo/model.safetensors",
+        ACESTEP_CHECKPOINTS_DIR / "vae/diffusion_pytorch_model.safetensors",
+        ACESTEP_CHECKPOINTS_DIR / "Qwen3-Embedding-0.6B/model.safetensors",
+        ACESTEP_CHECKPOINTS_DIR / "acestep-5Hz-lm-1.7B/model.safetensors",
+    )
+    return all(path.is_file() and path.stat().st_size > 0 for path in required_files)
 
 
 class BridgeTest:
@@ -204,6 +231,13 @@ class BridgeTest:
             print(f"✓ Model initialized: {msg.get('model')}")
             print("  (Lazy init - actual loading happens on first generate)")
 
+            if not music_model_is_complete():
+                if REQUIRE_ALL_MODELS:
+                    print("ERROR: ACE-Step checkpoints are missing or incomplete")
+                    return False
+                print("\n↷ SKIP: ACE-Step checkpoints are missing or incomplete")
+                return True
+
             print("\n--- Step 2: Generate music ---")
             generate_request = {
                 "type": "music.generate",
@@ -288,6 +322,7 @@ class BridgeTest:
 
 
 if __name__ == "__main__":
-    test = BridgeTest()
-    success = test.run()
+    with prepared_music_runtime(RUNTIME, MUSIC_RUNTIME):
+        test = BridgeTest()
+        success = test.run()
     sys.exit(0 if success else 1)

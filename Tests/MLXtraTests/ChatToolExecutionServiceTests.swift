@@ -520,7 +520,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests[0].messages.first?.content, "Draw a quiet studio desk")
         XCTAssertEqual(viewModel.chats.first?.messages.last?.imageURLs, [assetURL])
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
-        XCTAssertEqual(viewModel.selectedTool, .auto)
+        XCTAssertEqual(viewModel.selectedTool, .image)
     }
 
     func testDirectImagePromptImprovementUsesChatVLMThenMediaTool() async throws {
@@ -1331,7 +1331,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         XCTAssertEqual(executor.receivedRequests[0].messages.first?.content, "Superman is here")
         XCTAssertEqual(viewModel.chats.first?.messages.last?.audioURLs, [assetURL])
         XCTAssertFalse(viewModel.chats.first?.messages.last?.isStreaming ?? true)
-        XCTAssertEqual(viewModel.selectedTool, .auto)
+        XCTAssertEqual(viewModel.selectedTool, .tts)
     }
 
     func testChatModeSendsPlainVLMRequestWithoutTools() async {
@@ -1886,7 +1886,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         viewModel.sendMessage()
 
         await waitUntil { toolExecutor.mediaPlans.count == 1 }
-        await waitUntil { viewModel.selectedTool == .auto }
+        await waitUntil { viewModel.selectedTool == .music }
 
         XCTAssertEqual(executor.receivedRequests.count, 0)
         let userMessages = viewModel.chats.first?.messages.filter(\.isUser) ?? []
@@ -1900,7 +1900,7 @@ final class ChatToolExecutionServiceTests: XCTestCase {
         let parameters = toolExecutor.mediaPlans[0].request.parameters ?? [:]
         XCTAssertEqual(parameters["instrumental"] as? Bool, true)
         XCTAssertEqual(parameters["lyrics"] as? String, "[Instrumental]")
-        XCTAssertEqual(viewModel.selectedTool, .auto)
+        XCTAssertEqual(viewModel.selectedTool, .music)
     }
 
     func testApprovedMusicLyricsOverrideToolCallParameters() async {

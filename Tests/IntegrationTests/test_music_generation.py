@@ -7,8 +7,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from runtime_layout import prepared_music_runtime, resolve_music_runtime
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESOURCES_DIR = REPO_ROOT / "MLXtra/Resources"
+APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
+os.environ.setdefault(
+    "ACESTEP_CHECKPOINTS_DIR",
+    str(APP_SUPPORT / "checkpoints"),
+)
 
 if str(RESOURCES_DIR) not in sys.path:
     sys.path.insert(0, str(RESOURCES_DIR))
@@ -56,7 +63,14 @@ def resolve_runtime_dir() -> Path:
 
 
 RUNTIME_DIR = resolve_runtime_dir()
-VENV_SITE_PACKAGES = RUNTIME_DIR / "acestep-venv/lib/python3.12/site-packages"
+MUSIC_RUNTIME_DIR = resolve_music_runtime(RUNTIME_DIR, RESOURCES_DIR)
+VENV_SITE_PACKAGES = (
+    MUSIC_RUNTIME_DIR / "acestep-venv/lib/python3.12/site-packages"
+)
+REQUIRE_ALL_MODELS = (
+    os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
+    or "--strict" in sys.argv[1:]
+)
 
 if str(VENV_SITE_PACKAGES) not in sys.path:
     sys.path.insert(0, str(VENV_SITE_PACKAGES))
@@ -202,11 +216,16 @@ def test_bridge():
 def main():
     print("ACE-Step Music Generation Test")
     print(f"Python: {sys.version}")
-    print(f"Runtime: {RUNTIME_DIR}")
+    print(f"Base runtime: {RUNTIME_DIR}")
+    print(f"Music runtime: {MUSIC_RUNTIME_DIR}")
 
     results = []
 
-    results.append(("Model presence", test_model_presence()))
+    model_present = test_model_presence()
+    if not model_present and not REQUIRE_ALL_MODELS:
+        print("\n↷ SKIP: ACE-Step checkpoints are missing or incomplete")
+        return True
+    results.append(("Model presence", model_present))
 
     results.append(("Initialization", test_initialization()))
 
@@ -227,4 +246,5 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(0 if main() else 1)
+    with prepared_music_runtime(RUNTIME_DIR, MUSIC_RUNTIME_DIR):
+        sys.exit(0 if main() else 1)

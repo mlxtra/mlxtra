@@ -38,6 +38,14 @@ RUNTIME_MANIFEST_CACHE: Optional[Dict[str, Any]] = None
 ESPEAK_RUNTIME_CONFIGURED_FOR: Optional[str] = None
 JSON_OUTPUT_LOCK = threading.Lock()
 
+_HIGGS_EMOTION_STYLE_PREFIXES = {
+    "bright": "<|emotion:enthusiasm|><|prosody:expressive_high|>",
+    "calm": "<|emotion:contentment|><|prosody:expressive_low|>",
+    "serious": "<|emotion:determination|><|prosody:pitch_low|>",
+    "sad": "<|emotion:sadness|><|prosody:speed_slow|>",
+}
+_HIGGS_REFERENCE_VOICE_MANIFEST: Optional[Dict[str, Any]] = None
+
 
 def bridge_debug_enabled() -> bool:
     return os.environ.get("MLXTRA_BRIDGE_DEBUG", "").strip().lower() in {
@@ -917,9 +925,15 @@ def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
         unload_models()
         _configure_espeak_runtime()
         log_debug(f"[Python Bridge] Loading audio model: {model_id}")
-        from mlx_audio.tts.utils import load_model
+        adapter = _audio_adapter(request)
+        if adapter in {"higgs-audio-v3", "higgs_audio_v3", "higgs"}:
+            from mlx_audio.tts.utils import load
 
-        model = load_model(model_id)
+            model = load(model_id)
+        else:
+            from mlx_audio.tts.utils import load_model
+
+            model = load_model(model_id)
         AUDIO_MODEL_REGISTRY[model_id] = model
 
         send_model_loading(
@@ -1541,6 +1555,14 @@ def _generate_speech_segments(
     voice: str,
     speed: float,
     lang_code: str,
+    *,
+    max_new_tokens: Optional[int] = None,
+    temperature: float = 1.0,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    seed: Optional[int] = None,
+    ref_audio: Any = None,
+    ref_text: Any = None,
 ):
     """Try mlx-audio TTS generation with adapter-specific arguments."""
     if adapter == "kokoro":
@@ -1561,6 +1583,28 @@ def _generate_speech_segments(
             {"text": text, "voice": voice, "cfg_scale": cfg_scale},
             {"text": text, "cfg_scale": cfg_scale, "ddpm_steps": ddpm_steps},
             {"text": text, "cfg_scale": cfg_scale},
+            {"text": text},
+        ]
+    elif adapter in {"higgs-audio-v3", "higgs_audio_v3", "higgs"}:
+        generation_kwargs = {
+            "text": text,
+            "temperature": temperature,
+        }
+        if max_new_tokens is not None:
+            generation_kwargs["max_new_tokens"] = max_new_tokens
+        if top_p is not None:
+            generation_kwargs["top_p"] = top_p
+        if top_k is not None:
+            generation_kwargs["top_k"] = top_k
+        if seed is not None:
+            generation_kwargs["seed"] = seed
+        if ref_audio:
+            generation_kwargs["ref_audio"] = ref_audio
+        if ref_text:
+            generation_kwargs["ref_text"] = ref_text
+        attempts = [
+            generation_kwargs,
+            {"text": text, "temperature": temperature},
             {"text": text},
         ]
     else:
@@ -1594,6 +1638,85 @@ def _generate_speech_segments(
 
     if last_type_error is not None:
         raise last_type_error
+
+
+def _is_higgs_audio_adapter(adapter: str) -> bool:
+    return adapter in {"higgs-audio-v3", "higgs_audio_v3", "higgs"}
+
+
+def _normalize_higgs_voice_name(voice: str) -> str:
+    normalized = str(voice or "").strip().lower().replace("_", " ").replace("-", " ")
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _higgs_voice_key(voice: str) -> str:
+    return _normalize_higgs_voice_name(voice).replace(" ", "_")
+
+
+def _higgs_emotion_style_prefix(emotion: str) -> str:
+    return _HIGGS_EMOTION_STYLE_PREFIXES.get(_normalize_higgs_voice_name(emotion), "")
+
+
+def _apply_higgs_emotion_style(text: str, emotion: str) -> str:
+    prefix = _higgs_emotion_style_prefix(emotion)
+    return f"{prefix}{text}" if prefix else text
+
+
+def _higgs_voice_uses_reference(voice: str) -> bool:
+    normalized = _normalize_higgs_voice_name(voice)
+    return normalized in {
+        "custom reference",
+        "reference",
+        "reference audio",
+        "voice clone",
+        "clone",
+        "cloned",
+    }
+
+
+def _load_higgs_reference_voices() -> Dict[str, Any]:
+    global _HIGGS_REFERENCE_VOICE_MANIFEST
+    if _HIGGS_REFERENCE_VOICE_MANIFEST is not None:
+        return _HIGGS_REFERENCE_VOICE_MANIFEST
+
+    manifest_path = (
+        Path(__file__).resolve().parent
+        / "ReferenceVoices"
+        / "HiggsAudioV3"
+        / "voices.json"
+    )
+    try:
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except FileNotFoundError:
+        loaded = {}
+    if not isinstance(loaded, dict):
+        loaded = {}
+    _HIGGS_REFERENCE_VOICE_MANIFEST = loaded
+    return loaded
+
+
+def _higgs_reference_voice(voice: str) -> Optional[Dict[str, str]]:
+    voice_key = _higgs_voice_key(voice)
+    entry = _load_higgs_reference_voices().get(voice_key)
+    if not isinstance(entry, dict):
+        return None
+
+    audio_name = str(entry.get("audio") or "").strip()
+    transcript = str(entry.get("text") or "").strip()
+    if not audio_name:
+        return None
+
+    audio_path = (
+        Path(__file__).resolve().parent
+        / "ReferenceVoices"
+        / "HiggsAudioV3"
+        / audio_name
+    )
+    return {
+        "audio": str(audio_path),
+        "text": transcript,
+    }
 
 
 def _safe_len(value: Any) -> Optional[int]:
@@ -1978,12 +2101,57 @@ def handle_audio_speech(request: dict) -> None:
     ).strip()
     if not voice:
         voice = _audio_default_voice(request)
+    emotion = str(
+        parameters.get("emotion") or request.get("emotion") or "neutral"
+    ).strip()
     speed = _coerce_float_parameter(
         parameters.get("speed") or request.get("speed"),
         1.0,
     )
     if speed <= 0:
         speed = 1.0
+    max_new_tokens = _coerce_positive_int_parameter(
+        _first_present_parameter(
+            parameters.get("max_new_tokens"),
+            request.get("max_new_tokens"),
+            parameters.get("max_tokens"),
+            request.get("max_tokens"),
+        ),
+        2048,
+    )
+    temperature = _coerce_float_parameter(
+        _first_present_parameter(parameters.get("temperature"), request.get("temperature")),
+        1.0,
+    )
+    top_p_value = _first_present_parameter(parameters.get("top_p"), request.get("top_p"))
+    top_p = (
+        _coerce_float_parameter(top_p_value, 0.9)
+        if top_p_value is not None
+        else None
+    )
+    top_k_value = _first_present_parameter(parameters.get("top_k"), request.get("top_k"))
+    top_k = (
+        _coerce_int_parameter(top_k_value, 50)
+        if top_k_value is not None
+        else None
+    )
+    if top_k is not None and top_k <= 0:
+        top_k = None
+    seed_value = _first_present_parameter(parameters.get("seed"), request.get("seed"))
+    seed = _coerce_int_parameter(seed_value, 0) if seed_value is not None else None
+    adapter = _audio_adapter(request)
+    ref_audio = _first_present_parameter(
+        parameters.get("ref_audio"),
+        request.get("ref_audio"),
+        parameters.get("reference_audio"),
+        request.get("reference_audio"),
+    )
+    ref_text = _first_present_parameter(
+        parameters.get("ref_text"),
+        request.get("ref_text"),
+        parameters.get("reference_text"),
+        request.get("reference_text"),
+    )
     lang_code = str(parameters.get("lang_code") or request.get("lang_code") or "").strip()
     if not lang_code and _audio_options_from_request(request).get("languageByVoicePrefix"):
         lang_code = _lang_code_for_voice(request, voice)
@@ -1995,10 +2163,40 @@ def handle_audio_speech(request: dict) -> None:
         )
         return
 
+    if _is_higgs_audio_adapter(adapter):
+        legacy_voice_style = _normalize_higgs_voice_name(voice)
+        if legacy_voice_style in {"bright", "calm", "serious", "sad"}:
+            emotion = emotion if _normalize_higgs_voice_name(emotion) != "neutral" else legacy_voice_style
+            voice = "default"
+
+        text = _apply_higgs_emotion_style(text, emotion)
+        if _higgs_voice_uses_reference(voice):
+            ref_audio = str(ref_audio or "").strip()
+            ref_text = str(ref_text or "").strip() or None
+            if not ref_audio:
+                send_json(
+                    {
+                        "type": "error",
+                        "message": "Custom Reference voice requires a local reference audio file.",
+                    },
+                    request=request,
+                )
+                return
+        elif _higgs_voice_key(voice) == "default":
+            ref_audio = None
+            ref_text = None
+        else:
+            reference_voice = _higgs_reference_voice(voice)
+            if reference_voice is None:
+                ref_audio = None
+                ref_text = None
+            else:
+                ref_audio = reference_voice["audio"]
+                ref_text = reference_voice["text"] or None
+
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         model = load_audio_model_if_needed(model_id, request=request)
-        adapter = _audio_adapter(request)
         progress_is_estimated = True
         json_stdout = sys.stdout
 
@@ -2035,7 +2233,21 @@ def handle_audio_speech(request: dict) -> None:
             with contextlib.redirect_stdout(sys.stderr):
                 _configure_espeak_runtime()
                 for result in _generate_speech_segments(
-                    model, adapter, text, cfg_scale, ddpm_steps, voice, speed, lang_code
+                    model,
+                    adapter,
+                    text,
+                    cfg_scale,
+                    ddpm_steps,
+                    voice,
+                    speed,
+                    lang_code,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    seed=seed,
+                    ref_audio=ref_audio,
+                    ref_text=ref_text,
                 ):
                     segment_count += 1
                     audio = result.audio

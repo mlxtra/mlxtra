@@ -240,6 +240,29 @@ PY
         RUNTIME_SHA="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("sha256",""))' "${EXISTING_RUNTIME_JSON}")"
         RUNTIME_SIZE="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("sizeBytes","") or "")' "${EXISTING_RUNTIME_JSON}")"
         RUNTIME_COMPATIBILITY_API="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("compatibilityApi",""))' "${EXISTING_RUNTIME_JSON}")"
+
+        EXISTING_MUSIC_RUNTIME_JSON="$(
+            /usr/bin/python3 - "${CHANNEL_PATH}" music <<'PY'
+import json
+import sys
+channel = json.load(open(sys.argv[1], encoding="utf-8"))
+component = sys.argv[2]
+for runtime in channel.get("runtimes", []):
+    if runtime.get("component", "base") == component:
+        print(json.dumps(runtime))
+        break
+PY
+        )"
+        if [ -n "${EXISTING_MUSIC_RUNTIME_JSON}" ]; then
+            MUSIC_RUNTIME_VERSION="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("version",""))' "${EXISTING_MUSIC_RUNTIME_JSON}")"
+            if [ "${MUSIC_RUNTIME_VERSION}" != "${RUNTIME_VERSION}" ]; then
+                echo "Existing base and music runtime versions do not match." >&2
+                exit 1
+            fi
+            MUSIC_RUNTIME_URL="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("url",""))' "${EXISTING_MUSIC_RUNTIME_JSON}")"
+            MUSIC_RUNTIME_SHA="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("sha256",""))' "${EXISTING_MUSIC_RUNTIME_JSON}")"
+            MUSIC_RUNTIME_SIZE="$(/usr/bin/python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("sizeBytes","") or "")' "${EXISTING_MUSIC_RUNTIME_JSON}")"
+        fi
     fi
 else
     if [ ! -d "${MUSIC_RUNTIME_DIR}" ] || [ ! -f "${MUSIC_RUNTIME_MANIFEST}" ]; then

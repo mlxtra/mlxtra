@@ -44,7 +44,8 @@ let package = Package(
                 .copy("Resources/acestep_bridge.py"),
                 .copy("Resources/magenta_bridge.py"),
                 .copy("Resources/model-catalog.json"),
-                .copy("Resources/stable-channel.json")
+                .copy("Resources/stable-channel.json"),
+                .copy("Resources/ReferenceVoices")
             ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")

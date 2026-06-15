@@ -5,22 +5,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 source "${SCRIPT_DIR}/runtime-dependencies.sh"
 RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
+MUSIC_RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/music-macos-arm64"
 PYTHON_HOME="${RUNTIME_DIR}/python/Frameworks/Versions/3.12"
 MAIN_PYTHON="${RUNTIME_DIR}/venv/bin/python"
-ACE_PYTHON="${RUNTIME_DIR}/acestep-venv/bin/python"
-MAGENTA_PYTHON="${RUNTIME_DIR}/magenta-venv/bin/python"
+ACE_PYTHON="${MUSIC_RUNTIME_DIR}/acestep-venv/bin/python"
+MAGENTA_PYTHON="${MUSIC_RUNTIME_DIR}/magenta-venv/bin/python"
 MAIN_SITE_PACKAGES="${RUNTIME_DIR}/venv/lib/python3.12/site-packages"
-ACE_SITE_PACKAGES="${RUNTIME_DIR}/acestep-venv/lib/python3.12/site-packages"
-MAGENTA_SITE_PACKAGES="${RUNTIME_DIR}/magenta-venv/lib/python3.12/site-packages"
+ACE_SITE_PACKAGES="${MUSIC_RUNTIME_DIR}/acestep-venv/lib/python3.12/site-packages"
+MAGENTA_SITE_PACKAGES="${MUSIC_RUNTIME_DIR}/magenta-venv/lib/python3.12/site-packages"
 MANIFEST="${RUNTIME_DIR}/runtime-manifest.json"
-MUSIC_MANIFEST="${RUNTIME_DIR}/runtime-music-manifest.json"
+MUSIC_MANIFEST="${MUSIC_RUNTIME_DIR}/runtime-music-manifest.json"
 BUILD_RUNTIME_SCRIPT="${SCRIPT_DIR}/build-runtime-bundle.sh"
 BOOTSTRAP_RUNTIME_ON_BUILD="${MLXTRA_BOOTSTRAP_RUNTIME_ON_BUILD:-1}"
+TEMP_MUSIC_SHARED_LINK_CREATED=0
+TEMP_MUSIC_PYTHON_LINK_CREATED=0
 
 fail() {
     echo "error: $*" >&2
     exit 1
 }
+
+cleanup() {
+    if [ "${TEMP_MUSIC_SHARED_LINK_CREATED}" = "1" ]; then
+        rm -f "${MUSIC_RUNTIME_DIR}/shared"
+    fi
+    if [ "${TEMP_MUSIC_PYTHON_LINK_CREATED}" = "1" ]; then
+        rm -f "${MUSIC_RUNTIME_DIR}/python"
+    fi
+}
+trap cleanup EXIT
 
 write_validation_stamp() {
     if [ "${SCRIPT_OUTPUT_FILE_COUNT:-0}" -gt 0 ] && [ -n "${SCRIPT_OUTPUT_FILE_0:-}" ]; then
@@ -63,6 +76,10 @@ runtime_bootstrap_required() {
     [ -d "${PYTHON_HOME}" ] || return 0
     [ -x "${MAIN_PYTHON}" ] || return 0
     [ -f "${MANIFEST}" ] || return 0
+    [ -d "${MUSIC_RUNTIME_DIR}" ] || return 0
+    [ -x "${ACE_PYTHON}" ] || return 0
+    [ -x "${MAGENTA_PYTHON}" ] || return 0
+    [ -f "${MUSIC_MANIFEST}" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" ] || return 0
     [ -f "${PROJECT_DIR}/MLXtra/Resources/magenta_bridge.py" ] || return 0
@@ -91,6 +108,10 @@ require_directory "${RUNTIME_DIR}" "Runtime bundle"
 require_directory "${PYTHON_HOME}" "Bundled Python home"
 require_executable "${MAIN_PYTHON}" "Main runtime Python"
 require_file "${MANIFEST}" "Runtime manifest"
+require_directory "${MUSIC_RUNTIME_DIR}" "Music runtime component"
+require_executable "${ACE_PYTHON}" "ACE-Step runtime Python"
+require_executable "${MAGENTA_PYTHON}" "Magenta RealTime 2 runtime Python"
+require_file "${MUSIC_MANIFEST}" "Music runtime manifest"
 require_file "${PROJECT_DIR}/MLXtra/Resources/python_bridge.py" "Python bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/acestep_bridge.py" "ACE-Step bridge"
 require_file "${PROJECT_DIR}/MLXtra/Resources/magenta_bridge.py" "Magenta RealTime 2 bridge"
@@ -234,9 +255,7 @@ validate_download_helper_structure() {
     require_directory "${MAIN_SITE_PACKAGES}/huggingface_hub" "Main runtime huggingface_hub package"
     require_directory "${MAIN_SITE_PACKAGES}/tqdm" "Main runtime tqdm package"
     if [ -f "${MUSIC_MANIFEST}" ]; then
-        require_executable "${ACE_PYTHON}" "ACE-Step runtime Python"
-        require_executable "${MAGENTA_PYTHON}" "Magenta RealTime 2 runtime Python"
-        require_file "${RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
+        require_file "${MUSIC_RUNTIME_DIR}/acestep_download_helper.py" "ACE-Step download helper"
         require_directory "${ACE_SITE_PACKAGES}/huggingface_hub" "ACE-Step runtime huggingface_hub package"
         require_directory "${ACE_SITE_PACKAGES}/tqdm" "ACE-Step runtime tqdm package"
         require_directory "${ACE_SITE_PACKAGES}/acestep" "ACE-Step runtime acestep package"
@@ -244,8 +263,34 @@ validate_download_helper_structure() {
     fi
 }
 
+prepare_music_validation_overlay() {
+    guard_music_runtime=0
+    [ -d "${MUSIC_RUNTIME_DIR}" ] || guard_music_runtime=1
+    [ -d "${RUNTIME_DIR}/shared" ] || guard_music_runtime=1
+    [ -d "${RUNTIME_DIR}/python" ] || guard_music_runtime=1
+    [ "${guard_music_runtime}" = "0" ] || return 0
+
+    if [ -e "${MUSIC_RUNTIME_DIR}/shared" ] || [ -L "${MUSIC_RUNTIME_DIR}/shared" ]; then
+        :
+    else
+        ln -s "../macos-arm64/shared" "${MUSIC_RUNTIME_DIR}/shared"
+        TEMP_MUSIC_SHARED_LINK_CREATED=1
+    fi
+
+    if [ -e "${MUSIC_RUNTIME_DIR}/python" ] || [ -L "${MUSIC_RUNTIME_DIR}/python" ]; then
+        :
+    else
+        ln -s "../macos-arm64/python" "${MUSIC_RUNTIME_DIR}/python"
+        TEMP_MUSIC_PYTHON_LINK_CREATED=1
+    fi
+}
+
 validate_self_contained_symlinks() {
-    /usr/bin/python3 - "${RUNTIME_DIR}" "${MANIFEST}" "${RUNTIME_VERSION}" <<'PY'
+    local root_dir="$1"
+    local manifest_path="$2"
+    local label="$3"
+
+    /usr/bin/python3 - "${root_dir}" "${manifest_path}" "${RUNTIME_VERSION}" "${label}" <<'PY'
 import json
 import pathlib
 import sys
@@ -253,12 +298,13 @@ import sys
 root = pathlib.Path(sys.argv[1]).resolve()
 manifest_path = pathlib.Path(sys.argv[2])
 expected_runtime_version = sys.argv[3]
+label = sys.argv[4]
 manifest = json.loads(manifest_path.read_text())
 runtime_version = manifest.get("runtimeVersion")
 
 if runtime_version != expected_runtime_version:
     print(
-        f"warning: skipping self-contained symlink validation for bundled runtime {runtime_version}; "
+        f"warning: skipping self-contained symlink validation for {label} runtime {runtime_version}; "
         f"new runtime builds must be {expected_runtime_version}",
         file=sys.stderr,
     )
@@ -277,7 +323,7 @@ for path in root.rglob("*"):
 
 if bad:
     for path, resolved in bad[:50]:
-        print(f"error: runtime symlink points outside bundle: {path} -> {resolved}", file=sys.stderr)
+        print(f"error: {label} runtime symlink points outside bundle: {path} -> {resolved}", file=sys.stderr)
     if len(bad) > 50:
         print(f"error: and {len(bad) - 50} more invalid symlinks", file=sys.stderr)
     raise SystemExit(1)
@@ -285,7 +331,9 @@ PY
 }
 
 validate_manifest
-validate_self_contained_symlinks
+validate_self_contained_symlinks "${RUNTIME_DIR}" "${MANIFEST}" "base"
+validate_self_contained_symlinks "${MUSIC_RUNTIME_DIR}" "${MUSIC_MANIFEST}" "music"
+prepare_music_validation_overlay
 
 if [ -n "${SCRIPT_INPUT_FILE_COUNT:-}" ]; then
     validate_download_helper_structure

@@ -21,6 +21,12 @@ import wave
 from pathlib import Path
 from typing import Optional
 
+from runtime_layout import (
+    prepared_music_runtime,
+    resolve_base_runtime,
+    resolve_music_runtime,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -214,42 +220,10 @@ def ace_step_model_is_complete() -> bool:
 APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
 APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
-
-
-def runtime_is_valid(path: Path) -> bool:
-    return all(
-        (path / relative_path).exists()
-        for relative_path in [
-            "venv/bin/python",
-            "acestep-venv/bin/python",
-            "python/Frameworks/Versions/3.12",
-            "acestep_download_helper.py",
-            "runtime-manifest.json",
-        ]
-    )
-
-
-def resolve_runtime_dir() -> Path:
-    candidates = []
-    override = os.environ.get("MLXTRA_RUNTIME_DIR")
-    if override:
-        candidates.append(Path(override))
-    candidates.extend(
-        [
-            APP_SUPPORT / "runtimes/macos-arm64/current",
-            RESOURCES / "runtime/macos-arm64",
-        ]
-    )
-
-    for candidate in candidates:
-        if runtime_is_valid(candidate):
-            return candidate
-    return candidates[-1]
-
-
-RUNTIME = resolve_runtime_dir()
+RUNTIME = resolve_base_runtime(RESOURCES, APP_SUPPORT)
+MUSIC_RUNTIME = resolve_music_runtime(RUNTIME, RESOURCES)
 VENV_PYTHON = RUNTIME / "venv/bin/python"
-ACESTEP_PYTHON = RUNTIME / "acestep-venv/bin/python"
+ACESTEP_PYTHON = MUSIC_RUNTIME / "acestep-venv/bin/python"
 BRIDGE_SCRIPT = RESOURCES / "python_bridge.py"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
 GENERATED_IMAGES_DIR = APP_SUPPORT / "GeneratedImages"
@@ -385,6 +359,19 @@ class MLXtraIntegrationTest:
             self.log(f"✗ FAILED: No bundled catalog models for modality {modality}", "ERROR")
             return None, False
 
+        override_key = f"MLXTRA_INTEGRATION_{modality.upper()}_MODEL"
+        override_model_id = os.environ.get(override_key)
+        if override_model_id:
+            if override_model_id not in model_ids:
+                self.log(
+                    f"✗ FAILED: {override_key} is not a bundled {modality} model: "
+                    f"{override_model_id}",
+                    "ERROR",
+                )
+                return None, False
+            preflight = self.require_hf_model(test_name, override_model_id)
+            return override_model_id, preflight
+
         if ALLOW_MODEL_DOWNLOADS:
             model_id = model_ids[0]
             self.log(
@@ -410,7 +397,7 @@ class MLXtraIntegrationTest:
         if not ALLOW_MODEL_DOWNLOADS:
             return False
 
-        helper = RUNTIME / "acestep_download_helper.py"
+        helper = MUSIC_RUNTIME / "acestep_download_helper.py"
         if not helper.exists():
             self.log(f"ACE-Step download helper not found: {helper}", "ERROR")
             return False
@@ -1269,18 +1256,23 @@ class MLXtraIntegrationTest:
             audio_options = {}
         voice = str(audio_options.get("defaultVoice") or "default")
 
+        parameters = {
+            "voice": voice,
+            "ddpm_steps": 4,
+            "cfg_scale": 3.0,
+            "runtimeOptions": runtime_options,
+        }
+        if audio_options.get("adapter") == "higgs-audio-v3":
+            parameters["max_new_tokens"] = 256
+            parameters["seed"] = 42
+
         request = {
             "type": "audio.speech",
             "model": model_id,
             "request_id": request_id,
             "messages": [{"role": "user", "content": "Hello world. This is a test."}],
             "output_dir": str(GENERATED_SPEECH_DIR),
-            "parameters": {
-                "voice": voice,
-                "ddpm_steps": 4,
-                "cfg_scale": 3.0,
-                "runtimeOptions": runtime_options,
-            },
+            "parameters": parameters,
         }
 
         self.log(f"Request: {json.dumps(request, indent=2)}")
@@ -1330,6 +1322,15 @@ class MLXtraIntegrationTest:
 
         requests = []
         for index, text in enumerate(("First short speech turn.", "Second short speech turn."), start=1):
+            parameters = {
+                "voice": voice,
+                "ddpm_steps": 4,
+                "cfg_scale": 3.0,
+                "runtimeOptions": runtime_options,
+            }
+            if audio_options.get("adapter") == "higgs-audio-v3":
+                parameters["max_new_tokens"] = 256
+                parameters["seed"] = 42 + index
             requests.append(
                 {
                     "type": "audio.speech",
@@ -1337,12 +1338,7 @@ class MLXtraIntegrationTest:
                     "request_id": f"integration-audio-persistent-{index}",
                     "messages": [{"role": "user", "content": text}],
                     "output_dir": str(GENERATED_SPEECH_DIR),
-                    "parameters": {
-                        "voice": voice,
-                        "ddpm_steps": 4,
-                        "cfg_scale": 3.0,
-                        "runtimeOptions": runtime_options,
-                    },
+                    "parameters": parameters,
                 }
             )
 
@@ -1580,6 +1576,7 @@ class MLXtraIntegrationTest:
 
 
 if __name__ == "__main__":
-    test = MLXtraIntegrationTest()
-    success = test.run()
+    with prepared_music_runtime(RUNTIME, MUSIC_RUNTIME):
+        test = MLXtraIntegrationTest()
+        success = test.run()
     sys.exit(0 if success else 1)

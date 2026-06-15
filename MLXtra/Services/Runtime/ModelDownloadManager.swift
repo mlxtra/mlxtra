@@ -184,6 +184,12 @@ final class ModelDownloadManager: ObservableObject {
 #if DEBUG
         guard !usesUITestDownloadStates else { return }
 #endif
+        guard ModelFit.classify(
+            estimatedMemoryGB: model.estimatedMemoryGB,
+            hardwareMemoryGB: SystemHardware.currentMemoryGB
+        ) != .heavy else {
+            return
+        }
         guard !lifecycle.hasTask(for: model.id) else { return }
 
         errorTracker.clearErrorReceived(for: model.id)

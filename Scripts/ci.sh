@@ -48,8 +48,10 @@ run_py_compile() {
         MLXtra/Resources/bridge_utils.py \
         "${ace_helper}" \
         Scripts/validate-release-metadata.py \
+        Tests/IntegrationTests/runtime_layout.py \
         Tests/IntegrationTests/test_all_models_integration.py \
         Tests/IntegrationTests/test_bridge.py \
+        Tests/IntegrationTests/test_higgs_audio_integration.py \
         Tests/IntegrationTests/test_music_bridge.py \
         Tests/IntegrationTests/test_music_generation.py \
         Tests/IntegrationTests/test_music_integration.py

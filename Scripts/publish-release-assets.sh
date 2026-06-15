@@ -10,6 +10,7 @@ OUTPUT_DIR="${PROJECT_DIR}/.build/release"
 SKIP_RUNTIME_ARCHIVE=0
 WRITE_CHANNEL=0
 FORCE_IMMUTABLE=0
+SKIP_STABLE_UPLOAD=0
 DRY_RUN=0
 ALLOW_PRIVATE=0
 
@@ -32,6 +33,7 @@ Options:
   --skip-runtime-archive     Reuse the runtime entry already present in stable-channel.json
   --write-channel            Also update MLXtra/Resources/stable-channel.json locally
   --force-immutable          Replace assets on catalog/runtime releases if they already exist
+  --skip-stable-upload       Publish immutable assets without moving the stable channel pointer
   --dry-run                  Print publishing commands without running GitHub write operations
   --allow-private            Permit publishing to a private repo for internal testing
   -h, --help                 Show this help.
@@ -81,6 +83,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --force-immutable)
             FORCE_IMMUTABLE=1
+            shift
+            ;;
+        --skip-stable-upload)
+            SKIP_STABLE_UPLOAD=1
             shift
             ;;
         --dry-run)
@@ -347,17 +353,23 @@ else
     echo "No runtime entry in ${CHANNEL_ASSET}; publishing catalog-only stable channel."
 fi
 
-ensure_release \
-    "${STABLE_TAG}" \
-    "Stable Channel" \
-    "Moving MLXtra stable channel pointer. Immutable catalog and runtime assets live on catalog-* and runtime-* releases." \
-    "0"
-upload_stable_asset "${STABLE_TAG}" "${CHANNEL_ASSET}"
+if [ "${SKIP_STABLE_UPLOAD}" = "1" ]; then
+    echo "Stable channel upload skipped; immutable assets are ready for app rollout."
+else
+    ensure_release \
+        "${STABLE_TAG}" \
+        "Stable Channel" \
+        "Moving MLXtra stable channel pointer. Immutable catalog and runtime assets live on catalog-* and runtime-* releases." \
+        "0"
+    upload_stable_asset "${STABLE_TAG}" "${CHANNEL_ASSET}"
+fi
 
 echo ""
-echo "Published release channel:"
-echo "  https://github.com/${REPOSITORY}/releases/download/${STABLE_TAG}/stable-channel.json"
-echo ""
+if [ "${SKIP_STABLE_UPLOAD}" = "0" ]; then
+    echo "Published release channel:"
+    echo "  https://github.com/${REPOSITORY}/releases/download/${STABLE_TAG}/stable-channel.json"
+    echo ""
+fi
 echo "Immutable release tags:"
 echo "  ${CATALOG_TAG}"
 if [ -n "${RUNTIME_TAG}" ]; then

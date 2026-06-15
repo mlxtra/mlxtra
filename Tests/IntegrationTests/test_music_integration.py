@@ -14,6 +14,12 @@ import wave
 from pathlib import Path
 from typing import Optional
 
+from runtime_layout import (
+    prepared_music_runtime,
+    resolve_base_runtime,
+    resolve_music_runtime,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -69,41 +75,9 @@ def resolve_app_bundle() -> Path:
 APP_BUNDLE = resolve_app_bundle()
 RESOURCES = APP_BUNDLE / "Contents/Resources"
 APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
-
-
-def runtime_is_valid(path: Path) -> bool:
-    return all(
-        (path / relative_path).exists()
-        for relative_path in [
-            "venv/bin/python",
-            "acestep-venv/bin/python",
-            "python/Frameworks/Versions/3.12",
-            "acestep_download_helper.py",
-            "runtime-manifest.json",
-        ]
-    )
-
-
-def resolve_runtime_dir() -> Path:
-    candidates = []
-    override = os.environ.get("MLXTRA_RUNTIME_DIR")
-    if override:
-        candidates.append(Path(override))
-    candidates.extend(
-        [
-            APP_SUPPORT / "runtimes/macos-arm64/current",
-            RESOURCES / "runtime/macos-arm64",
-        ]
-    )
-
-    for candidate in candidates:
-        if runtime_is_valid(candidate):
-            return candidate
-    return candidates[-1]
-
-
-RUNTIME = resolve_runtime_dir()
-VENV_PYTHON = RUNTIME / "acestep-venv/bin/python"
+RUNTIME = resolve_base_runtime(RESOURCES, APP_SUPPORT)
+MUSIC_RUNTIME = resolve_music_runtime(RUNTIME, RESOURCES)
+VENV_PYTHON = MUSIC_RUNTIME / "acestep-venv/bin/python"
 MAIN_PYTHON = RUNTIME / "venv/bin/python"
 ACESTEP_BRIDGE = RESOURCES / "acestep_bridge.py"
 PYTHON_BRIDGE = RESOURCES / "python_bridge.py"
@@ -191,7 +165,7 @@ class MusicGenerationIntegrationTest:
         if not ALLOW_MODEL_DOWNLOADS:
             return False
 
-        helper = RUNTIME / "acestep_download_helper.py"
+        helper = MUSIC_RUNTIME / "acestep_download_helper.py"
         if not helper.exists():
             self.log(f"ACE-Step download helper not found: {helper}", "ERROR")
             return False
@@ -793,6 +767,7 @@ class MusicGenerationIntegrationTest:
 
 
 if __name__ == "__main__":
-    test = MusicGenerationIntegrationTest()
-    success = test.run()
+    with prepared_music_runtime(RUNTIME, MUSIC_RUNTIME):
+        test = MusicGenerationIntegrationTest()
+        success = test.run()
     sys.exit(0 if success else 1)

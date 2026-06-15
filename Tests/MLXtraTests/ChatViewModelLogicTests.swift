@@ -1333,6 +1333,66 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testDirectSpeechGenerationKeepsManualToolSelectionAfterCompletion() {
+        let viewModel = makeQuickPromptViewModel()
+        viewModel.selectedTool = .tts
+
+        viewModel.finishTerminalMediaToolResult(
+            messages: [],
+            messageId: UUID(),
+            isMusicGeneration: false,
+            requestTool: .tts
+        )
+
+        XCTAssertEqual(viewModel.selectedTool, .tts)
+    }
+
+    @MainActor
+    func testDirectMusicGenerationKeepsManualToolSelectionAfterCompletion() {
+        let viewModel = makeQuickPromptViewModel()
+        viewModel.selectedTool = .music
+
+        viewModel.finishTerminalMediaToolResult(
+            messages: [],
+            messageId: UUID(),
+            isMusicGeneration: true,
+            requestTool: .music
+        )
+
+        XCTAssertEqual(viewModel.selectedTool, .music)
+    }
+
+    @MainActor
+    func testDirectImageGenerationKeepsManualToolSelectionAfterCompletion() {
+        let viewModel = makeQuickPromptViewModel()
+        viewModel.selectedTool = .image
+
+        viewModel.finishTerminalMediaToolResult(
+            messages: [],
+            messageId: UUID(),
+            isMusicGeneration: false,
+            requestTool: .image
+        )
+
+        XCTAssertEqual(viewModel.selectedTool, .image)
+    }
+
+    @MainActor
+    func testAutoGenerationKeepsAutoToolSelectionAfterTerminalMediaCompletion() {
+        let viewModel = makeQuickPromptViewModel()
+        viewModel.selectedTool = .auto
+
+        viewModel.finishTerminalMediaToolResult(
+            messages: [],
+            messageId: UUID(),
+            isMusicGeneration: false,
+            requestTool: .auto
+        )
+
+        XCTAssertEqual(viewModel.selectedTool, .auto)
+    }
+
+    @MainActor
     func testStaleGenerationErrorDoesNotClearActiveGenerationOrReplaceMessage() {
         let viewModel = makeQuickPromptViewModel()
         let staleGenerationID = UUID()

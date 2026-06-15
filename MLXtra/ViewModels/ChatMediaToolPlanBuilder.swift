@@ -117,6 +117,8 @@ enum ChatMediaToolPlanBuilder {
     ) -> ChatMediaToolExecutionPlan {
         let speechText = nonEmptyStringArgument("text", from: decodedArguments) ?? fallbackPrompt
         let speechProfile = generation.profile(for: .tts)
+        let parameters = generation.executionParameters(for: speechProfile)
+        let preflightErrorMessage = speechPreflightError(profile: speechProfile, parameters: parameters)
         let model = speechProfile.downloadableModel
 
         return ChatMediaToolExecutionPlan(
@@ -133,8 +135,9 @@ enum ChatMediaToolPlanBuilder {
                 outputDirectory: outputDirectory,
                 maxTokens: 0,
                 temperature: 1.0,
-                parameters: generation.executionParameters(for: speechProfile)
+                parameters: parameters
             ),
+            preflightErrorMessage: preflightErrorMessage,
             loadingStatus: "Generating speech...",
             operationName: "Speech generation",
             unavailablePrefix: "Speech generation unavailable",
@@ -150,6 +153,22 @@ enum ChatMediaToolPlanBuilder {
             return nil
         }
         return value
+    }
+
+    private static func speechPreflightError(
+        profile: ModelCapabilityProfile,
+        parameters: [String: Any]
+    ) -> String? {
+        guard profile.modelId == "bosonai/higgs-audio-v3-tts-4b" else { return nil }
+        let voice = String(describing: parameters["voice"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "_")
+        guard voice == "custom_reference" else { return nil }
+        let referenceAudio = String(describing: parameters["ref_audio"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard referenceAudio.isEmpty else { return nil }
+        return "Custom Reference voice requires a local reference audio file."
     }
 
     private static func structuredCaptionDetail(_ caption: [String: Any]) -> ToolCallDetail? {
