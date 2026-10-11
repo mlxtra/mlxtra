@@ -133,7 +133,12 @@ struct RuntimeUpdateSettingsSection: View {
             actionView
         }
         .onAppear {
-            manager.bootstrapStableRuntimeInBackground(reportFailures: false)
+            switch manager.state {
+            case .idle, .installed:
+                manager.bootstrapStableRuntimeInBackground(reportFailures: false)
+            default:
+                break
+            }
         }
     }
 

@@ -27,6 +27,31 @@ enum ModelDownloadFilter: String, CaseIterable, Identifiable {
     }
 }
 
+enum PendingModelDownloadStartDecision: Equatable {
+    case wait
+    case clear
+    case startAndClear
+}
+
+enum PendingModelDownloadStartPolicy {
+    static func decision(
+        state: ModelDownloadManager.DownloadState,
+        modelFit: ModelFit,
+        requiresRuntimeSetup: Bool
+    ) -> PendingModelDownloadStartDecision {
+        switch state {
+        case .downloaded:
+            return .clear
+        case .notDownloaded, .failed:
+            guard modelFit != .heavy else { return .clear }
+            guard !requiresRuntimeSetup else { return .wait }
+            return .startAndClear
+        case .downloading, .paused:
+            return .wait
+        }
+    }
+}
+
 extension ModelDownloadManager.DownloadState {
     var sortRank: Int {
         switch self {

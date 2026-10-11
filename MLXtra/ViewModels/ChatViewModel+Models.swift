@@ -271,6 +271,7 @@ extension ChatViewModel {
 
     @discardableResult
     func selectDownloadedDefaultModelIfNeeded(for modality: ModelModality) async -> Bool {
+        let originalSelection = modelSelectionStore.selectedModelId(for: modality)
         if let storedProfile = modelSelectionStore.storedProfile(for: modality),
            await isModelDownloadedOffMain(model: storedProfile.downloadableModel) {
             return false
@@ -281,11 +282,20 @@ extension ChatViewModel {
         let candidateProfiles = compatibleProfiles.isEmpty ? sortedProfiles : compatibleProfiles
 
         for profile in candidateProfiles {
-            guard await isModelDownloadedOffMain(model: profile.downloadableModel) else {
+            let isDownloaded = await isModelDownloadedOffMain(model: profile.downloadableModel)
+            guard !Task.isCancelled,
+                  modelSelectionStore.selectedModelId(for: modality) == originalSelection else {
+                return false
+            }
+            guard isDownloaded else {
                 continue
             }
 
             modelSelectionStore.setSelectedModelId(profile.modelId, for: modality)
+            if modelModality(for: selectedTool) == modality,
+               pendingEngineDownloadReason == .preflight {
+                clearPendingEngineDownloadModel()
+            }
             modelSelectionRevision += 1
             return true
         }

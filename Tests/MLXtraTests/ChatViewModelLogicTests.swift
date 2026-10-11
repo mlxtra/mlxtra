@@ -418,6 +418,65 @@ final class ChatViewModelLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testLaunchPreloadDefaultSelectionClearsPreviousMissingModelWarning() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let missing = try visionProfile("mlx-community/gemma-4-e2b-it-4bit")
+        let downloaded = try visionProfile("mlx-community/Qwen3.5-2B-MLX-4bit")
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(missing.modelId, for: .vision)
+        let viewModel = makeLaunchPreloadViewModel(
+            defaults: defaults,
+            executor: LaunchPreloadTestExecutor(),
+            runtimeManager: LaunchPreloadRuntimeManager(downloadedModelIds: [downloaded.modelId])
+        )
+        viewModel.pendingEngineDownloadModel = missing.downloadableModel
+        viewModel.pendingEngineDownloadReason = .preflight
+        viewModel.pendingEngineDownloadDetail = "Previous model is missing"
+
+        viewModel.scheduleLaunchModelPreload(delayNanoseconds: 0)
+        await viewModel.launchModelPreloadTask?.value
+
+        XCTAssertEqual(viewModel.activeModelProfile.modelId, downloaded.modelId)
+        XCTAssertNil(viewModel.pendingEngineDownloadModel)
+        XCTAssertNil(viewModel.pendingEngineDownloadDetail)
+    }
+
+    @MainActor
+    func testSuspendedDefaultSelectionDoesNotOverwriteNewExplicitSelection() async throws {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let missing = try visionProfile("mlx-community/gemma-4-e2b-it-4bit")
+        let downloaded = try visionProfile("mlx-community/Qwen3.5-2B-MLX-4bit")
+        ModelSelectionStore(userDefaults: defaults).setSelectedModelId(missing.modelId, for: .vision)
+        let runtimeManager = SuspendedDownloadStatusRuntimeManager(
+            downloadedModelIds: [downloaded.modelId],
+            suspendedModelIds: [missing.modelId],
+            suspensionsRemaining: 1
+        )
+        let viewModel = ChatViewModel(
+            chatPersistence: RecordingChatPersistenceService(chats: [], selectedChatId: nil),
+            vlmExecutor: QuickPromptTestExecutor(),
+            runtimeManager: runtimeManager,
+            toolExecutor: QuickPromptToolExecutionService(),
+            userDefaults: defaults
+        )
+        let selectionTask = Task { @MainActor in
+            await viewModel.selectDownloadedDefaultModelIfNeeded(for: .vision)
+        }
+        await runtimeManager.waitForSuspendedCheck()
+        // Settings can update the shared store while cache inspection is suspended.
+        let explicit = try XCTUnwrap(testVisionProfiles.first {
+            $0.modelId != missing.modelId && $0.modelId != downloaded.modelId
+        })
+        viewModel.modelSelectionStore.setSelectedModelId(explicit.modelId, for: .vision)
+        runtimeManager.releaseSuspendedChecks()
+
+        let didReplaceSelection = await selectionTask.value
+        XCTAssertFalse(didReplaceSelection)
+        XCTAssertEqual(viewModel.activeModelProfile.modelId, explicit.modelId)
+    }
+
+    @MainActor
     func testLaunchPreloadWarmsSelectedDownloadedVisionModel() async throws {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

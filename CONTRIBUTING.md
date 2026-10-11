@@ -9,8 +9,8 @@ Requirements:
 
 - macOS 14 or later
 - Apple Silicon Mac
-- Xcode 15 or later
-- Python 3.12 for runtime work
+- Xcode 26 or later (Swift 6.2 or later)
+- Python 3 for bridge tests (the runtime builder supplies pinned Python 3.12)
 
 Build the app with Xcode:
 

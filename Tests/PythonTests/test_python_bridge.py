@@ -934,8 +934,10 @@ class TestMediaGenerationBridge(unittest.TestCase):
             def __init__(self):
                 self.kwargs = None
 
-            def generate_image(self, **kwargs):
-                self.kwargs = kwargs
+            def generate_image(self, *, prompt, seed, num_inference_steps, width,
+                               height, guidance, preset, strict_caption_validation,
+                               warn_on_caption_issues):
+                self.kwargs = {name: value for name, value in locals().items() if name != "self"}
                 return FakeImage()
 
         fake_model = FakeImageModel()
@@ -1013,10 +1015,39 @@ class TestMediaGenerationBridge(unittest.TestCase):
             ["type", "bbox", "text", "desc"],
         )
         self.assertEqual(fake_model.kwargs["preset"], "V4_QUALITY_48")
-        self.assertTrue(fake_model.kwargs["use_preset_steps"])
+        self.assertNotIn("use_preset_steps", fake_model.kwargs)
+        self.assertIsNone(fake_model.kwargs["num_inference_steps"])
         self.assertTrue(fake_model.kwargs["strict_caption_validation"])
         self.assertFalse(fake_model.kwargs["warn_on_caption_issues"])
         fake_mx.clear_cache.assert_called_once()
+
+    def test_ideogram_preset_steps_supports_legacy_runtime(self):
+        class FakeImage:
+            def save(self, path, overwrite=False):
+                Path(path).write_bytes(b"png")
+
+        class LegacyModel:
+            def generate_image(self, use_preset_steps=False, **kwargs):
+                self.use_preset_steps = use_preset_steps
+                self.steps = kwargs["num_inference_steps"]
+                return FakeImage()
+
+        model = LegacyModel()
+        with tempfile.TemporaryDirectory() as output_dir, patch.object(
+            python_bridge, "load_image_model_if_needed", return_value=model
+        ), patch("sys.stdout", new_callable=io.StringIO) as captured:
+            python_bridge.handle_image_generation({
+                "type": "image.generate", "model": "ideogram-ai/ideogram-4-fp8",
+                "prompt": {"high_level_description": "A poster"},
+                "parameters": {"steps": 20, "use_preset_steps": True,
+                    "runtimeOptions": {"mflux": {"config": "ideogram-4-fp8",
+                                                  "textToImageClass": "Ideogram4"}}},
+                "output_dir": output_dir,
+            })
+        self.assertTrue(model.use_preset_steps)
+        self.assertEqual(model.steps, 20)
+        self.assertEqual(json.loads(captured.getvalue().splitlines()[-1])["type"],
+                         "chat.completion.complete")
 
     def test_ideogram_image_generation_rejects_plain_prompt_before_model_load(self):
         request = {
@@ -2081,19 +2112,32 @@ class TestRuntimeResolution(unittest.TestCase):
             active_python.parent.mkdir(parents=True)
             active_python.write_text("#!/bin/sh\n")
 
-            with patch.dict(os.environ, {}, clear=True), patch.object(
-                python_bridge.sys, "executable", str(active_python)
-            ):
+            with patch.dict(os.environ, {}, clear=True), patch.dict(
+                sys.modules, {"espeakng_loader": types.ModuleType("espeakng_loader")}
+            ), patch.object(python_bridge.sys, "executable", str(active_python)):
                 configured = python_bridge._configure_espeak_runtime()
                 self.assertEqual(configured, loader_dir.resolve())
                 self.assertEqual(
                     os.environ["PHONEMIZER_ESPEAK_LIBRARY"],
                     str(library_path.resolve()),
                 )
-                self.assertEqual(
-                    os.environ["PHONEMIZER_ESPEAK_DATA_PATH"],
-                    str(data_dir.resolve()),
-                )
+                configured_data = Path(os.environ["PHONEMIZER_ESPEAK_DATA_PATH"])
+                self.assertEqual((configured_data / "phontab").read_text(), "data")
+                self.assertLess(len(os.fsencode(configured_data.resolve())), 140)
+    def test_long_espeak_data_path_is_copied_and_reused(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data = Path(temp_dir) / ("nested-" * 20) / "espeak-ng-data"
+            data.mkdir(parents=True)
+            (data / "phontab").write_bytes(b"phoneme data")
+            short_path = python_bridge._short_espeak_data_path(data)
+            try:
+                self.assertNotEqual(short_path.resolve(), data.resolve())
+                self.assertEqual((short_path / "phontab").read_bytes(), b"phoneme data")
+                self.assertLess(len(os.fsencode(short_path.resolve())), 140)
+                self.assertEqual(python_bridge._short_espeak_data_path(data), short_path)
+            finally:
+                python_bridge.ESPEAK_DATA_CACHES.pop(str(data.resolve())).cleanup()
+
 
 
 class TestAudioModelGeneration(unittest.TestCase):
@@ -2133,6 +2177,33 @@ class TestAudioModelGeneration(unittest.TestCase):
         fake_utils.load.assert_called_once_with("bosonai/higgs-audio-v3-tts-4b")
         fake_utils.load_model.assert_not_called()
         python_bridge.AUDIO_MODEL_REGISTRY.clear()
+
+    def test_audio_loader_keeps_diagnostics_out_of_json_stream(self):
+        fake_utils = types.ModuleType("mlx_audio.tts.utils")
+        fake_model = object()
+
+        def noisy_load(model_id):
+            print("Loading speech weights")
+            return fake_model
+
+        fake_utils.load_model = noisy_load
+        stdout, stderr = io.StringIO(), io.StringIO()
+        python_bridge.AUDIO_MODEL_REGISTRY.clear()
+        try:
+            with patch.dict(sys.modules, {
+                "mlx_audio": types.ModuleType("mlx_audio"),
+                "mlx_audio.tts": types.ModuleType("mlx_audio.tts"),
+                "mlx_audio.tts.utils": fake_utils,
+            }), patch.object(python_bridge, "unload_models"), patch.object(
+                python_bridge, "_configure_espeak_runtime"
+            ), patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                loaded = python_bridge.load_audio_model_if_needed("speech/test")
+            self.assertIs(loaded, fake_model)
+            messages = [json.loads(line) for line in stdout.getvalue().splitlines()]
+            self.assertTrue(any(message["type"] == "model.loaded" for message in messages))
+            self.assertIn("Loading speech weights", stderr.getvalue())
+        finally:
+            python_bridge.AUDIO_MODEL_REGISTRY.clear()
 
     def test_kokoro_generation_uses_voice_speed_and_language(self):
         generated = object()

@@ -46,6 +46,47 @@ final class StreamingFileDownloaderTests: XCTestCase {
         XCTAssertEqual(progress.values().last, Int64(payload.count))
     }
 
+    func testRetriesShortSuccessfulResponseAndResumesPartialFile() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let payload = Data([1, 2, 3, 4, 5, 6])
+        StreamingDownloaderURLProtocol.reset(
+            data: payload,
+            responseByteLimit: 2
+        )
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingDownloaderURLProtocol.self]
+        let destinationURL = directory.appendingPathComponent("short-success.bin")
+        let temporaryURL = StreamingFileDownloader.partialDownloadURL(for: destinationURL)
+        let progress = Int64Recorder()
+
+        let downloader = StreamingFileDownloader(
+            configuration: configuration,
+            maxAttempts: 3,
+            shouldRetry: { StreamingFileDownloader.isTransientNetworkError($0) },
+            shouldPreservePartial: { StreamingFileDownloader.shouldPreservePartialDownload(after: $0) },
+            retryDelay: { _ in }
+        )
+
+        let result = try await downloader.download(
+            request: URLRequest(url: URL(string: "https://stream.test/short-success.bin")!),
+            destinationURL: destinationURL,
+            expectedBytes: Int64(payload.count),
+            onProgress: { bytesWritten in
+                progress.append(bytesWritten)
+            }
+        )
+
+        XCTAssertEqual(result.bytesWritten, Int64(payload.count))
+        XCTAssertEqual(try Data(contentsOf: destinationURL), payload)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporaryURL.path))
+        XCTAssertEqual(StreamingDownloaderURLProtocol.recordedRangeHeaders(), [nil, "bytes=2-", "bytes=4-"])
+        XCTAssertTrue(progress.values().contains(2))
+        XCTAssertTrue(progress.values().contains(4))
+        XCTAssertEqual(progress.values().last, Int64(payload.count))
+    }
+
     func testRemovesPartialFileWhenResponseValidationFails() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -197,13 +238,15 @@ private final class StreamingDownloaderURLProtocol: URLProtocol {
     private static var shouldFailFirstRequestBeforeResponse = false
     private static var hasFailedFirstRequest = false
     private static var failEveryRequestWithError: URLError?
+    private static var responseByteLimit: Int?
     private static var rangeHeaders: [String?] = []
 
     static func reset(
         data: Data,
         statusCode: Int = 200,
         failFirstRequestBeforeResponse: Bool = false,
-        failEveryRequestWith: URLError? = nil
+        failEveryRequestWith: URLError? = nil,
+        responseByteLimit: Int? = nil
     ) {
         lock.lock()
         responseData = data
@@ -211,6 +254,7 @@ private final class StreamingDownloaderURLProtocol: URLProtocol {
         shouldFailFirstRequestBeforeResponse = failFirstRequestBeforeResponse
         hasFailedFirstRequest = false
         failEveryRequestWithError = failEveryRequestWith
+        self.responseByteLimit = responseByteLimit
         rangeHeaders = []
         lock.unlock()
     }
@@ -240,6 +284,7 @@ private final class StreamingDownloaderURLProtocol: URLProtocol {
         let failEveryRequestWithError = Self.failEveryRequestWithError
         let data = Self.responseData
         let statusCode = Self.statusCode
+        let responseByteLimit = Self.responseByteLimit
         let shouldFailBeforeResponse = Self.shouldFailFirstRequestBeforeResponse
             && !Self.hasFailedFirstRequest
         if shouldFailBeforeResponse {
@@ -258,7 +303,10 @@ private final class StreamingDownloaderURLProtocol: URLProtocol {
         }
 
         let startOffset = rangeStart(from: rangeHeader, dataCount: data.count)
-        let responseData = Data(data[startOffset..<data.count])
+        let responseEndOffset = responseByteLimit
+            .map { min(startOffset + max($0, 0), data.count) }
+            ?? data.count
+        let responseData = Data(data[startOffset..<responseEndOffset])
         let isPartialResponse = startOffset > 0 && statusCode == 200
         var headers = ["Content-Length": "\(responseData.count)"]
         if isPartialResponse {

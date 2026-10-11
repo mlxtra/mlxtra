@@ -1,89 +1,109 @@
 {
   "lockVersion": 1,
   "runtime": {
-    "version": "0.1.9",
-    "pythonVersion": "3.12.8",
+    "version": "0.1.10",
+    "pythonVersion": "3.12.15",
     "mlxWheelPlatform": "macosx_14_0_arm64"
   },
   "pythonPackage": {
-    "url": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg",
-    "name": "python-3.12.8-macos11.pkg",
-    "sha256": "c411b5372d563532f5e6b589af7eb16e95613d61bd5af7bfe78563467130bbff"
+    "url": "https://www.python.org/ftp/python/3.12.15/Python-3.12.15.tar.xz",
+    "name": "Python-3.12.15.tar.xz",
+    "sha256": "c2c4321961fab0fb999d66e0cecf521c2ab3994c7992873ea99e306c1094fd5a"
+  },
+  "opensslSource": {
+    "version": "3.5.9",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
+  },
+  "xzSource": {
+    "version": "5.8.4",
+    "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.gz",
+    "sha256": "0014c7886930454fe8bd4228665b51af55eeae560ea135c9c4cd33f55b2591d9"
   },
   "pins": {
-    "MLX_VERSION": "0.31.2",
-    "MLX_METAL_VERSION": "0.31.2",
-    "MLX_VLM_VERSION": "0.6.1",
-    "MLX_AUDIO_VERSION": "0.4.4",
+    "MLX_VERSION": "0.32.3",
+    "MLX_METAL_VERSION": "0.32.3",
+    "MLX_VLM_VERSION": "0.7.6",
+    "MLX_AUDIO_VERSION": "0.5.8",
     "MISAKI_VERSION": "0.9.4",
-    "MFLUX_VERSION": "0.17.5",
-    "MFLUX_REF": "02dce47cf2a94b438dad8ba1b620869f1cc28489",
-    "TRANSFORMERS_VERSION": "5.8.0",
-    "HUGGINGFACE_HUB_VERSION": "1.14.0",
-    "PILLOW_VERSION": "12.2.0",
+    "EN_CORE_WEB_SM_VERSION": "3.8.0",
+    "MAGENTA_MLX_VERSION": "0.31.2",
+    "MFLUX_VERSION": "0.22.0",
+    "MFLUX_REF": "31c9640399572ea394d07092763be9a36007a754",
+    "TRANSFORMERS_VERSION": "5.19.0",
+    "HUGGINGFACE_HUB_VERSION": "1.33.0",
+    "PILLOW_VERSION": "12.3.0",
     "NUMPY_VERSION": "2.4.4",
-    "TORCH_VERSION": "2.11.0",
-    "TORCHVISION_VERSION": "0.26.0",
-    "ACE_STEP_REF": "6c1b2ef130bb7a7705a2abc61c11a258202b9ed2",
-    "MAGENTA_RT_VERSION": "2.0.2"
+    "TORCH_VERSION": "2.14.1",
+    "TORCHVISION_VERSION": "0.29.1",
+    "ACE_STEP_REF": "dce621408bee8c31b4fcf4811682eb9359e1bc94",
+    "MAGENTA_RT_VERSION": "2.0.3"
   },
   "packages": {
     "forcedBinaryPyPI": [
+      "mlx==0.32.3",
+      "mlx-metal==0.32.3"
+    ],
+    "magentaBinaryPyPI": [
       "mlx==0.31.2",
       "mlx-metal==0.31.2"
     ],
     "mainPyPI": [
-      "mlx-vlm==0.6.1",
-      "mlx-audio==0.4.4",
+      "mlx-vlm==0.7.6",
+      "mlx-audio==0.5.8",
       "misaki[en]==0.9.4",
-      "mflux==0.17.5",
-      "transformers==5.8.0",
-      "huggingface-hub==1.14.0",
-      "pillow==12.2.0",
+      "en-core-web-sm==3.8.0",
+      "mflux==0.22.0",
+      "transformers==5.19.0",
+      "huggingface-hub==1.33.0",
+      "pillow==12.3.0",
       "numpy==2.4.4"
     ],
     "mainInstall": [
-      "mlx-vlm==0.6.1",
-      "mlx-audio==0.4.4",
+      "mlx-vlm==0.7.6",
+      "mlx-audio==0.5.8",
       "misaki[en]==0.9.4",
-      "git+https://github.com/omercelik/mflux.git@02dce47cf2a94b438dad8ba1b620869f1cc28489",
-      "transformers==5.8.0",
-      "huggingface-hub==1.14.0",
-      "pillow==12.2.0",
+      "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
+      "mflux==0.22.0",
+      "transformers==5.19.0",
+      "huggingface-hub==1.33.0",
+      "pillow==12.3.0",
       "numpy==2.4.4"
     ],
     "torch": [
-      "torch==2.11.0",
-      "torchvision==0.26.0"
+      "torch==2.14.1",
+      "torchvision==0.29.1"
     ],
     "main": [
-      "mlx==0.31.2",
-      "mlx-vlm==0.6.1",
-      "mlx-audio==0.4.4",
+      "mlx==0.32.3",
+      "mlx-vlm==0.7.6",
+      "mlx-audio==0.5.8",
       "misaki[en]==0.9.4",
-      "mflux==0.17.5",
-      "transformers==5.8.0",
-      "huggingface-hub==1.14.0",
-      "pillow==12.2.0",
+      "en-core-web-sm==3.8.0",
+      "mflux==0.22.0",
+      "transformers==5.19.0",
+      "huggingface-hub==1.33.0",
+      "pillow==12.3.0",
       "numpy==2.4.4",
-      "torch==2.11.0",
-      "torchvision==0.26.0"
+      "torch==2.14.1",
+      "torchvision==0.29.1"
     ]
   },
   "isolatedPackages": {
     "aceStep": {
-      "ref": "6c1b2ef130bb7a7705a2abc61c11a258202b9ed2",
-      "package": "git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2"
+      "ref": "dce621408bee8c31b4fcf4811682eb9359e1bc94",
+      "package": "git+https://github.com/ace-step/ACE-Step-1.5.git@dce621408bee8c31b4fcf4811682eb9359e1bc94"
     },
     "magentaRealtime": {
-      "version": "2.0.2",
-      "package": "magenta-rt[mlx]==2.0.2"
+      "version": "2.0.3",
+      "mlxVersion": "0.31.2",
+      "package": "magenta-rt[mlx]==2.0.3"
     }
   },
   "sourcePackages": {
     "mflux": {
-      "ref": "02dce47cf2a94b438dad8ba1b620869f1cc28489",
-      "package": "git+https://github.com/omercelik/mflux.git@02dce47cf2a94b438dad8ba1b620869f1cc28489"
+      "ref": "31c9640399572ea394d07092763be9a36007a754",
+      "package": "mflux==0.22.0"
     }
   }
 }

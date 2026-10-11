@@ -166,6 +166,30 @@ shared runtime dependency script.
 Scripts/build-runtime-bundle.sh
 ```
 
+Python 3.12 security releases are source-only. The builder verifies the source
+checksums for Python, OpenSSL, and XZ, then builds an arm64 Python framework
+targeting macOS 14. OpenSSL and liblzma are linked statically; TLS uses the
+system certificate bundle at `/etc/ssl`. License texts are retained in the
+framework's `Resources/licenses` directory. Xcode's command-line tools are
+required; a developer-installed Python or Homebrew library is not used.
+
+For an isolated candidate that leaves the existing local runtime in place:
+
+```bash
+Scripts/build-runtime-bundle.sh \
+  --build-dir .build/runtime-upgrade-build \
+  --cache-dir .build/runtime-upgrade-cache \
+  --output-dir .build/runtime-upgrade/macos-arm64
+MLXTRA_RUNTIME_DIR="$PWD/.build/runtime-upgrade/macos-arm64" \
+MLXTRA_MUSIC_RUNTIME_DIR="$PWD/.build/runtime-upgrade/music-macos-arm64" \
+MLXTRA_BOOTSTRAP_RUNTIME_ON_BUILD=0 Scripts/validate-runtime-bundle.sh
+```
+
+The same runtime environment overrides are supported by the model integration
+tests. Check candidate metadata using `--runtime-manifest` and
+`--allow-runtime-version-drift` until its release is published. The shared CI
+metadata step deliberately requires parity with the published stable channel.
+
 3. Validate it:
 
 ```bash

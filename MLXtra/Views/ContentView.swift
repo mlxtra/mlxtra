@@ -154,23 +154,27 @@ struct ContentView: View {
     private func startPendingModelDownloadIfReady() {
         guard !pendingDownloadModelId.isEmpty else { return }
         guard let model = DownloadableModel.embeddedModel(modelId: pendingDownloadModelId) else {
+            pendingDownloadModelId = ""
             return
         }
 
-        switch downloadManager.state(for: model) {
-        case .downloaded:
+        let modelFit = ModelFit.classify(
+            estimatedMemoryGB: model.estimatedMemoryGB,
+            hardwareMemoryGB: SystemHardware.currentMemoryGB
+        )
+        let decision = PendingModelDownloadStartPolicy.decision(
+            state: downloadManager.state(for: model),
+            modelFit: modelFit,
+            requiresRuntimeSetup: model.requiresRuntimeSetupBeforeDownload()
+        )
+
+        switch decision {
+        case .clear:
             pendingDownloadModelId = ""
-        case .notDownloaded, .failed:
-            guard ModelFit.classify(
-                estimatedMemoryGB: model.estimatedMemoryGB,
-                hardwareMemoryGB: SystemHardware.currentMemoryGB
-            ) != .heavy else {
-                pendingDownloadModelId = ""
-                return
-            }
-            guard !model.requiresRuntimeSetupBeforeDownload() else { return }
+        case .startAndClear:
+            pendingDownloadModelId = ""
             downloadManager.download(model)
-        case .downloading, .paused:
+        case .wait:
             return
         }
     }

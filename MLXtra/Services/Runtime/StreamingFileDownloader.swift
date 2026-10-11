@@ -74,6 +74,10 @@ final class StreamingFileDownloader: @unchecked Sendable {
                 let result = try await stream.start()
                 try Task.checkCancellation()
                 try validateResponse(result.response)
+                try Self.validateDownloadedByteCount(
+                    result.bytesWritten,
+                    expectedBytes: expectedBytes
+                )
                 if fileManager.fileExists(atPath: destinationURL.path) {
                     try fileManager.removeItem(at: destinationURL)
                 }
@@ -151,6 +155,19 @@ final class StreamingFileDownloader: @unchecked Sendable {
             return nil
         }
         return size.int64Value
+    }
+
+    private static func validateDownloadedByteCount(
+        _ bytesWritten: Int64,
+        expectedBytes: Int64?
+    ) throws {
+        guard let expectedBytes else { return }
+        if bytesWritten < expectedBytes {
+            throw URLError(.networkConnectionLost)
+        }
+        if bytesWritten > expectedBytes {
+            throw URLError(.badServerResponse)
+        }
     }
 }
 

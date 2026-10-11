@@ -17,19 +17,32 @@ swift test --enable-code-coverage
 
 BUILD_DIR="$(swift build --show-bin-path)"
 PROFILE="${BUILD_DIR}/codecov/default.profdata"
-TEST_BINARY="${BUILD_DIR}/MLXtraPackageTests.xctest/Contents/MacOS/MLXtraPackageTests"
 
 if [ ! -f "${PROFILE}" ]; then
     echo "error: Swift coverage profile not found at ${PROFILE}" >&2
     exit 1
 fi
 
-if [ ! -x "${TEST_BINARY}" ]; then
-    echo "error: Swift test binary not found at ${TEST_BINARY}" >&2
+# SwiftPM's native and Xcode build systems use different XCTest bundle names.
+# Read each bundle's declared executable rather than assuming a runner name.
+TEST_BINARIES=()
+for bundle in "${BUILD_DIR}"/*.xctest; do
+    [ -d "${bundle}" ] || continue
+    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${bundle}/Contents/Info.plist")"
+    binary="${bundle}/Contents/MacOS/${executable}"
+    [ -x "${binary}" ] && TEST_BINARIES+=("${binary}")
+done
+
+if [ "${#TEST_BINARIES[@]}" -eq 0 ]; then
+    echo "error: Swift test binaries not found in ${BUILD_DIR}" >&2
     exit 1
 fi
 
-REPORT="$(xcrun llvm-cov report "${TEST_BINARY}" -instr-profile "${PROFILE}" -ignore-filename-regex="${IGNORE_REGEX}")"
+COVERAGE_OBJECTS=("${TEST_BINARIES[0]}")
+for ((index = 1; index < ${#TEST_BINARIES[@]}; index++)); do
+    COVERAGE_OBJECTS+=(-object "${TEST_BINARIES[index]}")
+done
+REPORT="$(xcrun llvm-cov report "${COVERAGE_OBJECTS[@]}" -instr-profile "${PROFILE}" -ignore-filename-regex="${IGNORE_REGEX}")"
 printf '%s\n' "${REPORT}"
 
 LINE_COVERAGE="$(printf '%s\n' "${REPORT}" | awk '/^TOTAL/ { gsub("%", "", $10); print $10 }')"

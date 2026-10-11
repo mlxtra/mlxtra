@@ -782,6 +782,9 @@ class MLXtraIntegrationTest:
                 proc.kill()
             stdout_thread.join(timeout=1)
             stderr_thread.join(timeout=1)
+            for pipe in (proc.stdin, proc.stdout, proc.stderr):
+                if pipe is not None:
+                    pipe.close()
 
             success = not any(m.get("type") == "error" for m in all_messages)
             self.last_bridge_timings = session_timings

@@ -23,6 +23,63 @@ final class ModelDownloadManagerTests: XCTestCase {
         XCTAssertFalse(ModelDownloadManager.DownloadState.failed("error").isDownloading)
     }
 
+    func testPendingDownloadPolicyConsumesFailedStateBeforeStarting() {
+        XCTAssertEqual(
+            PendingModelDownloadStartPolicy.decision(
+                state: .failed("Network unavailable."),
+                modelFit: .recommended,
+                requiresRuntimeSetup: false
+            ),
+            .startAndClear
+        )
+    }
+
+    func testPendingDownloadPolicyWaitsForActiveOrRuntimeSetupState() {
+        XCTAssertEqual(
+            PendingModelDownloadStartPolicy.decision(
+                state: .notDownloaded,
+                modelFit: .recommended,
+                requiresRuntimeSetup: true
+            ),
+            .wait
+        )
+        XCTAssertEqual(
+            PendingModelDownloadStartPolicy.decision(
+                state: .downloading(nil),
+                modelFit: .recommended,
+                requiresRuntimeSetup: false
+            ),
+            .wait
+        )
+        XCTAssertEqual(
+            PendingModelDownloadStartPolicy.decision(
+                state: .paused(nil),
+                modelFit: .recommended,
+                requiresRuntimeSetup: false
+            ),
+            .wait
+        )
+    }
+
+    func testPendingDownloadPolicyClearsCompletedOrHeavyState() {
+        XCTAssertEqual(
+            PendingModelDownloadStartPolicy.decision(
+                state: .downloaded,
+                modelFit: .recommended,
+                requiresRuntimeSetup: false
+            ),
+            .clear
+        )
+        XCTAssertEqual(
+            PendingModelDownloadStartPolicy.decision(
+                state: .notDownloaded,
+                modelFit: .heavy,
+                requiresRuntimeSetup: false
+            ),
+            .clear
+        )
+    }
+
     func testDownloadStatePausedAndProgress() {
         let progress = ModelDownloadManager.DownloadProgress(
             status: "Downloading",

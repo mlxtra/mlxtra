@@ -18,6 +18,9 @@ import time
 import threading
 import uuid
 import contextlib
+import inspect
+import shutil
+import tempfile
 from typing import List, Dict, Optional, Any, Tuple
 from pathlib import Path
 
@@ -36,6 +39,7 @@ MUSIC_MODEL_REGISTRY: Dict[str, Any] = {}
 BRIDGE_PROCESS_STARTED = time.perf_counter()
 RUNTIME_MANIFEST_CACHE: Optional[Dict[str, Any]] = None
 ESPEAK_RUNTIME_CONFIGURED_FOR: Optional[str] = None
+ESPEAK_DATA_CACHES: Dict[str, Any] = {}
 JSON_OUTPUT_LOCK = threading.Lock()
 
 _HIGGS_EMOTION_STYLE_PREFIXES = {
@@ -339,6 +343,25 @@ def setup_environment():
     send_timing("bridge.setup_environment", started_at)
 
 
+def _short_espeak_data_path(data_path: Path) -> Path:
+    # The bundled eSpeak library has a 160-byte native path buffer. A symlink
+    # cannot shorten this path because phonemizer resolves it before loading.
+    if len(os.fsencode(data_path.resolve())) < 140:
+        return data_path
+    key = str(data_path.resolve())
+    cached = ESPEAK_DATA_CACHES.get(key)
+    if cached is None:
+        temporary = tempfile.TemporaryDirectory(prefix="mlxtra-espeak-", dir="/tmp")
+        try:
+            shutil.copytree(data_path, Path(temporary.name) / "espeak-ng-data")
+        except Exception:
+            temporary.cleanup()
+            raise
+        ESPEAK_DATA_CACHES[key] = temporary
+        cached = temporary
+    return Path(cached.name) / "espeak-ng-data"
+
+
 def _configure_espeak_runtime() -> Optional[Path]:
     """Point phonemizer/espeak at the active runtime's bundled data files."""
     global ESPEAK_RUNTIME_CONFIGURED_FOR
@@ -353,6 +376,17 @@ def _configure_espeak_runtime() -> Optional[Path]:
             and (data_path / "phontab").exists()
         ):
             continue
+
+        original_data_path = data_path
+        data_path = _short_espeak_data_path(data_path)
+        if data_path != original_data_path:
+            # Misaki sets EspeakWrapper's path from this loader when imported.
+            try:
+                import espeakng_loader
+            except ImportError:
+                pass
+            else:
+                espeakng_loader.get_data_path = lambda: str(data_path)
 
         configured_for = str(loader_dir)
         os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = str(library_path)
@@ -927,14 +961,15 @@ def load_audio_model_if_needed(model_id: str, request: Optional[dict] = None):
         _configure_espeak_runtime()
         log_debug(f"[Python Bridge] Loading audio model: {model_id}")
         adapter = _audio_adapter(request)
-        if adapter in {"higgs-audio-v3", "higgs_audio_v3", "higgs"}:
-            from mlx_audio.tts.utils import load
+        with contextlib.redirect_stdout(sys.stderr):
+            if adapter in {"higgs-audio-v3", "higgs_audio_v3", "higgs"}:
+                from mlx_audio.tts.utils import load
 
-            model = load(model_id)
-        else:
-            from mlx_audio.tts.utils import load_model
+                model = load(model_id)
+            else:
+                from mlx_audio.tts.utils import load_model
 
-            model = load_model(model_id)
+                model = load_model(model_id)
         AUDIO_MODEL_REGISTRY[model_id] = model
 
         send_model_loading(
@@ -1982,7 +2017,7 @@ def handle_image_generation(request: dict) -> None:
             )
             if preset is not None:
                 generation_kwargs["preset"] = str(preset)
-            generation_kwargs["use_preset_steps"] = _coerce_bool_parameter(
+            use_preset_steps = _coerce_bool_parameter(
                 _first_present_parameter(
                     parameters.get("use_preset_steps"),
                     request.get("use_preset_steps"),
@@ -1990,6 +2025,12 @@ def handle_image_generation(request: dict) -> None:
                 ),
                 False,
             )
+            if "use_preset_steps" in inspect.signature(model.generate_image).parameters:
+                generation_kwargs["use_preset_steps"] = use_preset_steps
+            elif use_preset_steps:
+                # Upstream MFLUX selects the preset's step count and guidance
+                # schedule when no explicit step override is supplied.
+                generation_kwargs["num_inference_steps"] = None
             generation_kwargs["strict_caption_validation"] = _coerce_bool_parameter(
                 _first_present_parameter(
                     parameters.get("strict_caption_validation"),

@@ -1,23 +1,28 @@
 {
-  "runtimeVersion": "0.1.9",
+  "runtimeVersion": "0.1.10",
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
   "component": "music",
   "channel": "stable",
-  "pythonVersion": "3.12.8",
+  "pythonVersion": "3.12.15",
   "pythonPath": "acestep-venv/bin/python3",
   "executables": {
     "python": "acestep-venv/bin/python3",
     "pip": "acestep-venv/bin/pip"
   },
   "packages": [
+    "mlx==0.32.3",
+    "mlx-metal==0.32.3"
+  ],
+  "magentaPackages": [
     "mlx==0.31.2",
-    "mlx-metal==0.31.2"
+    "mlx-metal==0.31.2",
+    "magenta-rt==2.0.3"
   ],
   "isolatedPackages": [
-    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@6c1b2ef130bb7a7705a2abc61c11a258202b9ed2",
-    "magenta-rt[mlx]==2.0.2"
+    "ace-step @ git+https://github.com/ace-step/ACE-Step-1.5.git@dce621408bee8c31b4fcf4811682eb9359e1bc94",
+    "magenta-rt[mlx]==2.0.3"
   ],
   "supportedBackends": [
     "music"

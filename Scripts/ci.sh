@@ -52,6 +52,9 @@ run_py_compile() {
         Tests/IntegrationTests/test_all_models_integration.py \
         Tests/IntegrationTests/test_bridge.py \
         Tests/IntegrationTests/test_higgs_audio_integration.py \
+        Tests/IntegrationTests/test_magenta_integration.py \
+        Tests/IntegrationTests/test_generation_resilience.py \
+        Tests/IntegrationTests/test_catalog_vision.py \
         Tests/IntegrationTests/test_music_bridge.py \
         Tests/IntegrationTests/test_music_generation.py \
         Tests/IntegrationTests/test_music_integration.py

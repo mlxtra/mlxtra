@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 source "${SCRIPT_DIR}/runtime-dependencies.sh"
-RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64"
-MUSIC_RUNTIME_DIR="${PROJECT_DIR}/MLXtra/Resources/runtime/music-macos-arm64"
+RUNTIME_DIR="${MLXTRA_RUNTIME_DIR:-${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64}"
+MUSIC_RUNTIME_DIR="${MLXTRA_MUSIC_RUNTIME_DIR:-${PROJECT_DIR}/MLXtra/Resources/runtime/music-macos-arm64}"
 PYTHON_HOME="${RUNTIME_DIR}/python/Frameworks/Versions/3.12"
 MAIN_PYTHON="${RUNTIME_DIR}/venv/bin/python"
 ACE_PYTHON="${MUSIC_RUNTIME_DIR}/acestep-venv/bin/python"
@@ -98,7 +98,7 @@ bootstrap_runtime_if_needed() {
 
     echo "warning: MLXtra first build is downloading and creating the local Python runtime. This can take several minutes and requires network access."
     echo "warning: Keep Xcode open. Later builds reuse the generated runtime and skip this step."
-    "${BUILD_RUNTIME_SCRIPT}"
+    "${BUILD_RUNTIME_SCRIPT}" --output-dir "${RUNTIME_DIR}" --music-output-dir "${MUSIC_RUNTIME_DIR}"
     echo "MLXtra runtime bootstrap completed."
 }
 
@@ -194,9 +194,20 @@ validate_runtime_python() {
     RUNTIME_EXPECTED_PACKAGES="$(printf '%s\n' "${RUNTIME_MAIN_PACKAGES[@]}")" \
     PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${MAIN_PYTHON}" - <<'PY'
 import _csv
+import bz2
 import csv
+import ctypes
 import importlib.metadata as metadata
+import lzma
 import os
+import sqlite3
+import ssl
+import sys
+import zlib
+import spacy
+
+# Verify the data needed by the first Kokoro request without allowing a download.
+spacy.load("en_core_web_sm", enable=["tok2vec", "tagger"])
 
 expected_packages = {}
 for pinned in os.environ["RUNTIME_EXPECTED_PACKAGES"].splitlines():
@@ -211,6 +222,11 @@ for package, version in expected_packages.items():
 
 if _csv.__name__ != "_csv" or csv.__name__ != "csv":
     raise SystemExit("bundled Python standard library is incomplete")
+
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit("bundled Python must use the supported 3.12 series")
+if ssl.create_default_context().cert_store_stats()["x509_ca"] == 0:
+    raise SystemExit("bundled Python cannot load the system TLS trust roots")
 PY
 
     if [ -f "${MUSIC_MANIFEST}" ]; then
@@ -219,10 +235,15 @@ import importlib.metadata as metadata
 
 metadata.version("ace-step")
 PY
+        RUNTIME_MAGENTA_MLX_VERSION="${MAGENTA_MLX_VERSION}" \
         PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${MAGENTA_PYTHON}" - <<'PY'
 import importlib.metadata as metadata
+import os
 
 metadata.version("magenta-rt")
+for package in ("mlx", "mlx-metal"):
+    if metadata.version(package) != os.environ["RUNTIME_MAGENTA_MLX_VERSION"]:
+        raise SystemExit(f"Magenta {package} must match the published model serialization format")
 PY
     fi
 }
@@ -252,6 +273,7 @@ PY
 }
 
 validate_download_helper_structure() {
+    require_file "${RUNTIME_DIR}/hf_download_helper.py" "Main download helper"
     require_directory "${MAIN_SITE_PACKAGES}/huggingface_hub" "Main runtime huggingface_hub package"
     require_directory "${MAIN_SITE_PACKAGES}/tqdm" "Main runtime tqdm package"
     if [ -f "${MUSIC_MANIFEST}" ]; then

@@ -225,6 +225,7 @@ if component == "base":
     required_paths = [
         "venv/bin/python",
         "python/Frameworks/Versions/3.12",
+        "hf_download_helper.py",
         manifest_name,
     ]
     required_executables = [
@@ -399,12 +400,23 @@ if [ "${RUN_IMPORT_SMOKE}" = "1" ]; then
         PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/venv/bin/python" - <<'PY'
 import csv
 import importlib.metadata as metadata
+import lzma
+import ssl
+from mlx_vlm import load, stream_generate
+from mlx_audio.tts.utils import load_model
+import spacy
+spacy.load("en_core_web_sm", enable=["tok2vec", "tagger"])
+from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
+from mflux.models.z_image import ZImage, ZImageTurbo
+from mflux.models.ideogram4 import Ideogram4
 
 for package in ("mlx", "mlx-metal", "mlx-vlm"):
     metadata.version(package)
 
 if csv.__name__ != "csv":
     raise SystemExit("bundled Python standard library import failed")
+if ssl.create_default_context().cert_store_stats()["x509_ca"] == 0:
+    raise SystemExit("bundled Python cannot load the system TLS trust roots")
 PY
     fi
 
@@ -421,12 +433,12 @@ if GenerationConfig is None:
 PY
         PYTHONHOME="${PYTHON_HOME}" PYTHONDONTWRITEBYTECODE=1 "${RUNTIME_ROOT}/magenta-venv/bin/python" - <<'PY'
 import importlib.metadata as metadata
-from magenta_rt import MagentaRT2Mlxfn
+import magenta_rt
 
 for package in ("magenta-rt", "mlx", "mlx-metal"):
     metadata.version(package)
 
-if MagentaRT2Mlxfn is None:
+if getattr(magenta_rt, "MagentaRT2StdMlxfn", None) is None and getattr(magenta_rt, "MagentaRT2Mlxfn", None) is None:
     raise SystemExit("Magenta RealTime 2 import failed")
 PY
     fi

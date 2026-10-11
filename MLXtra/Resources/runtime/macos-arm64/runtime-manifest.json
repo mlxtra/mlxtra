@@ -1,28 +1,29 @@
 {
-  "runtimeVersion": "0.1.9",
+  "runtimeVersion": "0.1.10",
   "compatibilityApi": 1,
   "platform": "macos",
   "arch": "arm64",
   "component": "base",
   "channel": "stable",
-  "pythonVersion": "3.12.8",
+  "pythonVersion": "3.12.15",
   "pythonPath": "venv/bin/python3",
   "executables": {
     "python": "venv/bin/python3",
     "pip": "venv/bin/pip"
   },
   "packages": [
-    "mlx==0.31.2",
-    "mlx-vlm==0.6.1",
-    "mlx-audio==0.4.4",
+    "mlx==0.32.3",
+    "mlx-vlm==0.7.6",
+    "mlx-audio==0.5.8",
     "misaki[en]==0.9.4",
-    "mflux==0.17.5",
-    "transformers==5.8.0",
-    "huggingface-hub==1.14.0",
-    "pillow==12.2.0",
+    "en-core-web-sm==3.8.0",
+    "mflux==0.22.0",
+    "transformers==5.19.0",
+    "huggingface-hub==1.33.0",
+    "pillow==12.3.0",
     "numpy==2.4.4",
-    "torch==2.11.0",
-    "torchvision==0.26.0"
+    "torch==2.14.1",
+    "torchvision==0.29.1"
   ],
   "isolatedPackages": [],
   "supportedBackends": [

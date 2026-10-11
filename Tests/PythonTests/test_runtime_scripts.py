@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import types
 import unittest
+import shutil
 from pathlib import Path
 from unittest import mock
 
@@ -36,6 +37,29 @@ def bash_array(name: str) -> list[str]:
 
 
 class RuntimeScriptTests(unittest.TestCase):
+    def test_python_source_builder_rejects_tampered_cached_archive(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            script = root / "build-python-framework.sh"
+            shutil.copyfile(SCRIPTS_DIR / script.name, script)
+            (root / "runtime-dependencies.sh").write_text(
+                'PYTHON_URL="https://invalid.example/python.tar.xz"\n'
+                'PYTHON_PKG_NAME="python.tar.xz"\n'
+                f'PYTHON_PKG_SHA256="{hashlib.sha256(b"trusted source").hexdigest()}"\n'
+            )
+            cache = root / "cache"
+            cache.mkdir()
+            archive = cache / "python.tar.xz"
+            archive.write_bytes(b"tampered source")
+            result = subprocess.run(
+                ["bash", str(script), str(root / "build"), str(cache), str(root / "framework")],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Checksum mismatch", result.stderr)
+            self.assertEqual(archive.read_bytes(), b"tampered source")
+            self.assertEqual(list((root / "build").iterdir()), [])
+
     def test_hf_download_helper_hashes_large_files_by_default(self):
         spec = importlib.util.spec_from_file_location("hf_download_helper", HF_DOWNLOAD_HELPER)
         module = importlib.util.module_from_spec(spec)
@@ -83,6 +107,7 @@ class RuntimeScriptTests(unittest.TestCase):
             "runtime-dependencies.sh",
             "generate-runtime-lockfiles.sh",
             "build-runtime-bundle.sh",
+            "build-python-framework.sh",
             "validate-runtime-bundle.sh",
             "prepare-release-assets.sh",
             "publish-release-assets.sh",
@@ -138,12 +163,9 @@ class RuntimeScriptTests(unittest.TestCase):
         manifest = json.loads(RUNTIME_MANIFEST.read_text())
 
         self.assertEqual(set(manifest["packages"]), set(bash_array("RUNTIME_MAIN_PACKAGES")))
-        self.assertTrue(
-            any(
-                package.startswith("git+https://github.com/omercelik/mflux.git@")
-                for package in bash_array("RUNTIME_MAIN_INSTALL_PACKAGES")
-            )
-        )
+        # Install the upstream release, using the same pin as the manifest.
+        mflux_pin = next(package for package in manifest["packages"] if package.startswith("mflux=="))
+        self.assertIn(mflux_pin, bash_array("RUNTIME_MAIN_INSTALL_PACKAGES"))
         self.assertEqual(
             set(manifest["supportedBackends"]),
             set(bash_array("RUNTIME_SUPPORTED_BACKENDS")),

@@ -175,16 +175,26 @@ def generate_music_once(request: dict) -> bool:
     )
     with contextlib.redirect_stdout(sys.stderr):
         import mlx.core as mx
-        from magenta_rt import MagentaRT2Mlxfn, paths
+        import magenta_rt
+        from magenta_rt import paths
 
         paths.set_magenta_home(model_home)
         mx.random.seed(seed)
-        generator = MagentaRT2Mlxfn(
+        # Keep supporting the published 2.0.2 runtime while 2.0.3 is staged.
+        generator_class = getattr(magenta_rt, "MagentaRT2StdMlxfn", None)
+        uses_conditioning = generator_class is not None
+        if generator_class is None:
+            generator_class = magenta_rt.MagentaRT2Mlxfn
+        guidance = (
+            {"cfg_scales": {"musiccoca": cfg_musiccoca, "notes": cfg_notes, "drums": 1.0}}
+            if uses_conditioning else
+            {"cfg_musiccoca": cfg_musiccoca, "cfg_notes": cfg_notes}
+        )
+        generator = generator_class(
             size=selected_model_name,
             temperature=temperature,
             top_k=top_k,
-            cfg_musiccoca=cfg_musiccoca,
-            cfg_notes=cfg_notes,
+            **guidance,
         )
 
     send_json({"type": "model.loaded", "model": model_id}, request=request)
@@ -206,7 +216,14 @@ def generate_music_once(request: dict) -> bool:
         fraction=0.1,
     )
     with contextlib.redirect_stdout(sys.stderr):
-        waveform, _ = generator.generate(style=embedding, frames=max(1, int(round(duration * 25))))
+        if uses_conditioning:
+            from magenta_rt.config import MUSICCOCA
+            generation_input = {"conditioning": {MUSICCOCA.key: embedding}}
+        else:
+            generation_input = {"style": embedding}
+        waveform, _ = generator.generate(
+            **generation_input, frames=max(1, int(round(duration * 25)))
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"magenta-{selected_model_name}-{uuid.uuid4().hex}.wav"

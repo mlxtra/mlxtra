@@ -14,7 +14,7 @@ from runtime_layout import resolve_base_runtime
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODEL_ID = "bosonai/higgs-audio-v3-tts-4b"
-HF_CACHE = Path.home() / ".cache/huggingface/hub"
+HF_CACHE = Path(os.environ.get("HF_HUB_CACHE") or Path.home() / ".cache/huggingface/hub")
 APP_SUPPORT = Path.home() / "Library/Application Support/MLXtra"
 REQUIRE_ALL_MODELS = (
     os.environ.get("MLXTRA_REQUIRE_ALL_MODELS") == "1"
@@ -162,7 +162,7 @@ def main() -> bool:
     runtime = resolve_base_runtime(resources, APP_SUPPORT)
     python = runtime / "venv/bin/python"
     bridge = resources / "python_bridge.py"
-    output_dir = APP_SUPPORT / "GeneratedSpeech"
+    output_dir = Path(os.environ.get("MLXTRA_INTEGRATION_OUTPUT_DIR") or APP_SUPPORT / "GeneratedSpeech")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     request_id = f"higgs-smoke-{int(time.time())}"

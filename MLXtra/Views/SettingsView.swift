@@ -448,6 +448,15 @@ struct SettingsView: View {
     }
 
     private func bootstrapRuntimeForPendingDownloadOrBase(reportFailures: Bool) {
+        if !reportFailures {
+            switch runtimeUpdateManager.state {
+            case .idle, .installed:
+                break
+            default:
+                return
+            }
+        }
+
         runtimeUpdateManager.bootstrapStableRuntimeInBackground(
             reportFailures: reportFailures,
             component: pendingModel?.runtime.component ?? .base
@@ -488,17 +497,19 @@ struct SettingsView: View {
             return
         }
 
-        switch downloadManager.state(for: model) {
-        case .downloaded:
+        let decision = PendingModelDownloadStartPolicy.decision(
+            state: downloadManager.state(for: model),
+            modelFit: modelFit(for: model),
+            requiresRuntimeSetup: model.requiresRuntimeSetupBeforeDownload()
+        )
+
+        switch decision {
+        case .clear:
             pendingDownloadModelId = ""
-        case .notDownloaded, .failed:
-            guard modelFit(for: model) != .heavy else {
-                pendingDownloadModelId = ""
-                return
-            }
-            guard !model.requiresRuntimeSetupBeforeDownload() else { return }
+        case .startAndClear:
+            pendingDownloadModelId = ""
             downloadManager.download(model)
-        case .downloading, .paused:
+        case .wait:
             return
         }
     }

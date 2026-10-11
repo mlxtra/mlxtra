@@ -23,11 +23,19 @@ SCALAR_NAMES = (
     "PYTHON_URL",
     "PYTHON_PKG_NAME",
     "PYTHON_PKG_SHA256",
+    "OPENSSL_VERSION",
+    "OPENSSL_URL",
+    "OPENSSL_SHA256",
+    "XZ_VERSION",
+    "XZ_URL",
+    "XZ_SHA256",
     "MLX_VERSION",
     "MLX_METAL_VERSION",
     "MLX_VLM_VERSION",
     "MLX_AUDIO_VERSION",
     "MISAKI_VERSION",
+    "EN_CORE_WEB_SM_VERSION",
+    "EN_CORE_WEB_SM_PACKAGE",
     "MFLUX_VERSION",
     "MFLUX_REF",
     "MFLUX_PACKAGE",
@@ -41,11 +49,13 @@ SCALAR_NAMES = (
     "ACE_STEP_PACKAGE",
     "MAGENTA_RT_VERSION",
     "MAGENTA_RT_PACKAGE",
+    "MAGENTA_MLX_VERSION",
     "RUNTIME_MLX_WHEEL_PLATFORM",
 )
 
 ARRAY_NAMES = (
     "RUNTIME_FORCED_BINARY_PYPI_PACKAGES",
+    "RUNTIME_MAGENTA_BINARY_PACKAGES",
     "RUNTIME_MAIN_PYPI_PACKAGES",
     "RUNTIME_MAIN_INSTALL_PACKAGES",
     "RUNTIME_TORCH_PACKAGES",
@@ -62,11 +72,19 @@ scalar_names=(
     PYTHON_URL
     PYTHON_PKG_NAME
     PYTHON_PKG_SHA256
+    OPENSSL_VERSION
+    OPENSSL_URL
+    OPENSSL_SHA256
+    XZ_VERSION
+    XZ_URL
+    XZ_SHA256
     MLX_VERSION
     MLX_METAL_VERSION
     MLX_VLM_VERSION
     MLX_AUDIO_VERSION
     MISAKI_VERSION
+    EN_CORE_WEB_SM_VERSION
+    EN_CORE_WEB_SM_PACKAGE
     MFLUX_VERSION
     MFLUX_REF
     MFLUX_PACKAGE
@@ -80,11 +98,13 @@ scalar_names=(
     ACE_STEP_PACKAGE
     MAGENTA_RT_VERSION
     MAGENTA_RT_PACKAGE
+    MAGENTA_MLX_VERSION
     RUNTIME_MLX_WHEEL_PLATFORM
 )
 
 array_names=(
     RUNTIME_FORCED_BINARY_PYPI_PACKAGES
+    RUNTIME_MAGENTA_BINARY_PACKAGES
     RUNTIME_MAIN_PYPI_PACKAGES
     RUNTIME_MAIN_INSTALL_PACKAGES
     RUNTIME_TORCH_PACKAGES
@@ -196,12 +216,24 @@ def build_lock(values: dict[str, Any]) -> dict[str, Any]:
             "name": values["PYTHON_PKG_NAME"],
             "sha256": values["PYTHON_PKG_SHA256"],
         },
+        "opensslSource": {
+            "version": values["OPENSSL_VERSION"],
+            "url": values["OPENSSL_URL"],
+            "sha256": values["OPENSSL_SHA256"],
+        },
+        "xzSource": {
+            "version": values["XZ_VERSION"],
+            "url": values["XZ_URL"],
+            "sha256": values["XZ_SHA256"],
+        },
         "pins": {
             "MLX_VERSION": values["MLX_VERSION"],
             "MLX_METAL_VERSION": values["MLX_METAL_VERSION"],
             "MLX_VLM_VERSION": values["MLX_VLM_VERSION"],
             "MLX_AUDIO_VERSION": values["MLX_AUDIO_VERSION"],
             "MISAKI_VERSION": values["MISAKI_VERSION"],
+            "EN_CORE_WEB_SM_VERSION": values["EN_CORE_WEB_SM_VERSION"],
+            "MAGENTA_MLX_VERSION": values["MAGENTA_MLX_VERSION"],
             "MFLUX_VERSION": values["MFLUX_VERSION"],
             "MFLUX_REF": values["MFLUX_REF"],
             "TRANSFORMERS_VERSION": values["TRANSFORMERS_VERSION"],
@@ -215,6 +247,7 @@ def build_lock(values: dict[str, Any]) -> dict[str, Any]:
         },
         "packages": {
             "forcedBinaryPyPI": values["RUNTIME_FORCED_BINARY_PYPI_PACKAGES"],
+            "magentaBinaryPyPI": values["RUNTIME_MAGENTA_BINARY_PACKAGES"],
             "mainPyPI": values["RUNTIME_MAIN_PYPI_PACKAGES"],
             "mainInstall": values["RUNTIME_MAIN_INSTALL_PACKAGES"],
             "torch": values["RUNTIME_TORCH_PACKAGES"],
@@ -227,6 +260,7 @@ def build_lock(values: dict[str, Any]) -> dict[str, Any]:
             },
             "magentaRealtime": {
                 "version": values["MAGENTA_RT_VERSION"],
+                "mlxVersion": values["MAGENTA_MLX_VERSION"],
                 "package": values["MAGENTA_RT_PACKAGE"],
             }
         },

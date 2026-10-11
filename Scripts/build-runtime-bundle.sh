@@ -44,20 +44,6 @@ require_option_value() {
     fi
 }
 
-verify_sha256() {
-    local path="$1"
-    local expected="$2"
-    local actual
-
-    actual="$(shasum -a 256 "${path}" | awk '{print $1}')"
-    if [ "${actual}" != "${expected}" ]; then
-        echo "Checksum mismatch for ${path}" >&2
-        echo "  expected: ${expected}" >&2
-        echo "  actual:   ${actual}" >&2
-        return 1
-    fi
-}
-
 remove_external_symlinks() {
     local scan_dir="$1"
     local root_dir="$2"
@@ -196,33 +182,10 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_NO_COMPILE=1
 mkdir -p "${PIP_CACHE_DIR}"
 
-echo "Step 1: Preparing Python ${PYTHON_VERSION} package..."
-PYTHON_PKG_PATH="${CACHE_DIR}/${PYTHON_PKG_NAME}"
-if [ ! -f "${PYTHON_PKG_PATH}" ]; then
-    curl -fL --retry 3 --continue-at - -o "${PYTHON_PKG_PATH}" "${PYTHON_URL}"
-else
-    echo "Using cached Python package: ${PYTHON_PKG_PATH}"
-fi
-if ! verify_sha256 "${PYTHON_PKG_PATH}" "${PYTHON_PKG_SHA256}"; then
-    echo "Deleting invalid cached Python package. Re-run the script to download a clean copy." >&2
-    rm -f "${PYTHON_PKG_PATH}"
-    exit 1
-fi
-
-echo "Step 2: Extracting Python..."
-mkdir -p "${BUILD_DIR}/python"
-pkgutil --expand "${PYTHON_PKG_PATH}" "${BUILD_DIR}/python_pkg"
-mkdir -p "${BUILD_DIR}/python/Frameworks"
-(
-    cd "${BUILD_DIR}/python_pkg"
-    for pkg in *.pkg; do
-        if [[ "$pkg" == "Python"*".pkg" ]]; then
-            if ! ditto -x -z "${pkg}/Payload" "${BUILD_DIR}/python/Frameworks" 2>/dev/null; then
-                tar -xf "${pkg}/Payload" -C "${BUILD_DIR}/python/Frameworks" 2>/dev/null || true
-            fi
-        fi
-    done
-)
+echo "Step 1: Preparing verified Python/OpenSSL sources..."
+echo "Step 2: Building Python ${PYTHON_VERSION} framework..."
+bash "${SCRIPT_DIR}/build-python-framework.sh" \
+    "${BUILD_DIR}/python-source" "${CACHE_DIR}" "${BUILD_DIR}/python/Frameworks"
 
 echo "Step 3: Setting up Python virtual environment..."
 PYTHON_BIN="$(find "${BUILD_DIR}/python/Frameworks" -path "*/Versions/3.12/bin/python3.12" -type f | head -n 1)"
@@ -336,18 +299,23 @@ echo "Installing MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
     --find-links "${FORCED_WHEELHOUSE}" \
     "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
 
-for package in "${RUNTIME_MAIN_INSTALL_PACKAGES[@]}"; do
-    echo "Installing ${package}..."
-    "${VENV_PIP}" install --no-compile "${package}"
-done
-
-for package in "${RUNTIME_TORCH_PACKAGES[@]}"; do
-    echo "Installing ${package}..."
-    "${VENV_PIP}" install --no-compile "${package}" --index-url https://download.pytorch.org/whl/cpu
-done
+# Resolve the coordinated stack together so later installs cannot silently
+# downgrade earlier pins. macOS PyPI Torch wheels include the CPU/MPS backend.
+"${VENV_PIP}" install --no-compile \
+    "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}" \
+    "${RUNTIME_MAIN_INSTALL_PACKAGES[@]}" "${RUNTIME_TORCH_PACKAGES[@]}"
+"${VENV_PIP}" check
 
 echo "Step 5: Creating runtime structure..."
 mkdir -p "${OUTPUT_DIR}"
+HF_DOWNLOAD_HELPER_SOURCE="${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64/hf_download_helper.py"
+if [ ! -f "${HF_DOWNLOAD_HELPER_SOURCE}" ]; then
+    echo "Main download helper is missing at ${HF_DOWNLOAD_HELPER_SOURCE}."
+    exit 1
+fi
+if [ ! "${HF_DOWNLOAD_HELPER_SOURCE}" -ef "${OUTPUT_DIR}/hf_download_helper.py" ]; then
+    cp -f "${HF_DOWNLOAD_HELPER_SOURCE}" "${OUTPUT_DIR}/hf_download_helper.py"
+fi
 ACE_DOWNLOAD_HELPER_CACHE="${BUILD_DIR}/acestep_download_helper.py"
 for helper_source in \
     "${PROJECT_DIR}/MLXtra/Resources/runtime/macos-arm64/acestep_download_helper.py" \
@@ -396,6 +364,7 @@ echo "Installing ACE-Step MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
     --find-links "${FORCED_WHEELHOUSE}" \
     "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
 "${ACE_PIP}" install --no-compile "${ACE_STEP_PACKAGE}"
+"${ACE_PIP}" check
 cp -R "${BUILD_DIR}/acestep-venv" "${OUTPUT_DIR}/acestep-venv"
 
 echo "Creating isolated Magenta RealTime 2 runtime..."
@@ -403,12 +372,19 @@ create_build_venv "${BUILD_DIR}/magenta-venv"
 MAGENTA_PIP="${BUILD_DIR}/magenta-venv/bin/pip"
 "${MAGENTA_PIP}" install --no-compile --upgrade pip
 echo "Installing Magenta MLX wheels for ${RUNTIME_MLX_WHEEL_PLATFORM}..."
+"${MAGENTA_PIP}" download \
+    --only-binary=:all: \
+    --platform "${RUNTIME_MLX_WHEEL_PLATFORM}" \
+    --implementation cp --python-version 312 --abi cp312 \
+    --dest "${FORCED_WHEELHOUSE}" \
+    "${RUNTIME_MAGENTA_BINARY_PACKAGES[@]}"
 "${MAGENTA_PIP}" install \
     --no-compile \
     --no-index \
     --find-links "${FORCED_WHEELHOUSE}" \
-    "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}"
+    "${RUNTIME_MAGENTA_BINARY_PACKAGES[@]}"
 "${MAGENTA_PIP}" install --no-compile "${MAGENTA_RT_PACKAGE}"
+"${MAGENTA_PIP}" check
 cp -R "${BUILD_DIR}/magenta-venv" "${OUTPUT_DIR}/magenta-venv"
 
 relocate_venv() {
@@ -850,6 +826,9 @@ cat > "${OUTPUT_DIR}/runtime-music-manifest.json" << EOF
   "packages": [
 $(json_array_items 4 "${RUNTIME_FORCED_BINARY_PYPI_PACKAGES[@]}")
   ],
+  "magentaPackages": [
+$(json_array_items 4 "${RUNTIME_MAGENTA_BINARY_PACKAGES[@]}" "magenta-rt==${MAGENTA_RT_VERSION}")
+  ],
   "isolatedPackages": [
     "ace-step @ ${ACE_STEP_PACKAGE}",
     "${MAGENTA_RT_PACKAGE}"
@@ -875,6 +854,14 @@ PYTHONHOME="${RUNTIME_PYTHONHOME}" PYTHONDONTWRITEBYTECODE=1 "${OUTPUT_DIR}/venv
 import os
 import sys
 import importlib.metadata as metadata
+import lzma
+from mlx_vlm import load, stream_generate
+from mlx_audio.tts.utils import load_model
+import spacy
+spacy.load('en_core_web_sm', enable=['tok2vec', 'tagger'])
+from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
+from mflux.models.z_image import ZImage, ZImageTurbo
+from mflux.models.ideogram4 import Ideogram4
 print(f'Python: {sys.version}')
 
 expected = {}
@@ -910,15 +897,15 @@ if mlx_metal != os.environ['RUNTIME_MLX_METAL_VERSION']:
 print('ACE-Step mlx-metal: ' + mlx_metal)
 "
 
-RUNTIME_MLX_METAL_VERSION="${MLX_METAL_VERSION}" \
+RUNTIME_MLX_METAL_VERSION="${MAGENTA_MLX_VERSION}" \
 PYTHONHOME="${RUNTIME_PYTHONHOME}" PYTHONDONTWRITEBYTECODE=1 "${OUTPUT_DIR}/magenta-venv/bin/python" -c "
 import importlib.metadata as metadata
-from magenta_rt import MagentaRT2Mlxfn
+from magenta_rt import MagentaRT2StdMlxfn
 print('Magenta RealTime 2: OK')
 print('magenta-rt: ' + metadata.version('magenta-rt'))
 mlx_metal = metadata.version('mlx-metal')
-if mlx_metal != '${MLX_METAL_VERSION}':
-    raise RuntimeError(f'mlx-metal version mismatch: expected ${MLX_METAL_VERSION}, got {mlx_metal}')
+if mlx_metal != '${MAGENTA_MLX_VERSION}':
+    raise RuntimeError(f'mlx-metal version mismatch: expected ${MAGENTA_MLX_VERSION}, got {mlx_metal}')
 print('Magenta mlx-metal: ' + mlx_metal)
 "
 fi

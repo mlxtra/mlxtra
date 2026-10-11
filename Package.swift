@@ -1,4 +1,4 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.2
 import Foundation
 import PackageDescription
 
@@ -22,8 +22,8 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.7.3"),
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.1")
+        .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.9.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")
     ],
     targets: [
         .executableTarget(
@@ -56,5 +56,6 @@ let package = Package(
             dependencies: ["MLXtra"],
             path: "Tests/MLXtraTests"
         )
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )
