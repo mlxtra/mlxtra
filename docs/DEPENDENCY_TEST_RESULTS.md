@@ -15,7 +15,9 @@ including Ideogram, worked with the existing credentials.
 | App build with runtime validation | Passed; signing disabled |
 | Rebuilt base and music runtimes | Exact dependency pins, imports, and `pip check` passed |
 | Both release archives | Extraction, imports, and Metal computation passed |
-| Staged release channel | Strict metadata validation passed; archive hashes and sizes match |
+| Release channel | Strict metadata validation passed; archive hashes and sizes match public runtime/catalog assets |
+| Full shared CI | `Scripts/ci.sh` passed, including metadata, both archives, Python, Swift coverage, and app build |
+| Hosted runtime validation | Clean runtime build, validation, and app build passed |
 | Qwen3.5 2B chat | Answered `4` through the bridge and native app |
 | Qwen3.5 2B vision | Correctly identified a red square |
 | FLUX.2 klein 4B | Generated a valid 512×512 red-circle PNG offline |
@@ -117,7 +119,9 @@ No models are downloaded by this test.
 - The signed Sparkle installation test used isolated app identities and a
   loopback HTTP feed. The actual app update controller also fetched the production HTTPS appcast
   successfully. Apple accepted the local signed DMG, its ticket is stapled, and
-  Gatekeeper accepted it as Notarized Developer ID. No release was published. The normal Debug app keeps its update check disabled.
+  Gatekeeper accepted it as Notarized Developer ID. The final rebuilt app
+  embeds the 0.1.10 channel and retains the previous public app's Sparkle key.
+  The normal Debug app keeps its update check disabled.
 - All 17 catalog profiles were smoke-tested: 16 passed; Gemma 12B failed image
   understanding as documented above. Large passing-model weights were removed
   from the isolated cache; Gemma 12B weights remain there for reproduction.
@@ -129,13 +133,11 @@ No models are downloaded by this test.
   signed. The runner exited with SIGKILL before connecting, so none of the 23
   automated UI tests ran. Native app checks used computer interaction instead;
   no security settings were changed.
-- The live GitHub channel currently references runtime 0.1.8. The checked-in
-  fallback channel and test DMG reference unpublished runtime 0.1.9. Rebuild and
-  notarize the final app with the 0.1.10 channel after uploading verified assets.
-  Consequently,
-  `Scripts/ci.sh metadata` remains intentionally red until verified 0.1.10 assets
-  are published and the channel is updated. Nothing was published or pushed.
+- The earlier 0.1.10/0.1.9 metadata mismatch is resolved. The immutable
+  runtime 0.1.10 and catalog 2026.06.10.1 assets are public; unauthenticated
+  URLs and hashes/sizes were verified. The final app and moving feed pointers
+  are published after release-source CI passes.
 
-Shared CI subcommands run: `Scripts/ci.sh swift-coverage` and
-`Scripts/ci.sh py-compile python-tests`. The staged channel passed
-`Scripts/validate-release-metadata.py --channel .build/dependency-upgrade-release/stable-channel.json`.
+The full `Scripts/ci.sh` passed after updating the bundled channel, with
+no metadata drift override. Hosted `Runtime Validation` also passed. Detailed
+release notes are in `docs/releases/1.0.16.md`.

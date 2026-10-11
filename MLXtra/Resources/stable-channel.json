@@ -9,24 +9,24 @@
   },
   "runtimes": [
     {
-      "version": "0.1.9",
+      "version": "0.1.10",
       "platform": "macos",
       "arch": "arm64",
       "component": "base",
-      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.9/runtime-macos-arm64-0.1.9.zip",
-      "sha256": "c172b1d854ff4ab38f8b6005667927907bdb0e18f44b6878c90ddcd50be6bf8f",
-      "sizeBytes": 393144580,
+      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.10/runtime-macos-arm64-0.1.10.zip",
+      "sha256": "4c05f2251aed3488c7a96a237e6c96b695845269cca54d7757600f3722961636",
+      "sizeBytes": 377481670,
       "compatibilityApi": 1,
       "minAppVersion": "1.0.16"
     },
     {
-      "version": "0.1.9",
+      "version": "0.1.10",
       "platform": "macos",
       "arch": "arm64",
       "component": "music",
-      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.9/runtime-music-macos-arm64-0.1.9.zip",
-      "sha256": "f5f4ae08ccb97669329bec2cd93c930c002665e8f20ad3c2a80f4accdd0b1953",
-      "sizeBytes": 446163045,
+      "url": "https://github.com/mlxtra/mlxtra/releases/download/runtime-0.1.10/runtime-music-macos-arm64-0.1.10.zip",
+      "sha256": "f52f8482fdf431f819c4d56e0e13db8d906988935382e8dfb121aff14a0ecdf8",
+      "sizeBytes": 465725333,
       "compatibilityApi": 1,
       "minAppVersion": "1.0.16"
     }

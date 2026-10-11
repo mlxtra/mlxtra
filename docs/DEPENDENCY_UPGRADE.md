@@ -1,10 +1,9 @@
 # Runtime 0.1.10 dependency upgrade
 
 Prepared and checked locally on 2026-10-11 with Xcode 27.0, Swift 6.4, and
-Apple Silicon. The local development runtime is upgraded; the public stable
-channel on GitHub still references runtime 0.1.8; the checked-in fallback
-channel references unpublished runtime 0.1.9. Both must advance to 0.1.10
-during the release.
+Apple Silicon. The bundled fallback channel now references runtime 0.1.10.
+The immutable runtime and catalog assets have been published and verified
+through unauthenticated download URLs.
 
 ## Selected versions
 
@@ -103,22 +102,22 @@ and [Magenta](https://pypi.org/project/magenta-rt/2.0.3/).
   and the upstream CLI; the new offline catalog vision test preserves that
   failure. All 17 catalog profiles have now been exercised; 16 pass their smoke
   checks, with this pre-existing Gemma 12B vision failure recorded explicitly.
-- Strict `Scripts/ci.sh metadata` fails on the intentional 0.1.10/0.1.9 runtime
-  version difference. Manual metadata validation with
-  `--allow-runtime-version-drift` passes. Keep the strict CI gate; update the
-  stable channel only after uploading verified assets.
+- Full `Scripts/ci.sh` passes, including strict metadata parity, both runtime
+  archives, Python checks, Swift coverage, and the app build. The hosted
+  `Runtime Validation` workflow also passed from the release source branch.
 
 Local bundles are under `.build/runtime-upgrade/`; previous development bundles
 are preserved under `.build/runtime-before-upgrade/`. Release assets and the
 unpublished channel candidate are staged under `.build/dependency-upgrade-release/`.
-A Developer ID signed app DMG is staged under `.build/dependency-app-test/assets/`;
-Apple notarization, ticket stapling, and Gatekeeper validation passed. Signed
-Sparkle installation and the real HTTPS appcast check passed in isolated probes.
-Nothing has been published or pushed. A readiness recheck confirmed that this
-local DMG still bundles the 0.1.9 fallback channel. Rebuild and notarize the final
-app after synchronizing its bundled channel with the verified 0.1.10 assets;
-do not upload this test DMG as the final release.
+The final Developer ID signed app and DMG are under `.build/publish-1.0.16/app/`;
+Apple notarization, app/DMG stapling, and Gatekeeper validation passed. The final
+app bundles the verified 0.1.10 channel. Its bundle ID, Sparkle public key, and
+feed URL match the previous public app 1.0.15. The final DMG SHA-256 is
+`2a5ae2046ff76f95ad9d2bf075e9fd2e3642e212b483e600b84ab1cb40336c64`.
+The earlier `.build/dependency-app-test/` DMG was a test artifact with an obsolete
+0.1.9 fallback channel and is superseded by this rebuilt artifact.
 
-Before publishing, follow `docs/RELEASE_WORKFLOW.md`, run model integration with
-`MLXTRA_REQUIRE_ALL_MODELS=1`, publish the immutable 0.1.10 assets, then update
-the stable channel and run `Scripts/ci.sh` without overrides.
+Publish the final app and activate the stable/Sparkle feeds after CI passes on
+the release source. Release notes are in `docs/releases/1.0.16.md` and disclose
+the Gemma 12B vision failure and remaining test coverage. Follow
+`docs/RELEASE_WORKFLOW.md` for subsequent releases.
