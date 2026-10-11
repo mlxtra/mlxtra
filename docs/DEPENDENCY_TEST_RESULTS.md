@@ -11,7 +11,7 @@ including Ideogram, worked with the existing credentials.
 | --- | --- |
 | Catalog profile smoke checks | 16 of 17 passed; Gemma 12B chat works, red-image quality assertion fails |
 | Swift tests and coverage | 674 passed; core line coverage 85.96% (80% required) |
-| Python compilation and unit tests | 120 passed |
+| Python compilation and unit tests | 121 passed, including coverage bundle discovery regression checks |
 | App build with runtime validation | Passed; signing disabled |
 | Rebuilt base and music runtimes | Exact dependency pins, imports, and `pip check` passed |
 | Both release archives | Extraction, imports, and Metal computation passed |
@@ -39,6 +39,12 @@ including Ideogram, worked with the existing credentials.
 Thirty WAV outputs were also checked for non-zero samples. The image and audio outputs
 are preserved under `.build/model-validation/outputs/`. Logs and the local
 cache-override test driver are under `.build/model-validation/`.
+
+The first hosted release CI run passed all 674 Swift tests but failed while
+discovering the coverage executable: native SwiftPM omitted `CFBundleExecutable`
+from its test bundle. The coverage script now also discovers regular executable
+files in bundles without that metadata, with regression checks for both a missing
+plist and a plist without the key. The 80% coverage threshold remains enforced.
 
 All 11 existing all-model checks and all five new resilience checks passed.
 The existing checks ran across sequential batches with strict

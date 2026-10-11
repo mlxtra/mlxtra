@@ -13,7 +13,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "Scripts/check-swift-coverage.sh"
 
 
 class SwiftCoverageScriptTests(unittest.TestCase):
-    def run_gate(self, bundle_names, coverage="86.0"):
+    def run_gate(self, bundle_names, coverage="86.0", plist_mode="declared"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             products = root / "products with spaces"
@@ -23,10 +23,13 @@ class SwiftCoverageScriptTests(unittest.TestCase):
             for bundle_name, executable in bundle_names:
                 contents = products / f"{bundle_name}.xctest/Contents"
                 (contents / "MacOS").mkdir(parents=True)
-                (contents / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": executable}))
+                if plist_mode != "missing":
+                    metadata = {"CFBundleExecutable": executable} if plist_mode == "declared" else {}
+                    (contents / "Info.plist").write_bytes(plistlib.dumps(metadata))
                 binary = contents / "MacOS" / executable
                 binary.write_text("#!/bin/sh\nexit 0\n")
                 binary.chmod(0o755)
+                (contents / "MacOS" / f"{executable}.dSYM").mkdir()
                 binaries.append(str(binary))
 
             commands = root / "commands"
@@ -61,6 +64,15 @@ class SwiftCoverageScriptTests(unittest.TestCase):
         result, args, binaries = self.run_gate([("CoreTests", "core"), ("OtherTests", "other")])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(args[2:5], [binaries[0], "-object", binaries[1]])
+
+    def test_native_bundles_without_executable_metadata(self):
+        for plist_mode in ("missing", "empty"):
+            with self.subTest(plist_mode=plist_mode):
+                result, args, binaries = self.run_gate([("MLXtraPackageTests", "MLXtraPackageTests")],
+                                                       plist_mode=plist_mode)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(args[2], binaries[0])
+                self.assertNotIn("-object", args)
 
     def test_missing_bundle_fails_before_report(self):
         result, args, _ = self.run_gate([])

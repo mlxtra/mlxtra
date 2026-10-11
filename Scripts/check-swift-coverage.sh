@@ -24,13 +24,21 @@ if [ ! -f "${PROFILE}" ]; then
 fi
 
 # SwiftPM's native and Xcode build systems use different XCTest bundle names.
-# Read each bundle's declared executable rather than assuming a runner name.
+# Prefer the declared executable; native SwiftPM can omit bundle metadata.
 TEST_BINARIES=()
 for bundle in "${BUILD_DIR}"/*.xctest; do
     [ -d "${bundle}" ] || continue
-    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${bundle}/Contents/Info.plist")"
-    binary="${bundle}/Contents/MacOS/${executable}"
-    [ -x "${binary}" ] && TEST_BINARIES+=("${binary}")
+    if ! executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${bundle}/Contents/Info.plist" 2>/dev/null)"; then
+        executable=""
+    fi
+    if [ -n "${executable}" ]; then
+        binary="${bundle}/Contents/MacOS/${executable}"
+        [ -f "${binary}" ] && [ -x "${binary}" ] && TEST_BINARIES+=("${binary}")
+    else
+        for binary in "${bundle}/Contents/MacOS/"*; do
+            [ -f "${binary}" ] && [ -x "${binary}" ] && TEST_BINARIES+=("${binary}")
+        done
+    fi
 done
 
 if [ "${#TEST_BINARIES[@]}" -eq 0 ]; then
